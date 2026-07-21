@@ -63,6 +63,21 @@ function RootLayoutNav() {
         name="stats"
         options={{ headerShown: false, presentation: 'modal' }}
       />
+      {/* Session detail — read-only view of a completed/active session from History */}
+      <Stack.Screen
+        name="session-detail"
+        options={{ headerShown: false }}
+      />
+      {/* Share card — modal for generating and sharing result cards */}
+      <Stack.Screen
+        name="share-card"
+        options={{ headerShown: false, presentation: 'modal' }}
+      />
+      {/* Settings info pages — modal with static content (methodology, privacy, etc.) */}
+      <Stack.Screen
+        name="settings-info"
+        options={{ headerShown: false, presentation: 'modal' }}
+      />
     </Stack>
   );
 }

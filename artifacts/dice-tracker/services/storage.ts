@@ -212,6 +212,61 @@ export const exportAllData = async (): Promise<string> => {
   }
 };
 
+// ─── Import ───────────────────────────────────────────────────────────────────
+
+export const importAllData = async (json: string): Promise<{ imported: number; error?: string }> => {
+  try {
+    const data = JSON.parse(json) as {
+      sessions?: GameSession[];
+      rollsBySession?: Record<string, RollEvent[]>;
+      exposuresBySession?: Record<string, CatanPlayerExposureEvent[]>;
+    };
+    if (!data.sessions || !Array.isArray(data.sessions)) {
+      return { imported: 0, error: 'Invalid backup format — no sessions found.' };
+    }
+    let imported = 0;
+    for (const session of data.sessions) {
+      if (!session.id) continue;
+      await saveSession(session);
+      if (data.rollsBySession?.[session.id]) {
+        await saveRollEvents(session.id, data.rollsBySession[session.id]!);
+      }
+      if (data.exposuresBySession?.[session.id]) {
+        await saveExposureEvents(session.id, data.exposuresBySession[session.id]!);
+      }
+      imported++;
+    }
+    return { imported };
+  } catch (err) {
+    return { imported: 0, error: `Parse error: ${String(err)}` };
+  }
+};
+
+// ─── Duplicate setup prefill ──────────────────────────────────────────────────
+
+const PREFILL_KEY = 'blosi:prefill_session';
+
+export const savePrefillSession = async (session: GameSession): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(PREFILL_KEY, JSON.stringify(session));
+  } catch {}
+};
+
+export const loadPrefillSession = async (): Promise<GameSession | null> => {
+  try {
+    const json = await AsyncStorage.getItem(PREFILL_KEY);
+    return json ? (JSON.parse(json) as GameSession) : null;
+  } catch {
+    return null;
+  }
+};
+
+export const clearPrefillSession = async (): Promise<void> => {
+  try {
+    await AsyncStorage.removeItem(PREFILL_KEY);
+  } catch {}
+};
+
 export const clearAllData = async (): Promise<void> => {
   try {
     const allKeys = await AsyncStorage.getAllKeys();

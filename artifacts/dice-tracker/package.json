@@ -58,5 +58,11 @@
     "typescript": "~5.9.2",
     "zod": "catalog:",
     "zod-validation-error": "^3.4.0"
+  },
+  "dependencies": {
+    "expo-document-picker": "^57.0.1",
+    "expo-media-library": "^57.0.3",
+    "expo-sharing": "^57.0.6",
+    "react-native-view-shot": "^5.1.1"
   }
 }
