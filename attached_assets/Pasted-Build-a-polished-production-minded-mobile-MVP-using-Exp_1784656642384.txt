@@ -1,0 +1,1147 @@
+Build a polished, production-minded mobile MVP using Expo, React Native, and TypeScript.
+
+The working product name is:
+
+BAD LUCK OR SKILL ISSUE?
+
+Tagline:
+
+Track every roll. Settle every excuse.
+
+PRODUCT VISION
+
+This app helps people playing physical tabletop games record dice rolls, track players, understand whether outcomes were unusually lucky or unlucky, and generate humorous, shareable end-of-game results.
+
+The app is also the software foundation for a future physical tabletop device with a large clickable rotary dial, screen, rechargeable battery, and supporting buttons.
+
+The mobile app itself should not use a rotary-dial interface. It should use an extremely fast number-entry interface optimized for recording physical dice rolls with as few taps as possible.
+
+The app must be fully usable without creating an account.
+
+Do not put a login screen, account requirement, subscription prompt, or onboarding wall between the user and starting a game.
+
+The initial product should feel complete as a local, offline-capable app while remaining architecturally ready for:
+
+* Optional user accounts
+* Cloud synchronization
+* Friend groups
+* Social sharing
+* Bluetooth hardware input
+* Additional game-specific modes
+* Premium analytics packs
+* Android and iOS store distribution
+
+CORE PRODUCT PRINCIPLES
+
+1. Starting a game should be fast.
+2. Recording a roll should require one tap whenever possible.
+3. The app should be usable without internet access.
+4. No account should be required for core use.
+5. Statistics must be accurate and responsibly described.
+6. The app should be entertaining without pretending to measure strategy it cannot observe.
+7. The architecture must remain portable outside Replit.
+8. All roll inputs must use the same input-neutral event service.
+9. The future physical device must be able to submit rolls without rewriting the statistics or session systems.
+10. Avoid unnecessary complexity in the first version.
+
+TECHNOLOGY REQUIREMENTS
+
+Use:
+
+* Expo
+* React Native
+* TypeScript
+* Expo Router
+* Strict TypeScript settings
+* A standard Expo project structure
+* Local persistent storage appropriate for structured session data
+* Pure reusable statistics functions
+* Unit tests for core calculations
+* Git version control
+* A project structure that can be cloned and run outside Replit
+
+Prefer standard open-source libraries with active maintenance and clear documentation.
+
+Do not rely on proprietary Replit runtime services for core application functionality.
+
+Do not add a cloud database, backend server, authentication provider, payment system, analytics platform, advertising network, or subscription system in the initial build.
+
+PORTABILITY AND FUTURE CLAUDE CODE REQUIREMENTS
+
+This project will eventually move from Replit to a local GitHub and Claude Code workflow.
+
+Build it as a normal, portable Expo project.
+
+Include:
+
+* A complete README
+* Local installation instructions
+* Expo Go testing instructions
+* Android emulator instructions
+* Standard npm scripts
+* Clear environment-variable documentation
+* An `.env.example` file if environment variables are used
+* A clear folder structure
+* Comments only where they add meaningful context
+* No hard-coded Replit URLs
+* No Replit-specific dependencies unless absolutely necessary
+* A CHANGELOG file
+* An ARCHITECTURE.md file
+* A DECISIONS.md file for important technical decisions
+* A known-limitations section
+* A migration checklist for running the project locally
+
+Use Git commits at the end of each major implementation phase.
+
+Do not place unrelated features into one large component.
+
+Separate the application into clear domains:
+
+1. User interface
+2. Navigation
+3. Game setup
+4. Active session state
+5. Roll event recording
+6. Local persistence
+7. Statistical calculations
+8. Game-specific rules
+9. Share-card generation
+10. Future external input sources
+
+DATA ARCHITECTURE
+
+Treat every recorded roll as an immutable event.
+
+Do not store only aggregate statistics.
+
+Create structured models similar to the following.
+
+Player:
+
+* id
+* displayName
+* color
+* seatNumber
+* createdAt
+
+GameSession:
+
+* id
+* gameType
+* optional customGameName
+* diceMode
+* minimumRoll
+* maximumRoll
+* players
+* currentPlayerIndex
+* autoAdvancePlayer
+* startedAt
+* endedAt
+* status
+* winnerPlayerId
+* placements
+* settings
+* finalVerdict
+* schemaVersion
+
+RollEvent:
+
+* id
+* sessionId
+* playerId
+* value
+* optional individualDiceValues
+* turnNumber
+* sequenceNumber
+* timestamp
+* source
+* deletedAt
+* correctionOfEventId
+
+The roll source should support values such as:
+
+* touchscreen
+* futureBluetoothDevice
+* imported
+* corrected
+
+CatanPlayerExposureEvent:
+
+* id
+* sessionId
+* playerId
+* eventType
+* turnNumber
+* timestamp
+* affectedNumbers
+* optional hexIdentifiers
+* productionWeight
+* resourceType
+* robberBlocked
+* notes
+
+Examples of exposure event types:
+
+* initialSettlement
+* settlementBuilt
+* cityUpgrade
+* buildingRemoved
+* robberBlockStarted
+* robberBlockEnded
+* manualCorrection
+
+AppSettings:
+
+* hapticsEnabled
+* soundEnabled
+* themePreference
+* reducedMotion
+* defaultDiceMode
+* defaultPlayerCount
+* defaultAutoAdvance
+* statisticsDetailLevel
+
+All statistical summaries should be calculated from the event data rather than becoming the only source of truth.
+
+ROLL INPUT SERVICE
+
+Create one reusable service for recording roll events.
+
+For example, all inputs should eventually flow through a function conceptually similar to:
+
+recordRoll({
+sessionId,
+playerId,
+value,
+individualDiceValues,
+source
+})
+
+The active-game screen must not directly manipulate aggregate statistics.
+
+The same service should eventually support:
+
+* Number-button input
+* Bluetooth hardware input
+* Imported game history
+* Corrected roll entries
+* Future voice or camera input, though those should not be built now
+
+PRIMARY NAVIGATION
+
+Create the following main areas:
+
+1. Home
+2. New Game
+3. Active Game
+4. Live Statistics
+5. Results
+6. History
+7. Settings
+
+Use intuitive mobile navigation.
+
+The active game must remain easy to return to while a session is in progress.
+
+HOME SCREEN
+
+Display:
+
+BAD LUCK OR SKILL ISSUE?
+
+Track every roll. Settle every excuse.
+
+Primary actions:
+
+* Quick Game
+* New Game
+* Resume Current Game, when applicable
+* History
+
+Secondary option:
+
+* Sign in to sync and save across devices
+
+For this build, selecting the sign-in option should show a polished explanation that accounts and cloud synchronization are planned but not yet available.
+
+Do not require authentication.
+
+QUICK GAME
+
+Quick Game should allow users to begin with minimal setup.
+
+Ask only for:
+
+* Game mode
+* Number of players
+
+Use default player names such as Player 1, Player 2, and so on.
+
+Default to automatic player advancement.
+
+Allow users to rename players later.
+
+NEW GAME SETUP
+
+Allow the user to select:
+
+* General Dice Game
+* Catan-Compatible Mode
+* Custom Game
+
+Do not use copyrighted artwork, logos, card designs, board layouts, fonts, or visual assets from Catan or any other existing board game.
+
+Use plain-text compatibility wording and original visual design.
+
+GENERAL DICE GAME SETUP
+
+Allow the user to configure:
+
+* Optional game name
+* Number of players from 1 through 8
+* Player names
+* Player colors
+* Dice mode:
+
+  * D4
+  * D6
+  * D8
+  * D10
+  * D12
+  * D20
+  * 2D6 Total
+  * Custom Range
+* Minimum and maximum values for Custom Range
+* Automatic player advancement on or off
+* Record individual dice values when relevant
+* Optional winner tracking
+* Optional placement tracking
+
+NUMBER ENTRY INTERFACE
+
+Do not use a rotary dial in the mobile app.
+
+Use a fast number-button interface.
+
+For D4, D6, D8, D10, D12, and D20:
+
+* Display every possible result as a large tappable button
+* Use a responsive grid
+* Keep all buttons visible without unnecessary scrolling when practical
+* Make each button large enough for quick use around a table
+* Record the value immediately when tapped
+* Provide clear visual and haptic confirmation
+* Advance the player automatically when enabled
+
+For 2D6 Total:
+
+* Display totals 2 through 12
+* Arrange the values logically
+* Make 6, 7, and 8 no harder to enter than other values
+* Record the total with one tap
+* Optionally allow long-pressing or opening a secondary control to record the two individual die values
+
+For Custom Range:
+
+* Use a responsive number grid for manageable ranges
+* For very large ranges, use a numeric keypad and confirmation control
+* Clearly show the selected value before confirmation when one-tap entry is not practical
+
+Provide persistent controls for:
+
+* Undo Last Roll
+* Previous Player
+* Next Player
+* Statistics
+* End Game
+
+Undo must be immediately available and require only one tap.
+
+ACTIVE GAME SCREEN
+
+Display prominently:
+
+* Game name or mode
+* Current player name
+* Current player color and seat number
+* Player number, such as Player 2 of 4
+* Total session rolls
+* Current player’s number of rolls
+* Last recorded roll
+* Current turn number
+* Elapsed game time
+
+The number grid should remain the visual focus.
+
+When a value is tapped:
+
+* Record the event
+* Briefly animate the button
+* Use optional haptic feedback
+* Update counters immediately
+* Show the recorded value clearly
+* Advance the player when enabled
+
+Allow a recently entered roll to be corrected.
+
+Do not permanently destroy the original event. Mark it corrected or deleted and create a replacement event.
+
+LIVE STATISTICS
+
+Provide an in-game statistics view with:
+
+* Total rolls
+* Rolls by player
+* Average roll
+* Median
+* Most common value
+* Least common value among observed values
+* Frequency count for every possible result
+* Observed percentage
+* Expected percentage
+* Observed versus expected difference
+* Longest repeated-value streak
+* Longest gap between selected values
+* Player-level roll summaries
+* Natural 1 and natural 20 counts for D20
+* Doubles count when individual 2D6 values are available
+
+For 2D6 totals, use the correct expected probability distribution:
+
+* 2: 1/36
+* 3: 2/36
+* 4: 3/36
+* 5: 4/36
+* 6: 5/36
+* 7: 6/36
+* 8: 5/36
+* 9: 4/36
+* 10: 3/36
+* 11: 2/36
+* 12: 1/36
+
+For single standard dice, use uniform probabilities.
+
+Do not describe normal random variation as evidence of unfair dice.
+
+Use clear sample-size warnings.
+
+Examples:
+
+* Early result — more rolls are needed.
+* This pattern is unusual, but still possible through random variation.
+* The session is too small for a confident verdict.
+
+CATAN-COMPATIBLE MODE
+
+Build a dedicated game-aware mode for a popular two-dice resource-production board game.
+
+Use the user-facing name:
+
+Catan-Compatible Mode
+
+Include a short disclaimer in an appropriate information area:
+
+“This is an independent companion tool and is not affiliated with or endorsed by the publishers or owners of Catan.”
+
+Do not copy the game’s artwork, board, hex graphics, icons, card appearance, typography, or trade dress.
+
+CATAN MODE PURPOSE
+
+Catan-Compatible Mode should distinguish between:
+
+1. Overall roll luck
+2. Player number exposure
+3. Actual production opportunities
+4. Initial placement strength
+5. Later expansion choices
+6. Robber-related disruption, when entered
+7. Final game outcome
+
+The app must never claim to fully measure skill because it cannot observe trades, card decisions, negotiations, resource spending, or every strategic choice.
+
+CATAN GAME SETUP
+
+Allow:
+
+* 3 to 6 players
+* Player names
+* Player colors
+* Turn order
+* Standard 2D6 roll entry
+* Optional setup of initial settlements
+* Optional detailed resource tracking
+* Optional robber tracking
+* Automatic player advancement
+* Winner and final placement entry
+
+INITIAL NUMBER EXPOSURE SETUP
+
+After player creation, offer two setup paths:
+
+1. Quick Catan Tracking
+2. Detailed Catan Tracking
+
+QUICK CATAN TRACKING
+
+For each player, allow the user to enter the numbers touched by the player’s two initial settlements.
+
+Each settlement may touch up to three numbered locations.
+
+Let the user tap numbers 2 through 12, excluding 7.
+
+Allow repeated number exposure when multiple locations share the same number.
+
+For each exposure:
+
+* Settlement contributes a production weight of 1
+* City contributes a production weight of 2
+
+Do not require resource types in Quick Mode.
+
+Show the resulting exposure summary for each player.
+
+Example:
+
+Alex:
+
+* 6 × 2 exposure
+* 8 × 1 exposure
+* 5 × 1 exposure
+* 9 × 1 exposure
+* 10 × 1 exposure
+
+DETAILED CATAN TRACKING
+
+Optionally allow each location to include:
+
+* Number
+* Resource type
+* Building type
+* Optional location identifier
+* Whether currently blocked by the robber
+
+Allow resource types to be entered using generic text labels and simple original icons or colors.
+
+Avoid copying proprietary artwork.
+
+IN-GAME CATAN ACTIONS
+
+The active Catan screen should prioritize roll entry.
+
+Also provide a clearly accessible Add Development action.
+
+Add Development should support:
+
+* Add Settlement
+* Upgrade Settlement to City
+* Remove or Correct Building
+* Start Robber Block
+* End Robber Block
+* Correct Previous Exposure
+
+For a new settlement:
+
+* Select player
+* Select up to three numbers
+* Optionally select resource types
+* Assign production weight 1
+* Record the turn when it became active
+
+For a city upgrade:
+
+* Select player
+* Select the existing settlement
+* Increase production weight from 1 to 2
+* Apply the increased weight only from that turn forward
+
+Do not apply later buildings retroactively to earlier rolls.
+
+ROBBER TRACKING
+
+Robber tracking must be optional.
+
+In Quick Mode:
+
+* Allow the user to mark a player’s exposure to a selected number as blocked
+* Allow the block to be removed later
+
+In Detailed Mode:
+
+* Allow blocking a specific entered location
+* Apply the block only during the turns when it was active
+
+Clearly explain that results are more accurate when robber effects are entered.
+
+CATAN STATISTICS
+
+Calculate:
+
+Overall roll statistics:
+
+* Frequency of totals 2 through 12
+* Expected versus actual counts
+* Seven frequency
+* Longest drought for each number
+* Longest streak between production rolls
+* Unusual hot and cold numbers
+
+Player exposure statistics:
+
+* Expected weighted production opportunities
+* Actual weighted production opportunities
+* Difference between expected and actual
+* Percentage above or below expectation
+* Initial placement probability strength
+* Number diversity
+* Dependence on high-probability numbers
+* Dependence on a narrow set of numbers
+* Production opportunities added through later development
+* Robber-adjusted production, when tracked
+* Resource-specific opportunities, when detailed tracking is enabled
+
+Use each building only during the portion of the game when it existed.
+
+INITIAL PLACEMENT STRENGTH
+
+Create a clearly documented placement-strength calculation based on the theoretical probability of each occupied number.
+
+The app may calculate a probability-weighted exposure score.
+
+Clearly label this as a limited estimate.
+
+Do not call it a complete strategy score.
+
+Explain that ports, resource balance, board position, opponent behavior, trading opportunities, and development options are not fully represented.
+
+CATAN VERDICT LOGIC
+
+Generate separate findings for:
+
+* Roll Luck
+* Exposure Luck
+* Placement Strength
+* Development Impact
+* Final Outcome
+
+Possible player-level results:
+
+* Strong Numbers, Bad Results
+* Weak Numbers, Lucky Results
+* Statistically Unfortunate
+* Dice-Favored
+* Balanced Exposure
+* Too Dependent on One Number
+* Diversified and Unlucky
+* The Dice Were Not the Problem
+* Not Enough Data
+* Mixed Verdict
+
+Examples:
+
+BAD LUCK
+
+“Jordan selected strong number exposure, but those numbers produced 22% fewer opportunities than expected.”
+
+SKILL-ISSUE LEANING
+
+“Taylor’s occupied numbers rolled close to expectation, but the initial probability coverage was below the table average.”
+
+MIXED
+
+“Chris began with weak coverage and also experienced below-expected production.”
+
+LUCKY
+
+“Alex’s number exposure outperformed expectation by 28%.”
+
+Do not use exact statistical confidence language unless the calculation supports it.
+
+Do not state that the app has proven a player is bad at the game.
+
+CATAN LIVE SCREEN
+
+Display:
+
+* Current player
+* Turn number
+* Total rolls
+* Last roll
+* Roll number buttons 2 through 12
+* Prominent 7 button
+* Undo
+* Previous Player
+* Next Player
+* Add Development
+* Live Statistics
+* End Game
+
+Make roll entry possible with one tap.
+
+After a 7 is entered, optionally show a small nonblocking prompt:
+
+“Update robber location?”
+
+Options:
+
+* Update
+* Not now
+* Do not ask again this game
+
+Do not interrupt the main roll-recording flow unnecessarily.
+
+END GAME FLOW
+
+When the user ends a game:
+
+* Ask for the winner
+* Optionally ask for final placements
+* Allow users to confirm or edit player names
+* Ask whether any missing developments should be entered
+* Generate overall and player-level results
+* Save the completed session locally
+
+RESULTS SCREEN
+
+For a general game, display:
+
+* Winner
+* Final placement
+* Total rolls
+* Duration
+* Overall distribution
+* Expected versus actual results
+* Player roll counts
+* Player averages
+* Notable streaks
+* Critical successes and failures
+* Overall verdict
+* Player accolades
+
+For Catan-Compatible Mode, also display:
+
+* Initial exposure strength
+* Expected production opportunities
+* Actual production opportunities
+* Production difference
+* Robber-adjusted results when available
+* Strongest-performing occupied number
+* Weakest-performing occupied number
+* Luckiest player
+* Most unfortunate player
+* Best initial probability coverage
+* Most diversified coverage
+* Most number-dependent player
+* Winner’s luck-versus-exposure summary
+
+VERDICT SYSTEM
+
+Possible overall verdict categories:
+
+* Too Early to Tell
+* Bad Luck
+* Dice Were Fair
+* Suspiciously Lucky
+* Skill Issue
+* Bad Luck and a Skill Issue
+* The Dice Have Been Cleared of Wrongdoing
+* Mixed Evidence
+
+Because strategy is only partially observable, distinguish between:
+
+* Dice luck
+* Number exposure
+* Measured decision inputs
+* Unmeasured strategy
+
+Use humorous language in headlines and careful language in explanations.
+
+Example:
+
+SKILL ISSUE?
+
+“The dice were close to expectation. This app cannot evaluate trading, negotiation, resource management, or tactical decisions.”
+
+SHAREABLE RESULT CARDS
+
+Create polished shareable result cards.
+
+Support:
+
+* Saving as an image
+* Native share sheet
+* Copying a text summary
+
+Create several original card templates:
+
+* Verdict Card
+* Player Accolade Card
+* Game Summary Card
+* Rivalry Card
+* Catan-Compatible Production Card
+
+Possible share-card headlines:
+
+* BAD LUCK CONFIRMED
+* THE DICE HAVE BEEN CLEARED
+* SUSPICIOUSLY FORTUNATE
+* STRONG NUMBERS, TERRIBLE RESULTS
+* SKILL ISSUE?
+* THE TABLE OWES YOU AN APOLOGY
+* ROBBED BY VARIANCE
+* CHAOS AGENT
+* MOST CURSED
+* LUCKIEST PLAYER
+
+A result card may include:
+
+* Product name
+* Game name
+* Final verdict
+* Winner
+* Player accolade
+* One or two supporting statistics
+* Date
+* Number of rolls
+* Small app watermark
+
+Never claim the player’s “most valuable numbers” underperformed unless number exposure was actually entered.
+
+HISTORY
+
+Save incomplete and completed sessions locally.
+
+History cards should include:
+
+* Date
+* Game type
+* Game name
+* Players
+* Winner
+* Dice mode
+* Number of rolls
+* Duration
+* Final verdict
+
+Allow:
+
+* Opening completed sessions
+* Resuming incomplete sessions
+* Duplicating game setup
+* Deleting sessions after confirmation
+* Exporting a text or JSON summary for testing and support
+
+SETTINGS
+
+Include:
+
+* Haptics on or off
+* Sound on or off
+* Reduced motion
+* Theme preference
+* Default player count
+* Default automatic advancement
+* Default dice mode
+* Clear local data
+* Export local data
+* Import supported backup format
+* About
+* Statistical methodology
+* Catan compatibility disclaimer
+* Privacy summary
+
+LOCAL STORAGE
+
+Choose a reliable local persistence strategy appropriate for structured Expo application data.
+
+The storage system should:
+
+* Persist sessions across app restarts
+* Support schema versioning
+* Support migrations
+* Avoid losing active games
+* Save after every meaningful event
+* Handle malformed or incomplete records safely
+* Allow future synchronization with a cloud service
+
+Document the choice in ARCHITECTURE.md.
+
+STATISTICS MODULE
+
+Create pure, reusable, unit-tested functions for:
+
+* Frequency counts
+* Percentages
+* Mean
+* Median
+* Mode
+* Expected values
+* Expected counts
+* Expected percentages
+* Actual-versus-expected differences
+* Per-player summaries
+* Streaks
+* Droughts
+* Natural 1 and 20 counts
+* Doubles
+* 2D6 probability calculations
+* Weighted exposure calculations
+* Time-aware exposure calculations
+* Robber-adjusted production
+* Placement probability scores
+* Cautious verdict classifications
+
+Keep user-facing language separate from the calculation functions.
+
+Create a verdict content layer that converts calculation results into careful, playful wording.
+
+Do not mix humorous copy directly into statistical formulas.
+
+STATISTICAL RESPONSIBILITY
+
+Do not overstate conclusions.
+
+Include:
+
+* Sample-size warnings
+* Methodology explanations
+* Clear separation between observed results and expected results
+* Clear separation between luck and strategy
+* Explicit acknowledgement of untracked game factors
+* Avoidance of claims that physical dice are loaded or unfair without sufficient evidence
+
+DESIGN DIRECTION
+
+Create an original premium tabletop-electronics visual identity.
+
+Use:
+
+* Dark charcoal or graphite surfaces
+* Warm amber or gold accent colors
+* High contrast
+* Large readable numbers
+* Rounded panels
+* Tactile-looking number buttons
+* Subtle animations
+* Clear player colors and labels
+* Clean charts
+* Strong end-of-game verdict displays
+
+Avoid:
+
+* Casino aesthetics
+* Slot-machine imagery
+* Existing board-game artwork
+* Overly childish graphics
+* Cluttered dashboards
+* Excessive gradients
+* Tiny text
+* Hidden essential controls
+
+The app should feel like the software companion to a premium physical tabletop device.
+
+ACCESSIBILITY
+
+Include:
+
+* Large touch targets
+* Screen-reader labels
+* High contrast
+* Player names in addition to colors
+* Optional haptics
+* Optional sound
+* Reduced-motion support
+* Clear error messages
+* Keyboard accessibility where practical
+* No information communicated only through color
+
+TESTING REQUIREMENTS
+
+Create unit tests for all core statistical and event-management functions.
+
+Test these full flows:
+
+GENERAL GAME TESTS
+
+1. Start a two-player D6 game.
+2. Record at least 20 rolls.
+3. Confirm automatic player advancement.
+4. Undo a roll.
+5. Correct a roll.
+6. Confirm totals and statistics update correctly.
+7. End the game.
+8. Select a winner.
+9. Generate results.
+10. Create a share card.
+11. Close and reopen the app.
+12. Confirm history persists.
+13. Resume an unfinished game.
+14. Test D20 from 1 through 20.
+15. Test 2D6 probabilities.
+16. Test a custom range.
+
+CATAN-COMPATIBLE TESTS
+
+1. Start a four-player Catan-compatible game.
+2. Enter two initial settlements for each player.
+3. Verify repeated number exposure is supported.
+4. Record at least 50 2D6 totals.
+5. Add a settlement midway through the game.
+6. Upgrade a settlement to a city later.
+7. Confirm the new production weight is not applied retroactively.
+8. Add and remove a robber block.
+9. Verify robber-adjusted results.
+10. Undo and correct a roll.
+11. Confirm player turn advancement.
+12. End the game.
+13. Enter winner and placements.
+14. Generate player-level luck and exposure summaries.
+15. Generate a share card.
+16. Confirm all results persist after restarting the app.
+
+Create representative test fixtures for:
+
+* Uniform dice
+* 2D6
+* Strong exposure with bad outcomes
+* Weak exposure with lucky outcomes
+* Exposure changes during the game
+* Robber blocks
+* Small sample sizes
+* Corrected events
+
+IMPLEMENTATION PHASES
+
+Build in controlled phases.
+
+PHASE 1: FOUNDATION
+
+* Initialize portable Expo project
+* Configure TypeScript
+* Configure routing
+* Create data models
+* Create local persistence
+* Create Git repository
+* Create README
+* Create ARCHITECTURE.md
+* Create DECISIONS.md
+* Create CHANGELOG
+* Build Home and New Game screens
+
+Commit the completed phase.
+
+PHASE 2: GENERAL GAMEPLAY
+
+* Build active game state
+* Build number-button interfaces
+* Record roll events
+* Add player advancement
+* Add undo
+* Add correction
+* Add resume functionality
+* Add active-session persistence
+
+Commit the completed phase.
+
+PHASE 3: GENERAL STATISTICS
+
+* Build pure statistics functions
+* Add unit tests
+* Build live statistics screen
+* Add verdict framework
+* Build results screen
+
+Commit the completed phase.
+
+PHASE 4: CATAN-COMPATIBLE MODE
+
+* Add exposure models
+* Build initial placement setup
+* Build Quick and Detailed modes
+* Add in-game development events
+* Add robber tracking
+* Build time-aware production calculations
+* Add Catan-specific statistics
+* Add careful Catan verdict language
+* Add tests
+
+Commit the completed phase.
+
+PHASE 5: HISTORY AND SHARING
+
+* Build history
+* Build session details
+* Build share-card generation
+* Add native sharing
+* Add export functionality
+* Add settings
+
+Commit the completed phase.
+
+PHASE 6: POLISH AND REVIEW
+
+* Improve performance
+* Improve accessibility
+* Add haptics
+* Add reduced-motion handling
+* Review all error states
+* Confirm persistence reliability
+* Run all tests
+* Remove dead code
+* Review TypeScript errors
+* Review dependency necessity
+* Update documentation
+
+Commit the completed phase.
+
+AGENT WORKING RULES
+
+Do not attempt to build all phases simultaneously.
+
+At the beginning:
+
+1. Review this specification.
+2. Propose the intended folder structure.
+3. Propose the local storage method.
+4. Identify any technical risks.
+5. Then begin Phase 1.
+
+At the end of every phase:
+
+* Run the app
+* Run tests
+* Resolve TypeScript errors
+* Summarize what was completed
+* List files added or changed
+* Document major decisions
+* Commit the phase
+* Do not begin the next phase until the current phase functions correctly
+
+Do not silently replace major libraries or architectural decisions.
+
+Do not add unrequested features.
+
+Do not add authentication, cloud services, payments, public social feeds, comments, messaging, camera recognition, voice recognition, smartwatch input, or Bluetooth in this version.
+
+FINAL DELIVERABLES
+
+Provide:
+
+* Working Expo project
+* Complete source code
+* Unit tests
+* README
+* ARCHITECTURE.md
+* DECISIONS.md
+* CHANGELOG
+* Local setup instructions
+* Expo Go testing instructions
+* Android emulator instructions
+* Known limitations
+* Statistical methodology notes
+* Data-model documentation
+* Git commit history by phase
+* A clear list of recommended next steps
+* A Claude Code migration checklist
+
+The finished project must be possible to export from Replit, clone from GitHub, install locally, and continue developing with Claude Code without restructuring the entire application.
