@@ -33,7 +33,7 @@ export default function HomeScreen() {
     }
   };
 
-  const handleQuickGame = () => { haptic(); router.push('/new-game'); };
+  const handleQuickGame = () => { haptic(); router.push('/new-game/quick-game'); };
   const handleNewGame   = () => { haptic(); router.push('/new-game'); };
   const handleResume    = () => { if (!activeSession) return; haptic(); router.push('/active-game'); };
   const handleHistory   = () => { haptic(); router.navigate('/history'); };

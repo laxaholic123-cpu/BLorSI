@@ -16,6 +16,7 @@ export default function NewGameLayout() {
     >
       {/* index screen manages its own header */}
       <Stack.Screen name="index" options={{ headerShown: false }} />
+      <Stack.Screen name="quick-game" options={{ headerShown: false }} />
       <Stack.Screen name="general" options={{ title: 'General Dice Game' }} />
       <Stack.Screen name="catan" options={{ title: 'Catan-Compatible Mode' }} />
       <Stack.Screen name="custom" options={{ title: 'Custom Game' }} />
