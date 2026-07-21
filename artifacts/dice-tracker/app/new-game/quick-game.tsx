@@ -33,8 +33,12 @@ export default function QuickGameScreen() {
   const { startSession } = useGame();
   const { settings } = useSettings();
 
-  const [diceMode, setDiceMode] = useState<DiceMode>('2D6');
-  const [playerCount, setPlayerCount] = useState(2);
+  const [diceMode, setDiceMode] = useState<DiceMode>(() =>
+    settings.defaultDiceMode === 'custom' ? '2D6' : settings.defaultDiceMode
+  );
+  const [playerCount, setPlayerCount] = useState(() =>
+    Math.min(Math.max(1, settings.defaultPlayerCount), 8)
+  );
   const [isStarting, setIsStarting] = useState(false);
 
   const webTop = Platform.OS === 'web' ? 67 : 0;
