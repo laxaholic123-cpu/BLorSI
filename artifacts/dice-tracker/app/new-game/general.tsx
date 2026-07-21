@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -18,6 +18,10 @@ import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { useGame } from '@/context/GameContext';
 import { useSettings } from '@/context/SettingsContext';
+import {
+  clearPrefillSession,
+  loadPrefillSession,
+} from '@/services/storage';
 import {
   DICE_RANGES,
   PLAYER_COLORS,
@@ -120,14 +124,37 @@ export default function GeneralGameSetupScreen() {
   const { settings } = useSettings();
 
   const [gameName, setGameName] = useState('');
-  const [diceMode, setDiceMode] = useState<DiceMode>('2D6');
+  // Initialise from saved settings; prefill effect below may override
+  const [diceMode, setDiceMode] = useState<DiceMode>(() => settings.defaultDiceMode);
   const [customMin, setCustomMin] = useState('1');
   const [customMax, setCustomMax] = useState('10');
-  const [playerCount, setPlayerCount] = useState(2);
+  const [playerCount, setPlayerCount] = useState(() => Math.min(Math.max(1, settings.defaultPlayerCount), 8));
   const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>(defaultConfigs);
-  const [autoAdvance, setAutoAdvance] = useState(true);
+  const [autoAdvance, setAutoAdvance] = useState(() => settings.defaultAutoAdvance);
   const [trackWinner, setTrackWinner] = useState(true);
   const [isStarting, setIsStarting] = useState(false);
+
+  // Consume any saved prefill from "Duplicate Setup" — runs once on mount
+  useEffect(() => {
+    void (async () => {
+      const prefill = await loadPrefillSession();
+      if (!prefill || prefill.gameType === 'catan') return; // Catan prefill handled by catan.tsx
+      await clearPrefillSession();
+      if (prefill.diceMode) setDiceMode(prefill.diceMode as DiceMode);
+      const pc = Math.min(Math.max(1, prefill.players.length), 8);
+      setPlayerCount(pc);
+      setAutoAdvance(prefill.autoAdvancePlayer);
+      if (prefill.customGameName) setGameName(prefill.customGameName);
+      setPlayerConfigs(prev => {
+        const next = [...prev];
+        prefill.players.forEach((player, i) => {
+          if (i < next.length) next[i] = { name: player.displayName, color: player.color };
+        });
+        return next;
+      });
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const webBottom = Platform.OS === 'web' ? 34 : 0;
 

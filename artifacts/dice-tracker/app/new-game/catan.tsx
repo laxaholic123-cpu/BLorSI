@@ -12,7 +12,7 @@
  *      → createSession() then navigate to appropriate exposure screen
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -32,6 +32,10 @@ import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { useGame } from '@/context/GameContext';
 import { useSettings } from '@/context/SettingsContext';
+import {
+  clearPrefillSession,
+  loadPrefillSession,
+} from '@/services/storage';
 import {
   PLAYER_COLORS,
   SCHEMA_VERSION,
@@ -99,13 +103,37 @@ export default function CatanGameSetupScreen() {
   const { startSession } = useGame();
   const { settings } = useSettings();
 
-  const [playerCount, setPlayerCount] = useState(4);
+  // Catan supports 3–6 players; clamp the saved default to that range
+  const [playerCount, setPlayerCount] = useState(() => Math.min(Math.max(3, settings.defaultPlayerCount), 6));
   const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>(defaultConfigs);
-  const [autoAdvance, setAutoAdvance] = useState(true);
+  const [autoAdvance, setAutoAdvance] = useState(() => settings.defaultAutoAdvance);
   const [trackWinner, setTrackWinner] = useState(true);
   const [trackPlacements, setTrackPlacements] = useState(false);
   const [robberTracking, setRobberTracking] = useState(true);
   const [isStarting, setIsStarting] = useState(false);
+
+  // Consume any saved Catan prefill from "Duplicate Setup" — runs once on mount
+  useEffect(() => {
+    void (async () => {
+      const prefill = await loadPrefillSession();
+      if (!prefill || prefill.gameType !== 'catan') return;
+      await clearPrefillSession();
+      const pc = Math.min(Math.max(3, prefill.players.length), 6);
+      setPlayerCount(pc);
+      setAutoAdvance(prefill.autoAdvancePlayer);
+      if (prefill.settings.trackWinner !== undefined) setTrackWinner(prefill.settings.trackWinner);
+      if (prefill.settings.trackPlacements !== undefined) setTrackPlacements(prefill.settings.trackPlacements);
+      if (prefill.settings.catanRobberTracking !== undefined) setRobberTracking(prefill.settings.catanRobberTracking);
+      setPlayerConfigs(prev => {
+        const next = [...prev];
+        prefill.players.forEach((player, i) => {
+          if (i < next.length) next[i] = { name: player.displayName, color: player.color };
+        });
+        return next;
+      });
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const webBottom = Platform.OS === 'web' ? 34 : 0;
 
