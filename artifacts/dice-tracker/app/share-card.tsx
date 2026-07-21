@@ -31,7 +31,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 import { captureRef } from 'react-native-view-shot';
 import { useColors } from '@/hooks/useColors';
@@ -172,6 +171,19 @@ export default function ShareCardScreen() {
   const handleSaveImage = async () => {
     if (Platform.OS === 'web') {
       Alert.alert('Not available', 'Saving to camera roll is not supported in web preview.');
+      return;
+    }
+    // Lazy-load expo-media-library so the screen doesn't crash in Expo Go,
+    // which doesn't bundle this native module.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    let MediaLibrary: typeof import('expo-media-library');
+    try {
+      MediaLibrary = require('expo-media-library');
+    } catch {
+      Alert.alert(
+        'Not available in Expo Go',
+        'Saving to Photos requires a development build. Use "Share Image" to save via the share sheet instead.',
+      );
       return;
     }
     haptic(Haptics.ImpactFeedbackStyle.Medium);
