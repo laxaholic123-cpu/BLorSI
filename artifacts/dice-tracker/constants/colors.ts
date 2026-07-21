@@ -1,12 +1,7 @@
 /**
- * Design tokens for Bad Luck or Skill Issue?
+ * Design tokens for Skill Check
  *
- * Visual identity: premium tabletop electronics — dark charcoal surfaces,
- * warm amber/gold accents, high contrast, tactile feel.
- *
- * Both light and dark keys use the same dark theme so the app always renders
- * in the charcoal+amber palette regardless of system appearance setting.
- * A future light theme can replace the `light` key values (Phase 6).
+ * Visual identity: premium dark surfaces with jewel-tone teal accents.
  */
 
 const palette = {
@@ -22,16 +17,15 @@ const palette = {
   foreground: '#F0F0F0',
   mutedForeground: '#888888',
 
-  // Amber / gold accent
-  primary: '#F5A623',
-  primaryForeground: '#141414',
-  accent: '#E8960A',
-  accentForeground: '#141414',
+  // Teal / jewel-tone accent
+  primary: '#1ABC9C',
+  primaryForeground: '#FFFFFF',
+  accent: '#16A085',
+  accentForeground: '#FFFFFF',
 
-  // Card text inherits foreground
+  // Card text
   cardForeground: '#F0F0F0',
   secondaryForeground: '#F0F0F0',
-  accentForegroundAlt: '#1a1a1a',
 
   // Destructive
   destructive: '#E53E3E',
@@ -39,13 +33,12 @@ const palette = {
 
   // Legacy aliases
   text: '#F0F0F0',
-  tint: '#F5A623',
+  tint: '#1ABC9C',
 };
 
 const colors = {
   light: palette,
   dark: palette,
-  /** Border radius in px — applied to cards, buttons, inputs, and modals */
   radius: 12,
 };
 
