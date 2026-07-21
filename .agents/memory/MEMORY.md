@@ -1,0 +1,1 @@
+- [Phase 1 foundation decisions](phase1-foundation.md) — AsyncStorage key prefix `blosi:`, immutable roll events, no backend, dark-only theme; storage and context patterns for future phases.
