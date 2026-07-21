@@ -11,7 +11,7 @@
  * This tool is not affiliated with or endorsed by the publishers or owners of Catan.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Modal,
@@ -70,7 +70,8 @@ export default function ActiveCatanScreen() {
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState('');
   const [robberPromptState, setRobberPromptState] = useState<RobberPromptState>('idle');
-  const [robberRobbed, setRobberRobbed] = useState<string | null>(null); // playerId
+  const [robberHexNumber, setRobberHexNumber] = useState<number | null>(null);
+  const [robberRollerPlayerId, setRobberRollerPlayerId] = useState<string | null>(null);
   const [robberDontAskAgain, setRobberDontAskAgain] = useState(false);
 
   const webTop = Platform.OS === 'web' ? 67 : 0;
@@ -103,6 +104,11 @@ export default function ActiveCatanScreen() {
     if (settings.hapticsEnabled) void Haptics.impactAsync(style);
   };
 
+  // Clear grid highlight whenever the active player changes (auto-advance or manual Prev/Next)
+  useEffect(() => {
+    setLastPressedValue(null);
+  }, [activeSession?.currentPlayerIndex]);
+
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
   const handleRoll = async (value: number) => {
@@ -129,7 +135,8 @@ export default function ActiveCatanScreen() {
       !robberDontAskAgain &&
       robberPromptState !== 'dismissed_this_session'
     ) {
-      setRobberRobbed(null);
+      setRobberHexNumber(null);
+      setRobberRollerPlayerId(currentPlayer.id);
       setRobberPromptState('showing');
     }
   };
@@ -150,12 +157,14 @@ export default function ActiveCatanScreen() {
   const handlePrevPlayer = async () => {
     if (!activeSession || !isMultiPlayer) return;
     haptic();
+    setLastPressedValue(null);
     await updateSession({ ...activeSession, currentPlayerIndex: getPrevPlayerIndex(activeSession.currentPlayerIndex, activeSession.players.length) });
   };
 
   const handleNextPlayer = async () => {
     if (!activeSession || !isMultiPlayer) return;
     haptic();
+    setLastPressedValue(null);
     await updateSession({ ...activeSession, currentPlayerIndex: getNextPlayerIndex(activeSession.currentPlayerIndex, activeSession.players.length) });
   };
 
@@ -169,11 +178,11 @@ export default function ActiveCatanScreen() {
         {
           text: 'End Game',
           style: 'destructive',
-          onPress: async () => {
+          onPress: () => {
             if (!activeSession) return;
             playDoneSound(settings.soundEnabled);
-            await updateSession({ ...activeSession, status: 'completed', endedAt: new Date().toISOString() });
-            router.replace('/results');
+            void updateSession({ ...activeSession, status: 'completed', endedAt: new Date().toISOString() })
+              .then(() => { router.replace('/results'); });
           },
         },
       ],
@@ -203,27 +212,22 @@ export default function ActiveCatanScreen() {
 
   const handleRobberConfirm = async () => {
     if (!activeSession) return;
-    // Record the robber event as a block that will be ended on the next 7
-    // For quick mode: block the robbed player's best number
-    if (robberRobbed) {
-      const robbedPlayer = activeSession.players.find(p => p.id === robberRobbed);
-      if (robbedPlayer) {
-        // Create a robber block event — ends when a new robber block starts
-        const blockId = 'rblock_' + generateId();
-        const blockEvent: CatanPlayerExposureEvent = {
-          id: generateId(),
-          sessionId: activeSession.id,
-          playerId: robberRobbed,
-          eventType: 'robberBlockStarted',
-          turnNumber,
-          timestamp: new Date().toISOString(),
-          affectedNumbers: [], // not tracking specific numbers in quick prompt
-          hexIdentifiers: [blockId],
-          productionWeight: 0,
-          robberBlocked: true,
-        };
-        await persistExposureEvents(activeSession.id, [...exposureEvents, blockEvent]);
-      }
+    // Record where the robber was placed — attributed to the player who rolled the 7
+    if (robberHexNumber !== null && robberRollerPlayerId) {
+      const blockId = 'rblock_' + generateId();
+      const blockEvent: CatanPlayerExposureEvent = {
+        id: generateId(),
+        sessionId: activeSession.id,
+        playerId: robberRollerPlayerId,
+        eventType: 'robberBlockStarted',
+        turnNumber,
+        timestamp: new Date().toISOString(),
+        affectedNumbers: [robberHexNumber],
+        hexIdentifiers: [blockId],
+        productionWeight: 0,
+        robberBlocked: true,
+      };
+      await persistExposureEvents(activeSession.id, [...exposureEvents, blockEvent]);
     }
     if (robberDontAskAgain) setRobberPromptState('dismissed_this_session');
     else setRobberPromptState('idle');
@@ -423,6 +427,39 @@ export default function ActiveCatanScreen() {
         </View>
       </View>
 
+      {/* ── Build actions row ──────────────────────────────────────────────────── */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={[styles.buildRow, { borderTopColor: colors.border, borderBottomColor: colors.border }]}
+        contentContainerStyle={styles.buildRowContent}
+      >
+        <TouchableOpacity
+          style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
+          onPress={() => router.push('/catan-development?action=add_settlement' as any)}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="home-outline" size={14} color={colors.primary} />
+          <Text style={[styles.buildPillText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>Settlement</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
+          onPress={() => router.push('/catan-development?action=upgrade_city' as any)}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="business-outline" size={14} color={colors.primary} />
+          <Text style={[styles.buildPillText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>City</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
+          onPress={() => router.push('/catan-development' as any)}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="ellipsis-horizontal-circle-outline" size={14} color={colors.mutedForeground} />
+          <Text style={[styles.buildPillText, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>More…</Text>
+        </TouchableOpacity>
+      </ScrollView>
+
       {/* ── Controls bar ───────────────────────────────────────────────────────── */}
       <View style={[styles.controls, { borderTopColor: colors.border, backgroundColor: colors.background }]}>
         <TouchableOpacity style={[styles.controlBtn, { opacity: canUndo ? 1 : 0.35 }]} onPress={handleUndo} disabled={!canUndo} accessibilityRole="button" accessibilityLabel="Undo last roll" accessibilityState={{ disabled: !canUndo }}>
@@ -438,11 +475,6 @@ export default function ActiveCatanScreen() {
         <TouchableOpacity style={[styles.controlBtn, { opacity: isMultiPlayer ? 1 : 0.2 }]} onPress={handleNextPlayer} disabled={!isMultiPlayer} accessibilityRole="button" accessibilityLabel="Next player" accessibilityState={{ disabled: !isMultiPlayer }}>
           <Ionicons name="chevron-forward-circle-outline" size={22} color={colors.foreground} />
           <Text style={[styles.controlBtnText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>Next</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.controlBtn} onPress={() => router.push('/catan-development' as any)} accessibilityRole="button" accessibilityLabel="Development actions">
-          <Ionicons name="construct-outline" size={22} color={colors.primary} />
-          <Text style={[styles.controlBtnText, { color: colors.primary, fontFamily: 'Inter_500Medium' }]}>Dev</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.controlBtn} onPress={() => router.push('/stats' as any)} accessibilityRole="button" accessibilityLabel="View statistics">
@@ -464,36 +496,33 @@ export default function ActiveCatanScreen() {
             <Text style={[styles.robberTitle, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
               🎲 7 Rolled — Robber Moves
             </Text>
-            {isMultiPlayer && (
-              <>
-                <Text style={[styles.robberSub, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-                  Who did you rob? (optional)
-                </Text>
-                <ScrollView style={styles.robberPlayerList} showsVerticalScrollIndicator={false}>
-                  {activeSession.players
-                    .filter(p => p.id !== currentPlayer?.id)
-                    .map(player => {
-                      const selected = robberRobbed === player.id;
-                      return (
-                        <TouchableOpacity
-                          key={player.id}
-                          style={[styles.robberPlayerBtn, {
-                            backgroundColor: selected ? player.color + '22' : colors.muted,
-                            borderColor: selected ? player.color : colors.border,
-                          }]}
-                          onPress={() => setRobberRobbed(selected ? null : player.id)}
-                        >
-                          <View style={[styles.robberPlayerDot, { backgroundColor: player.color }]} />
-                          <Text style={[styles.robberPlayerName, { color: colors.foreground, fontFamily: selected ? 'Inter_700Bold' : 'Inter_400Regular' }]}>
-                            {player.displayName}
-                          </Text>
-                          {selected && <Ionicons name="checkmark-circle" size={18} color={player.color} />}
-                        </TouchableOpacity>
-                      );
-                    })}
-                </ScrollView>
-              </>
-            )}
+            <Text style={[styles.robberSub, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+              Where did the robber go? (optional)
+            </Text>
+            <View style={styles.robberHexGrid}>
+              {CATAN_NUMBERS.map(num => {
+                const selected = robberHexNumber === num;
+                return (
+                  <TouchableOpacity
+                    key={num}
+                    style={[styles.robberHexBtn, {
+                      backgroundColor: selected ? colors.destructive : colors.muted,
+                      borderColor: selected ? colors.destructive : colors.border,
+                    }]}
+                    onPress={() => setRobberHexNumber(selected ? null : num)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.robberHexBtnText, {
+                      color: selected ? '#FFFFFF' : colors.foreground,
+                      fontFamily: 'Inter_700Bold',
+                    }]}>{num}</Text>
+                    <Text style={[styles.robberHexBtnPips, {
+                      color: selected ? 'rgba(255,255,255,0.7)' : colors.mutedForeground,
+                    }]}>{'·'.repeat(PIPS[num] ?? 1)}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
 
             {/* Don't ask again */}
             <TouchableOpacity
@@ -521,7 +550,7 @@ export default function ActiveCatanScreen() {
                 onPress={handleRobberConfirm}
               >
                 <Text style={[styles.robberActionText, { color: colors.primaryForeground, fontFamily: 'Inter_700Bold' }]}>
-                  {robberRobbed ? 'Log Robber' : 'Dismiss'}
+                  {robberHexNumber !== null ? 'Log Robber' : 'Dismiss'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -597,10 +626,18 @@ const styles = StyleSheet.create({
   robberHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#555', alignSelf: 'center', marginBottom: 4 },
   robberTitle: { fontSize: 20, textAlign: 'center' },
   robberSub: { fontSize: 14, textAlign: 'center' },
-  robberPlayerList: { maxHeight: 180 },
-  robberPlayerBtn: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 12, borderWidth: 1, marginBottom: 8 },
-  robberPlayerDot: { width: 12, height: 12, borderRadius: 6 },
-  robberPlayerName: { flex: 1, fontSize: 15 },
+  // Build row
+  buildRow: { borderTopWidth: 1, borderBottomWidth: 1, flexGrow: 0, flexShrink: 0 },
+  buildRowContent: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingVertical: 8, alignItems: 'center' },
+  buildPill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1 },
+  buildPillText: { fontSize: 13 },
+
+  // Robber hex grid
+  robberHexGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
+  robberHexBtn: { width: 52, height: 52, borderRadius: 10, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  robberHexBtnText: { fontSize: 16 },
+  robberHexBtnPips: { fontSize: 8, letterSpacing: 0.5 },
+
   dontAskRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   checkbox: { width: 20, height: 20, borderRadius: 5, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   dontAskText: { fontSize: 13 },

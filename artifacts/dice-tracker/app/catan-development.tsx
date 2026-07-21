@@ -26,7 +26,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
@@ -57,7 +57,9 @@ export default function CatanDevelopmentScreen() {
   const { settings } = useSettings();
   const webTop = Platform.OS === 'web' ? 67 : 0;
 
-  const [selectedAction, setSelectedAction] = useState<ActionType>(null);
+  const { action: actionParam } = useLocalSearchParams<{ action?: string }>();
+  const initialAction = (ACTIONS.find(a => a.type === actionParam)?.type ?? null) as ActionType;
+  const [selectedAction, setSelectedAction] = useState<ActionType>(initialAction);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [selectedNumbers, setSelectedNumbers] = useState<number[]>([]);
