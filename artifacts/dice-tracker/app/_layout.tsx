@@ -39,6 +39,11 @@ function RootLayoutNav() {
       />
       {/* Results after a completed session */}
       <Stack.Screen name="results" options={{ headerShown: false }} />
+      {/* Live statistics — accessible as a modal from the active game */}
+      <Stack.Screen
+        name="stats"
+        options={{ headerShown: false, presentation: 'modal' }}
+      />
     </Stack>
   );
 }

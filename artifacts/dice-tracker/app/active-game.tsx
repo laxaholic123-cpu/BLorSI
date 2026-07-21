@@ -145,7 +145,8 @@ export default function ActiveGameScreen() {
               endedAt: new Date().toISOString(),
             };
             await updateSession(ended);
-            await endSession();
+            // endSession() is called by the results screen when the user taps Done,
+            // so activeSession remains readable while results are displayed.
             router.replace('/results');
           },
         },
@@ -395,12 +396,12 @@ export default function ActiveGameScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.controlBtn, { opacity: 0.35 }]}
-          disabled
+          style={styles.controlBtn}
+          onPress={() => router.push('/stats' as any)}
           testID="stats-button"
         >
-          <Ionicons name="bar-chart-outline" size={22} color={colors.mutedForeground} />
-          <Text style={[styles.controlBtnText, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+          <Ionicons name="bar-chart-outline" size={22} color={colors.primary} />
+          <Text style={[styles.controlBtnText, { color: colors.primary, fontFamily: 'Inter_500Medium' }]}>
             Stats
           </Text>
         </TouchableOpacity>
