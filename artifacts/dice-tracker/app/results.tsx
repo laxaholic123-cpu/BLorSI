@@ -27,11 +27,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { useGame } from '@/context/GameContext';
 import { computeAllStats, formatDuration } from '@/services/stats';
+import { computeCatanGameStats } from '@/services/catanStats';
+import type { CatanGameStats } from '@/types/catanStats';
 
 export default function ResultsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { activeSession, rollEvents, updateSession, endSession } = useGame();
+  const { activeSession, rollEvents, exposureEvents, updateSession, endSession } = useGame();
   const webTop = Platform.OS === 'web' ? 67 : 0;
 
   // Winner selection state
@@ -47,6 +49,14 @@ export default function ResultsScreen() {
   const stats = useMemo(
     () => (activeSession ? computeAllStats(activeSession, rollEvents) : null),
     [activeSession, rollEvents],
+  );
+
+  const catanStats = useMemo<CatanGameStats | null>(
+    () =>
+      activeSession?.gameType === 'catan'
+        ? computeCatanGameStats(activeSession, rollEvents, exposureEvents)
+        : null,
+    [activeSession, rollEvents, exposureEvents],
   );
 
   // ── No session guard ─────────────────────────────────────────────────────────
@@ -383,6 +393,143 @@ export default function ResultsScreen() {
                 <StatBox label="Expected" value={stats.expectedMean.toFixed(1)} colors={colors} />
               </View>
             </View>
+          </>
+        )}
+
+        {/* ── Catan production analysis ── */}
+        {catanStats && catanStats.hasExposureData && (
+          <>
+            <SectionLabel text="SETTLEMENT PRODUCTION" colors={colors} />
+
+            {/* Seven frequency */}
+            <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginBottom: 10 }]}>
+              <View style={[styles.eventRow, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
+                <Ionicons name="dice-outline" size={15} color={colors.destructive} />
+                <Text style={[styles.eventText, { color: colors.foreground, fontFamily: 'Inter_400Regular' }]}>
+                  <Text style={{ fontFamily: 'Inter_700Bold', color: colors.destructive }}>{catanStats.sevenCount}</Text>
+                  {' sevens — expected '}
+                  <Text style={{ fontFamily: 'Inter_700Bold' }}>{catanStats.sevenExpected}</Text>
+                  {' ('}
+                  <Text style={{ fontFamily: 'Inter_600SemiBold', color: catanStats.findings?.sevenFrequency === 'high' ? colors.destructive : catanStats.findings?.sevenFrequency === 'low' ? colors.primary : colors.mutedForeground }}>
+                    {catanStats.findings?.sevenFrequency ?? 'expected'} rate
+                  </Text>
+                  {')'}
+                </Text>
+              </View>
+              {catanStats.isSmallSample && (
+                <View style={styles.eventRow}>
+                  <Ionicons name="information-circle-outline" size={15} color={colors.mutedForeground} />
+                  <Text style={[styles.eventText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                    Small sample ({catanStats.totalRolls} rolls) — production analysis is indicative only.
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {/* Per-player production table */}
+            <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              {/* Header */}
+              <View style={[styles.freqHeader, { borderBottomColor: colors.border }]}>
+                <Text style={[{ flex: 1 }, styles.colHdr, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>PLAYER</Text>
+                <Text style={[{ width: 52, textAlign: 'right' }, styles.colHdr, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>EXP</Text>
+                <Text style={[{ width: 52, textAlign: 'right' }, styles.colHdr, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>GOT</Text>
+                <Text style={[{ width: 44, textAlign: 'right' }, styles.colHdr, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>±%</Text>
+              </View>
+              {catanStats.playerStats.map((ps, idx) => {
+                const player = activeSession.players.find(p => p.id === ps.playerId);
+                const isLast = idx === catanStats.playerStats.length - 1;
+                const luckPct = Math.round(ps.productionLuckPct);
+                const luckColor = luckPct > 10 ? colors.primary : luckPct < -10 ? colors.destructive : colors.mutedForeground;
+                return (
+                  <View
+                    key={ps.playerId}
+                    style={[
+                      styles.freqRow,
+                      { borderBottomColor: colors.border, borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth },
+                    ]}
+                  >
+                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <View style={[styles.playerDot, { backgroundColor: player?.color ?? colors.primary, width: 8, height: 8, borderRadius: 4 }]} />
+                      <Text style={[styles.freqText, { color: colors.foreground, fontFamily: 'Inter_600SemiBold', flex: 1 }]} numberOfLines={1}>
+                        {ps.displayName}
+                        {ps.playerId === activeSession.winnerPlayerId ? ' 🏆' : ''}
+                      </Text>
+                    </View>
+                    <Text style={[{ width: 52, textAlign: 'right' }, styles.freqText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                      {ps.totalExpectedProduction.toFixed(1)}
+                    </Text>
+                    <Text style={[{ width: 52, textAlign: 'right' }, styles.freqText, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
+                      {ps.totalActualProduction.toFixed(1)}
+                    </Text>
+                    <Text style={[{ width: 44, textAlign: 'right' }, styles.freqText, { color: luckColor, fontFamily: 'Inter_500Medium' }]}>
+                      {luckPct === 0 ? '—' : `${luckPct > 0 ? '+' : ''}${luckPct}%`}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+
+            {/* Placement strength */}
+            {catanStats.playerStats.some(p => p.placementStrength > 0) && (
+              <>
+                <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium', marginTop: 14 }]}>
+                  PLACEMENT STRENGTH
+                </Text>
+                <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  {catanStats.playerStats
+                    .slice()
+                    .sort((a, b) => b.placementStrength - a.placementStrength)
+                    .map((ps, idx, arr) => {
+                      const player = activeSession.players.find(p => p.id === ps.playerId);
+                      const rating = catanStats.findings?.placementRating[ps.playerId] ?? 'average';
+                      const ratingColor = rating === 'strong' ? colors.primary : rating === 'weak' ? colors.destructive : colors.mutedForeground;
+                      const isLast = idx === arr.length - 1;
+                      return (
+                        <View
+                          key={ps.playerId}
+                          style={[
+                            styles.freqRow,
+                            { borderBottomColor: colors.border, borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth },
+                          ]}
+                        >
+                          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <View style={[{ backgroundColor: player?.color ?? colors.primary, width: 8, height: 8, borderRadius: 4 }]} />
+                            <Text style={[styles.freqText, { color: colors.foreground, fontFamily: 'Inter_600SemiBold', flex: 1 }]} numberOfLines={1}>
+                              {ps.displayName}
+                            </Text>
+                          </View>
+                          <Text style={[styles.freqText, { color: ratingColor, fontFamily: 'Inter_600SemiBold', marginRight: 8 }]}>
+                            {rating}
+                          </Text>
+                          <Text style={[styles.freqText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', width: 52, textAlign: 'right' }]}>
+                            {(ps.placementStrength * 36).toFixed(1)} pip/roll
+                          </Text>
+                        </View>
+                      );
+                    })}
+                </View>
+              </>
+            )}
+
+            {/* Catan verdict */}
+            {catanStats.findings && (
+              <>
+                <SectionLabel text="SETTLEMENT VERDICT" colors={colors} />
+                <View style={[styles.verdictCard, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+                  <Text style={[styles.verdictHeadline, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+                    {catanStats.findings.headline}
+                  </Text>
+                  {catanStats.findings.details.map((detail, i) => (
+                    <Text key={i} style={[styles.verdictBody, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                      {detail}
+                    </Text>
+                  ))}
+                  <Text style={[styles.verdictNote, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginTop: 8 }]}>
+                    This is an independent companion tool and is not affiliated with or endorsed by the publishers or owners of Catan.
+                  </Text>
+                </View>
+              </>
+            )}
           </>
         )}
 

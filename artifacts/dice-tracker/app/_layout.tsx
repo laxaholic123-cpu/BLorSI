@@ -37,6 +37,25 @@ function RootLayoutNav() {
         name="active-game"
         options={{ headerShown: false, gestureEnabled: false }}
       />
+      {/* Active Catan Game — separate screen from general active-game */}
+      <Stack.Screen
+        name="active-catan"
+        options={{ headerShown: false, gestureEnabled: false }}
+      />
+      {/* Catan exposure setup screens */}
+      <Stack.Screen
+        name="catan-exposure-quick"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="catan-exposure-detailed"
+        options={{ headerShown: false }}
+      />
+      {/* Catan development actions — presented as a modal */}
+      <Stack.Screen
+        name="catan-development"
+        options={{ headerShown: false, presentation: 'modal' }}
+      />
       {/* Results after a completed session */}
       <Stack.Screen name="results" options={{ headerShown: false }} />
       {/* Live statistics — accessible as a modal from the active game */}

@@ -35,7 +35,16 @@ export default function HomeScreen() {
 
   const handleQuickGame = () => { haptic(); router.push('/new-game/quick-game'); };
   const handleNewGame   = () => { haptic(); router.push('/new-game'); };
-  const handleResume    = () => { if (!activeSession) return; haptic(); router.push('/active-game'); };
+  const handleResume    = () => {
+    if (!activeSession) return;
+    haptic();
+    // Route to the correct screen based on game type
+    if (activeSession.gameType === 'catan') {
+      router.push('/active-catan' as any);
+    } else {
+      router.push('/active-game');
+    }
+  };
   const handleHistory   = () => { haptic(); router.navigate('/history'); };
 
   const sessionLabel = activeSession
