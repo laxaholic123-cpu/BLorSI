@@ -49,6 +49,9 @@ export default function RootLayout() {
     Inter_500Medium,
     Inter_600SemiBold,
     Inter_700Bold,
+    // Preload Ionicons so icon glyphs render on web (native bundles it automatically)
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    Ionicons: require('@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf'),
   });
 
   useEffect(() => {

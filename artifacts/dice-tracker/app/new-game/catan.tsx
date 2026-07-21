@@ -1,10 +1,7 @@
 /**
- * Catan-Compatible Mode Setup — Phase 4
+ * Settlement Mode Setup — Phase 4
  *
  * Full implementation is built in Phase 4. This placeholder confirms the route exists.
- *
- * Disclaimer: This is an independent companion tool and is not affiliated with
- * or endorsed by the publishers or owners of Catan.
  */
 
 import React from 'react';
@@ -32,7 +29,7 @@ export default function CatanGameSetupScreen() {
             { color: colors.foreground, fontFamily: 'Inter_700Bold' },
           ]}
         >
-          Catan-Compatible Mode
+          Settlement Mode
         </Text>
         <Text
           style={[
@@ -52,15 +49,6 @@ export default function CatanGameSetupScreen() {
             Coming in Phase 4
           </Text>
         </View>
-        <Text
-          style={[
-            styles.disclaimer,
-            { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' },
-          ]}
-        >
-          This is an independent companion tool and is not affiliated with or endorsed by the
-          publishers or owners of Catan.
-        </Text>
       </View>
     </View>
   );

@@ -84,10 +84,17 @@ export default function HomeScreen() {
             activeOpacity={0.85}
             testID="quick-game-button"
           >
-            <Ionicons name="flash" size={20} color={colors.primaryForeground} />
-            <Text style={[styles.primaryBtnText, { color: colors.primaryForeground, fontFamily: 'Inter_700Bold' }]}>
-              Quick Game
-            </Text>
+            <View style={styles.btnInner}>
+              <View style={styles.btnRow}>
+                <Ionicons name="flash" size={20} color={colors.primaryForeground} />
+                <Text style={[styles.primaryBtnText, { color: colors.primaryForeground, fontFamily: 'Inter_700Bold' }]}>
+                  Quick Game
+                </Text>
+              </View>
+              <Text style={[styles.btnSub, { color: colors.primaryForeground }]}>
+                Pick a die, pick players — go
+              </Text>
+            </View>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -96,10 +103,17 @@ export default function HomeScreen() {
             activeOpacity={0.85}
             testID="new-game-button"
           >
-            <Ionicons name="add-circle-outline" size={20} color={colors.foreground} />
-            <Text style={[styles.secondaryBtnText, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
-              New Game
-            </Text>
+            <View style={styles.btnInner}>
+              <View style={styles.btnRow}>
+                <Ionicons name="add-circle-outline" size={20} color={colors.foreground} />
+                <Text style={[styles.secondaryBtnText, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
+                  New Game
+                </Text>
+              </View>
+              <Text style={[styles.btnSub, { color: colors.mutedForeground }]}>
+                Name players, set options & more
+              </Text>
+            </View>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -201,10 +215,13 @@ const styles = StyleSheet.create({
   tagline: { fontSize: 15, lineHeight: 22, marginTop: 10 },
 
   actions: { gap: 12, marginBottom: 32 },
-  primaryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 19, borderRadius: 14 },
+  primaryBtn: { alignItems: 'center', justifyContent: 'center', paddingVertical: 16, borderRadius: 14 },
   primaryBtnText: { fontSize: 17, letterSpacing: 0.2 },
-  secondaryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 16, borderRadius: 14, borderWidth: 1 },
+  secondaryBtn: { alignItems: 'center', justifyContent: 'center', paddingVertical: 13, borderRadius: 14, borderWidth: 1 },
   secondaryBtnText: { fontSize: 16 },
+  btnInner: { alignItems: 'center', gap: 3 },
+  btnRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  btnSub: { fontSize: 12, opacity: 0.7 },
   textBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12 },
   textBtnText: { fontSize: 15 },
 

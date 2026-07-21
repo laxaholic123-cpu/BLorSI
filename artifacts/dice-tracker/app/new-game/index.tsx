@@ -23,12 +23,12 @@ const GAME_MODES = [
   },
   {
     id: 'catan',
-    title: 'Catan-Compatible Mode',
+    title: 'Settlement Mode',
     description:
       'Two-dice resource game with number exposure tracking, robber events, and per-player production analysis.',
     icon: 'grid-outline' as const,
     route: '/new-game/catan',
-    badge: 'Independent tool · not affiliated with Catan',
+    badge: null,
   },
   {
     id: 'custom',

@@ -4,6 +4,7 @@ import {
   Platform,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -14,7 +15,6 @@ import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { useGame } from '@/context/GameContext';
 import { useSettings } from '@/context/SettingsContext';
-import { useTimer } from '@/hooks/useTimer';
 import { DiceGrid } from '@/components/DiceGrid';
 import {
   getNextPlayerIndex,
@@ -28,9 +28,10 @@ export default function ActiveGameScreen() {
   const insets = useSafeAreaInsets();
   const { activeSession, rollEvents, persistRollEvents, updateSession, endSession } = useGame();
   const { settings } = useSettings();
-  const elapsed = useTimer(activeSession?.startedAt ?? null);
 
   const [lastPressedValue, setLastPressedValue] = useState<number | null>(null);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editNameValue, setEditNameValue] = useState('');
 
   const webTop = Platform.OS === 'web' ? 67 : 0;
   const webBottom = Platform.OS === 'web' ? 34 : 0;
@@ -56,6 +57,20 @@ export default function ActiveGameScreen() {
 
   const canUndo = activeEvents.length > 0;
   const isMultiPlayer = (activeSession?.players.length ?? 0) > 1;
+
+  // First word of the player's name, capped at 8 chars — used as the "mine" label
+  const playerFirstName = currentPlayer
+    ? (currentPlayer.displayName.split(' ')[0] ?? currentPlayer.displayName).slice(0, 8)
+    : '';
+
+  // Last 5 rolls for the current player, newest first
+  const recentPlayerRolls = useMemo(() => {
+    if (!currentPlayer) return [];
+    return activeEvents
+      .filter(e => e.playerId === currentPlayer.id)
+      .slice(-5)
+      .reverse();
+  }, [activeEvents, currentPlayer]);
 
   const haptic = (style = Haptics.ImpactFeedbackStyle.Light) => {
     if (settings.hapticsEnabled) void Haptics.impactAsync(style);
@@ -138,6 +153,23 @@ export default function ActiveGameScreen() {
     );
   };
 
+  const handleStartEditName = () => {
+    if (!currentPlayer) return;
+    setEditNameValue(currentPlayer.displayName);
+    setIsEditingName(true);
+  };
+
+  const handleSaveName = async () => {
+    if (!activeSession || !currentPlayer) { setIsEditingName(false); return; }
+    const trimmed = editNameValue.trim();
+    setIsEditingName(false);
+    if (!trimmed || trimmed === currentPlayer.displayName) return;
+    const updatedPlayers = activeSession.players.map((p, i) =>
+      i === activeSession.currentPlayerIndex ? { ...p, displayName: trimmed } : p,
+    );
+    await updateSession({ ...activeSession, players: updatedPlayers });
+  };
+
   // ── No session guard ───────────────────────────────────────────────────────
 
   if (!activeSession) {
@@ -193,13 +225,6 @@ export default function ActiveGameScreen() {
           </Text>
         </View>
 
-        <View style={[styles.timerPill, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <Ionicons name="time-outline" size={13} color={colors.mutedForeground} />
-          <Text style={[styles.timerText, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
-            {elapsed}
-          </Text>
-        </View>
-
         <TouchableOpacity
           style={[styles.endBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
           onPress={handleEndGame}
@@ -214,18 +239,65 @@ export default function ActiveGameScreen() {
       {/* ── Player banner ────────────────────────────────────── */}
       <View style={[styles.playerBanner, { borderLeftColor: currentPlayer?.color ?? colors.primary, backgroundColor: colors.card }]}>
         <View style={styles.playerBannerLeft}>
-          <Text
-            style={[styles.playerName, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}
-            numberOfLines={1}
-          >
-            {currentPlayer?.displayName ?? '—'}
-          </Text>
+          {/* Tappable / editable player name */}
+          {isEditingName ? (
+            <TextInput
+              style={[styles.playerNameInput, { color: colors.foreground, fontFamily: 'Inter_700Bold', borderBottomColor: colors.primary }]}
+              value={editNameValue}
+              onChangeText={setEditNameValue}
+              onBlur={handleSaveName}
+              onSubmitEditing={handleSaveName}
+              autoFocus
+              maxLength={24}
+              returnKeyType="done"
+              testID="player-name-input"
+            />
+          ) : (
+            <TouchableOpacity onPress={handleStartEditName} activeOpacity={0.7} style={styles.playerNameRow}>
+              <Text
+                style={[styles.playerName, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}
+                numberOfLines={1}
+              >
+                {currentPlayer?.displayName ?? '—'}
+              </Text>
+              <Ionicons name="pencil-outline" size={13} color={colors.mutedForeground} style={styles.editIcon} />
+            </TouchableOpacity>
+          )}
+
           <Text style={[styles.playerSub, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
             {isMultiPlayer
               ? `${playerRollCount} roll${playerRollCount !== 1 ? 's' : ''} · turn ${turnNumber}`
               : `${totalRolls} roll${totalRolls !== 1 ? 's' : ''} recorded`}
           </Text>
+
+          {/* Recent roll history for this player */}
+          {recentPlayerRolls.length > 0 && (
+            <View style={styles.rollHistory}>
+              {recentPlayerRolls.map((e, i) => (
+                <View
+                  key={e.id}
+                  style={[
+                    styles.rollPill,
+                    {
+                      backgroundColor: i === 0 ? colors.primary + '22' : colors.muted,
+                      borderColor: i === 0 ? colors.primary : 'transparent',
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.rollPillText,
+                      { color: i === 0 ? colors.primary : colors.mutedForeground, fontFamily: 'Inter_600SemiBold' },
+                    ]}
+                  >
+                    {e.value}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
         </View>
+
         {/* Player position dots for multi-player */}
         {isMultiPlayer && (
           <View style={styles.playerDots}>
@@ -237,9 +309,9 @@ export default function ActiveGameScreen() {
                   {
                     backgroundColor: p.color,
                     opacity: i === activeSession.currentPlayerIndex ? 1 : 0.3,
-                    width: i === activeSession.currentPlayerIndex ? 10 : 6,
-                    height: i === activeSession.currentPlayerIndex ? 10 : 6,
-                    borderRadius: 5,
+                    width: i === activeSession.currentPlayerIndex ? 14 : 9,
+                    height: i === activeSession.currentPlayerIndex ? 14 : 9,
+                    borderRadius: i === activeSession.currentPlayerIndex ? 7 : 4.5,
                   },
                 ]}
               />
@@ -263,7 +335,7 @@ export default function ActiveGameScreen() {
           {isMultiPlayer && (
             <View style={styles.statItem}>
               <Text style={[styles.statValue, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>{playerRollCount}</Text>
-              <Text style={[styles.statLabel, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>mine</Text>
+              <Text style={[styles.statLabel, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]} numberOfLines={1}>{playerFirstName}</Text>
             </View>
           )}
           <View style={styles.statItem}>
@@ -356,16 +428,6 @@ const styles = StyleSheet.create({
   headerLeft: { flex: 1, gap: 1 },
   headerGame: { fontSize: 16 },
   headerMode: { fontSize: 12 },
-  timerPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  timerText: { fontSize: 13 },
   endBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, borderWidth: 1 },
   endBtnText: { fontSize: 14 },
 
@@ -382,10 +444,23 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   playerBannerLeft: { flex: 1 },
+  playerNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   playerName: { fontSize: 20 },
+  editIcon: { marginTop: 2 },
+  playerNameInput: {
+    fontSize: 20,
+    borderBottomWidth: 1.5,
+    paddingVertical: 2,
+    paddingHorizontal: 0,
+  },
   playerSub: { fontSize: 13, marginTop: 2 },
-  playerDots: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 0 },
+  playerDots: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
   playerDot: {},
+
+  // Roll history pills
+  rollHistory: { flexDirection: 'row', gap: 5, marginTop: 6, flexWrap: 'wrap' },
+  rollPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
+  rollPillText: { fontSize: 13 },
 
   // Last roll
   lastRollRow: {
