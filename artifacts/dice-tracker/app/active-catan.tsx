@@ -71,7 +71,6 @@ export default function ActiveCatanScreen() {
   const [editNameValue, setEditNameValue] = useState('');
   const [robberPromptState, setRobberPromptState] = useState<RobberPromptState>('idle');
   const [robberHexNumber, setRobberHexNumber] = useState<number | null>(null);
-  const [robberRollerPlayerId, setRobberRollerPlayerId] = useState<string | null>(null);
   const [robberDontAskAgain, setRobberDontAskAgain] = useState(false);
 
   const webTop = Platform.OS === 'web' ? 67 : 0;
@@ -136,7 +135,6 @@ export default function ActiveCatanScreen() {
       robberPromptState !== 'dismissed_this_session'
     ) {
       setRobberHexNumber(null);
-      setRobberRollerPlayerId(currentPlayer.id);
       setRobberPromptState('showing');
     }
   };
@@ -212,22 +210,35 @@ export default function ActiveCatanScreen() {
 
   const handleRobberConfirm = async () => {
     if (!activeSession) return;
-    // Record where the robber was placed — attributed to the player who rolled the 7
-    if (robberHexNumber !== null && robberRollerPlayerId) {
-      const blockId = 'rblock_' + generateId();
-      const blockEvent: CatanPlayerExposureEvent = {
-        id: generateId(),
-        sessionId: activeSession.id,
-        playerId: robberRollerPlayerId,
-        eventType: 'robberBlockStarted',
-        turnNumber,
-        timestamp: new Date().toISOString(),
-        affectedNumbers: [robberHexNumber],
-        hexIdentifiers: [blockId],
-        productionWeight: 0,
-        robberBlocked: true,
-      };
-      await persistExposureEvents(activeSession.id, [...exposureEvents, blockEvent]);
+    if (robberHexNumber !== null) {
+      // Derive which players have documented exposure on this hex and block each one.
+      // The stats engine resolves blocks per playerId, so a block event must be created
+      // for each affected player individually.
+      const affectedPlayerIds = new Set<string>();
+      for (const event of exposureEvents) {
+        if (
+          (event.eventType === 'settlementBuilt' || event.eventType === 'cityUpgrade') &&
+          event.affectedNumbers.includes(robberHexNumber)
+        ) {
+          affectedPlayerIds.add(event.playerId);
+        }
+      }
+
+      if (affectedPlayerIds.size > 0) {
+        const blockEvents: CatanPlayerExposureEvent[] = [...affectedPlayerIds].map(playerId => ({
+          id: generateId(),
+          sessionId: activeSession.id,
+          playerId,
+          eventType: 'robberBlockStarted' as const,
+          turnNumber,
+          timestamp: new Date().toISOString(),
+          affectedNumbers: [robberHexNumber],
+          hexIdentifiers: ['rblock_' + generateId()],
+          productionWeight: 0,
+          robberBlocked: true,
+        }));
+        await persistExposureEvents(activeSession.id, [...exposureEvents, ...blockEvents]);
+      }
     }
     if (robberDontAskAgain) setRobberPromptState('dismissed_this_session');
     else setRobberPromptState('idle');
