@@ -22,6 +22,7 @@ import {
   recordRoll,
   undoLastRoll,
 } from '@/services/rollInput';
+import { playDoneSound, playRollSound, playUndoSound } from '@/services/sound';
 
 export default function ActiveGameScreen() {
   const colors = useColors();
@@ -81,6 +82,7 @@ export default function ActiveGameScreen() {
   const handleRoll = async (value: number) => {
     if (!activeSession || !currentPlayer) return;
     haptic();
+    playRollSound(settings.soundEnabled);
     setLastPressedValue(value);
 
     const newEvents = recordRoll(
@@ -98,6 +100,7 @@ export default function ActiveGameScreen() {
   const handleUndo = async () => {
     if (!activeSession || !canUndo) return;
     haptic(Haptics.ImpactFeedbackStyle.Medium);
+    playUndoSound(settings.soundEnabled);
 
     const { events: newEvents, undoneEvent } = undoLastRoll(rollEvents);
     await persistRollEvents(activeSession.id, newEvents);
@@ -139,6 +142,7 @@ export default function ActiveGameScreen() {
           style: 'destructive',
           onPress: async () => {
             if (!activeSession) return;
+            playDoneSound(settings.soundEnabled);
             const ended = {
               ...activeSession,
               status: 'completed' as const,
@@ -230,6 +234,9 @@ export default function ActiveGameScreen() {
           style={[styles.endBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
           onPress={handleEndGame}
           testID="end-game-button"
+          accessibilityRole="button"
+          accessibilityLabel="End game"
+          accessibilityHint="Stops the session and saves results"
         >
           <Text style={[styles.endBtnText, { color: colors.destructive, fontFamily: 'Inter_600SemiBold' }]}>
             End
@@ -364,6 +371,10 @@ export default function ActiveGameScreen() {
           onPress={handleUndo}
           disabled={!canUndo}
           testID="undo-button"
+          accessibilityRole="button"
+          accessibilityLabel="Undo last roll"
+          accessibilityHint="Removes the most recent roll"
+          accessibilityState={{ disabled: !canUndo }}
         >
           <Ionicons name="arrow-undo" size={22} color={canUndo ? colors.primary : colors.mutedForeground} />
           <Text style={[styles.controlBtnText, { color: canUndo ? colors.primary : colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
@@ -376,6 +387,9 @@ export default function ActiveGameScreen() {
           onPress={handlePrevPlayer}
           disabled={!isMultiPlayer}
           testID="prev-player-button"
+          accessibilityRole="button"
+          accessibilityLabel="Previous player"
+          accessibilityState={{ disabled: !isMultiPlayer }}
         >
           <Ionicons name="chevron-back-circle-outline" size={22} color={colors.foreground} />
           <Text style={[styles.controlBtnText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
@@ -388,6 +402,9 @@ export default function ActiveGameScreen() {
           onPress={handleNextPlayer}
           disabled={!isMultiPlayer}
           testID="next-player-button"
+          accessibilityRole="button"
+          accessibilityLabel="Next player"
+          accessibilityState={{ disabled: !isMultiPlayer }}
         >
           <Ionicons name="chevron-forward-circle-outline" size={22} color={colors.foreground} />
           <Text style={[styles.controlBtnText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
@@ -399,6 +416,8 @@ export default function ActiveGameScreen() {
           style={styles.controlBtn}
           onPress={() => router.push('/stats' as any)}
           testID="stats-button"
+          accessibilityRole="button"
+          accessibilityLabel="View statistics"
         >
           <Ionicons name="bar-chart-outline" size={22} color={colors.primary} />
           <Text style={[styles.controlBtnText, { color: colors.primary, fontFamily: 'Inter_500Medium' }]}>

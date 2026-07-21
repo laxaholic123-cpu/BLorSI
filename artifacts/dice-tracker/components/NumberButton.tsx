@@ -1,6 +1,7 @@
 import React, { useCallback, useRef } from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { useColors } from '@/hooks/useColors';
+import { useSettings } from '@/context/SettingsContext';
 
 interface NumberButtonProps {
   value: number;
@@ -14,6 +15,7 @@ interface NumberButtonProps {
 /**
  * A large tappable button showing a dice result value.
  * Animates a brief scale-down on press for tactile feedback.
+ * Respects the reducedMotion accessibility setting.
  */
 export function NumberButton({
   value,
@@ -24,9 +26,15 @@ export function NumberButton({
   disabled = false,
 }: NumberButtonProps) {
   const colors = useColors();
+  const { settings } = useSettings();
   const scale = useRef(new Animated.Value(1)).current;
 
   const handlePress = useCallback(() => {
+    if (settings.reducedMotion) {
+      // Skip animation entirely for users who prefer reduced motion
+      onPress(value);
+      return;
+    }
     Animated.sequence([
       Animated.timing(scale, { toValue: 0.87, duration: 65, useNativeDriver: true }),
       Animated.spring(scale, {
@@ -37,7 +45,7 @@ export function NumberButton({
       }),
     ]).start();
     onPress(value);
-  }, [onPress, scale, value]);
+  }, [onPress, scale, settings.reducedMotion, value]);
 
   // Scale font size with button height for readability
   const fontSize = Math.min(44, Math.max(18, Math.round(height * 0.38)));
@@ -57,6 +65,10 @@ export function NumberButton({
         onPress={handlePress}
         disabled={disabled}
         activeOpacity={0.75}
+        accessibilityRole="button"
+        accessibilityLabel={`Roll ${value}`}
+        accessibilityHint="Records this as your roll"
+        accessibilityState={{ disabled }}
       >
         <Text
           style={[
@@ -67,6 +79,7 @@ export function NumberButton({
               fontFamily: 'Inter_700Bold',
             },
           ]}
+          accessible={false}
         >
           {value}
         </Text>

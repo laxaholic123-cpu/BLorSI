@@ -36,6 +36,7 @@ import {
   recordRoll,
   undoLastRoll,
 } from '@/services/rollInput';
+import { playDoneSound, playRollSound, playUndoSound } from '@/services/sound';
 import { generateId } from '@/types/models';
 import type { CatanPlayerExposureEvent } from '@/types/models';
 
@@ -107,6 +108,7 @@ export default function ActiveCatanScreen() {
   const handleRoll = async (value: number) => {
     if (!activeSession || !currentPlayer) return;
     haptic();
+    playRollSound(settings.soundEnabled);
     setLastPressedValue(value);
 
     const newEvents = recordRoll(
@@ -135,6 +137,7 @@ export default function ActiveCatanScreen() {
   const handleUndo = async () => {
     if (!activeSession || !canUndo) return;
     haptic(Haptics.ImpactFeedbackStyle.Medium);
+    playUndoSound(settings.soundEnabled);
     const { events: newEvents, undoneEvent } = undoLastRoll(rollEvents);
     await persistRollEvents(activeSession.id, newEvents);
     if (undoneEvent && activeSession.autoAdvancePlayer && activeSession.players.length > 1) {
@@ -168,6 +171,7 @@ export default function ActiveCatanScreen() {
           style: 'destructive',
           onPress: async () => {
             if (!activeSession) return;
+            playDoneSound(settings.soundEnabled);
             await updateSession({ ...activeSession, status: 'completed', endedAt: new Date().toISOString() });
             router.replace('/results');
           },
@@ -374,6 +378,9 @@ export default function ActiveCatanScreen() {
           }]}
           onPress={() => handleRoll(7)}
           activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Roll 7 — Robber"
+          accessibilityHint="Records a 7 and triggers the robber prompt"
         >
           <Text style={[styles.sevenBtnNumber, {
             color: lastPressedValue === 7 ? '#FFFFFF' : colors.destructive,
@@ -398,6 +405,9 @@ export default function ActiveCatanScreen() {
                 }]}
                 onPress={() => handleRoll(num)}
                 activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel={`Roll ${num}`}
+                accessibilityHint="Records this as your roll"
               >
                 <Text style={[styles.numBtnValue, {
                   color: pressed ? colors.primaryForeground : colors.foreground,
@@ -415,27 +425,27 @@ export default function ActiveCatanScreen() {
 
       {/* ── Controls bar ───────────────────────────────────────────────────────── */}
       <View style={[styles.controls, { borderTopColor: colors.border, backgroundColor: colors.background }]}>
-        <TouchableOpacity style={[styles.controlBtn, { opacity: canUndo ? 1 : 0.35 }]} onPress={handleUndo} disabled={!canUndo}>
+        <TouchableOpacity style={[styles.controlBtn, { opacity: canUndo ? 1 : 0.35 }]} onPress={handleUndo} disabled={!canUndo} accessibilityRole="button" accessibilityLabel="Undo last roll" accessibilityState={{ disabled: !canUndo }}>
           <Ionicons name="arrow-undo" size={22} color={canUndo ? colors.primary : colors.mutedForeground} />
           <Text style={[styles.controlBtnText, { color: canUndo ? colors.primary : colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>Undo</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={[styles.controlBtn, { opacity: isMultiPlayer ? 1 : 0.2 }]} onPress={handlePrevPlayer} disabled={!isMultiPlayer}>
+        <TouchableOpacity style={[styles.controlBtn, { opacity: isMultiPlayer ? 1 : 0.2 }]} onPress={handlePrevPlayer} disabled={!isMultiPlayer} accessibilityRole="button" accessibilityLabel="Previous player" accessibilityState={{ disabled: !isMultiPlayer }}>
           <Ionicons name="chevron-back-circle-outline" size={22} color={colors.foreground} />
           <Text style={[styles.controlBtnText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>Prev</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={[styles.controlBtn, { opacity: isMultiPlayer ? 1 : 0.2 }]} onPress={handleNextPlayer} disabled={!isMultiPlayer}>
+        <TouchableOpacity style={[styles.controlBtn, { opacity: isMultiPlayer ? 1 : 0.2 }]} onPress={handleNextPlayer} disabled={!isMultiPlayer} accessibilityRole="button" accessibilityLabel="Next player" accessibilityState={{ disabled: !isMultiPlayer }}>
           <Ionicons name="chevron-forward-circle-outline" size={22} color={colors.foreground} />
           <Text style={[styles.controlBtnText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>Next</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.controlBtn} onPress={() => router.push('/catan-development' as any)}>
+        <TouchableOpacity style={styles.controlBtn} onPress={() => router.push('/catan-development' as any)} accessibilityRole="button" accessibilityLabel="Development actions">
           <Ionicons name="construct-outline" size={22} color={colors.primary} />
           <Text style={[styles.controlBtnText, { color: colors.primary, fontFamily: 'Inter_500Medium' }]}>Dev</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.controlBtn} onPress={() => router.push('/stats' as any)}>
+        <TouchableOpacity style={styles.controlBtn} onPress={() => router.push('/stats' as any)} accessibilityRole="button" accessibilityLabel="View statistics">
           <Ionicons name="bar-chart-outline" size={22} color={colors.primary} />
           <Text style={[styles.controlBtnText, { color: colors.primary, fontFamily: 'Inter_500Medium' }]}>Stats</Text>
         </TouchableOpacity>

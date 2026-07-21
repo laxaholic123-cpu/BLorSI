@@ -60,6 +60,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
+    "expo-av": "^16.0.8",
     "expo-document-picker": "^57.0.1",
     "expo-media-library": "^57.0.3",
     "expo-sharing": "^57.0.6",

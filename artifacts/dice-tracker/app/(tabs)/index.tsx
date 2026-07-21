@@ -92,6 +92,9 @@ export default function HomeScreen() {
             onPress={handleQuickGame}
             activeOpacity={0.85}
             testID="quick-game-button"
+            accessibilityRole="button"
+            accessibilityLabel="Quick Game"
+            accessibilityHint="Pick a die and number of players then start immediately"
           >
             <View style={styles.btnInner}>
               <View style={styles.btnRow}>
@@ -111,6 +114,9 @@ export default function HomeScreen() {
             onPress={handleNewGame}
             activeOpacity={0.85}
             testID="new-game-button"
+            accessibilityRole="button"
+            accessibilityLabel="New Game"
+            accessibilityHint="Set up player names, dice mode, and options before starting"
           >
             <View style={styles.btnInner}>
               <View style={styles.btnRow}>
@@ -138,6 +144,9 @@ export default function HomeScreen() {
             disabled={!activeSession}
             activeOpacity={0.85}
             testID="resume-game-button"
+            accessibilityRole="button"
+            accessibilityLabel={activeSession ? `Resume: ${sessionLabel ?? 'current game'}` : 'No active game to resume'}
+            accessibilityState={{ disabled: !activeSession }}
           >
             <Ionicons
               name="play-circle-outline"
@@ -154,7 +163,7 @@ export default function HomeScreen() {
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.textBtn} onPress={handleHistory} activeOpacity={0.7} testID="history-button">
+          <TouchableOpacity style={styles.textBtn} onPress={handleHistory} activeOpacity={0.7} testID="history-button" accessibilityRole="button" accessibilityLabel="Game History" accessibilityHint="View all past sessions">
             <Ionicons name="time-outline" size={18} color={colors.mutedForeground} />
             <Text style={[styles.textBtnText, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
               Game History

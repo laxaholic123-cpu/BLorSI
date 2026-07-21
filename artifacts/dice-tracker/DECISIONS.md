@@ -1,4 +1,4 @@
-# Technical Decisions — BAD LUCK OR SKILL ISSUE?
+# Technical Decisions — Skill Check
 
 A record of non-obvious decisions made during development. Future contributors should consult this before changing major architectural choices.
 
@@ -12,10 +12,10 @@ A record of non-obvious decisions made during development. Future contributors s
 - Works in Expo Go without a native build — critical for fast iteration
 - Tabletop game sessions are small data sets (hundreds of events max); SQL query performance is not a concern
 - JSON serialization maps naturally to the event-log data model
-- Simpler migration path for Phase 1: schema version + spread merge
+- Simpler migration path: schema version + spread merge
 
 **Trade-offs:**
-- No structured queries across sessions (mitigated: Phase 1 history is a full scan)
+- No structured queries across sessions (mitigated: history is a full scan; this is acceptable at this scale)
 - No transactions (mitigated: all write failures are non-fatal; session integrity is maintained by writing session index separately from event arrays)
 
 **Revisit when:** sessions routinely exceed 10,000 events or cross-session aggregate queries become necessary.
@@ -41,8 +41,8 @@ A record of non-obvious decisions made during development. Future contributors s
 **Decision:** All roll entry paths — touchscreen, future Bluetooth, imported history, corrections — flow through one `RollInputService.recordRoll()` function.
 
 **Why:**
-- Keeps the active game screen clean; it never touches statistics or storage directly
-- The service is the canonical integration point for Phase 2's Bluetooth input design
+- Keeps active-game screens clean; they never touch statistics or storage directly
+- The service is the canonical integration point for future Bluetooth input
 - Required by spec (principle #8: all inputs must use the same input-neutral event service)
 
 ---
@@ -54,7 +54,7 @@ A record of non-obvious decisions made during development. Future contributors s
 **Why:**
 - Pure functions are trivially unit-testable
 - Any screen can call them without threading concerns
-- The verdict copy layer (`services/verdicts.ts`) consumes function output without coupling to math
+- The verdict copy layer (`services/verdict.ts`) consumes function output without coupling to math
 
 **How to apply:** Never import from `context/` inside `services/stats.ts`. Pass events as function arguments.
 
@@ -86,16 +86,18 @@ A record of non-obvious decisions made during development. Future contributors s
 
 ## D7 · Dark-only theme (Phase 1)
 
-**Decision:** Both `light` and `dark` keys in `constants/colors.ts` use the same dark charcoal + amber palette. The app does not adapt to the system light/dark preference.
+**Decision:** Both `light` and `dark` keys in `constants/colors.ts` use the same dark charcoal + teal palette. The app does not adapt to the system light/dark preference.
 
 **Why:**
 - The product brief specifies "dark charcoal or graphite surfaces" as the visual identity
 - A consistent dark theme avoids glare at the game table
-- ThemePreference setting is wired for future light/system options (Phase 6)
+- `ThemePreference` setting is wired and ready for a future light/system option
+
+**Revisit when:** a light theme is explicitly requested.
 
 ---
 
-## D8 · pnpm workspace (monorepo)
+## D8 · pnpm workspace (monorepo) (Phase 1)
 
 **Decision:** The Expo app lives in `artifacts/dice-tracker/` inside a pnpm workspace monorepo.
 
@@ -105,3 +107,42 @@ A record of non-obvious decisions made during development. Future contributors s
 - TypeScript project references are already configured
 
 **How to apply:** Add new packages as workspace packages under `artifacts/` or `lib/`. Do not create a standalone Expo project outside the workspace.
+
+---
+
+## D9 · WAV files over MP3/OGG for sound assets (Phase 6)
+
+**Decision:** Audio assets are 22 kHz mono 16-bit PCM WAV files generated at build time from a Node.js script.
+
+**Why:**
+- WAV is universally supported on iOS and Android via expo-av without transcoding
+- No codec licensing concerns
+- Files are small (2–8 KB) at 22 kHz and short duration (55–180 ms)
+- Generated programmatically so they can be reproduced or customized without external tools
+
+**Trade-offs:**
+- Slightly larger than MP3 at equivalent duration (negligible at this size)
+
+---
+
+## D10 · Sound service caches Audio.Sound instances (Phase 6)
+
+**Decision:** `services/sound.ts` keeps a module-level `soundCache` map and reuses loaded `Audio.Sound` objects, rewinding them with `setPositionAsync(0)` before each play.
+
+**Why:**
+- `Audio.Sound.createAsync()` is async and adds latency; re-creating on every roll would feel sluggish
+- Rewinding is synchronous-equivalent and ensures rapid taps don't queue sounds
+- Cached instances are garbage-collected when the module is unloaded (on app exit)
+
+---
+
+## D11 · react-native-view-shot for share card image capture (Phase 5)
+
+**Decision:** Use `captureRef()` from `react-native-view-shot` to snapshot card Views as images for sharing.
+
+**Why:**
+- Only library that can capture a rendered RN View as a file URI compatible with expo-sharing
+- Works on both iOS and Android with no native configuration
+- Web fallback: text-only sharing via `Share.share()` (captureRef is not available in the browser)
+
+**How to apply:** Always wrap image-capture calls in `Platform.OS !== 'web'` guards.
