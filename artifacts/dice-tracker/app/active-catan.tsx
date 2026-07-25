@@ -217,7 +217,9 @@ export default function ActiveCatanScreen() {
       const affectedPlayerIds = new Set<string>();
       for (const event of exposureEvents) {
         if (
-          (event.eventType === 'settlementBuilt' || event.eventType === 'cityUpgrade') &&
+          (event.eventType === 'initialSettlement' ||
+            event.eventType === 'settlementBuilt' ||
+            event.eventType === 'cityUpgrade') &&
           event.affectedNumbers.includes(robberHexNumber)
         ) {
           affectedPlayerIds.add(event.playerId);
