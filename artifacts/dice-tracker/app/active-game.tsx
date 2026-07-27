@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
-  Alert,
+  Modal,
   Platform,
   StyleSheet,
   Text,
@@ -33,6 +33,7 @@ export default function ActiveGameScreen() {
   const [lastPressedValue, setLastPressedValue] = useState<number | null>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState('');
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
 
   const webTop = Platform.OS === 'web' ? 67 : 0;
   const webBottom = Platform.OS === 'web' ? 34 : 0;
@@ -132,30 +133,25 @@ export default function ActiveGameScreen() {
 
   const handleEndGame = () => {
     haptic(Haptics.ImpactFeedbackStyle.Heavy);
-    Alert.alert(
-      'End Game?',
-      `${totalRolls} roll${totalRolls !== 1 ? 's' : ''} recorded. The session will be saved to history.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'End Game',
-          style: 'destructive',
-          onPress: async () => {
-            if (!activeSession) return;
-            playDoneSound(settings.soundEnabled);
-            const ended = {
-              ...activeSession,
-              status: 'completed' as const,
-              endedAt: new Date().toISOString(),
-            };
-            await updateSession(ended);
-            // endSession() is called by the results screen when the user taps Done,
-            // so activeSession remains readable while results are displayed.
-            router.replace('/results');
-          },
-        },
-      ],
-    );
+    setShowEndConfirm(true);
+  };
+
+  const handleEndConfirm = async () => {
+    if (!activeSession) return;
+    setShowEndConfirm(false);
+    playDoneSound(settings.soundEnabled);
+    try {
+      await updateSession({
+        ...activeSession,
+        status: 'completed' as const,
+        endedAt: new Date().toISOString(),
+      });
+      // endSession() is called by the results screen when the user taps Done,
+      // so activeSession remains readable while results are displayed.
+    } catch {
+      // Storage error — navigate anyway so the user is never trapped
+    }
+    router.replace('/results');
   };
 
   const handleStartEditName = () => {
@@ -425,6 +421,44 @@ export default function ActiveGameScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* ── End game confirmation modal ───────────────────────── */}
+      <Modal
+        visible={showEndConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowEndConfirm(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.endConfirmSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.sheetHandle} />
+            <Text style={[styles.confirmTitle, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+              End Game?
+            </Text>
+            <Text style={[styles.confirmSub, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+              {totalRolls} roll{totalRolls !== 1 ? 's' : ''} recorded.{'\n'}Results and statistics will be available.
+            </Text>
+            <View style={styles.confirmActions}>
+              <TouchableOpacity
+                style={[styles.confirmBtn, { backgroundColor: colors.muted, flex: 1 }]}
+                onPress={() => setShowEndConfirm(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel ending game"
+              >
+                <Text style={[styles.confirmBtnText, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.confirmBtn, { backgroundColor: colors.destructive, flex: 1 }]}
+                onPress={() => { void handleEndConfirm(); }}
+                accessibilityRole="button"
+                accessibilityLabel="Confirm end game"
+              >
+                <Text style={[styles.confirmBtnText, { color: '#FFFFFF', fontFamily: 'Inter_700Bold' }]}>End Game</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -506,6 +540,16 @@ const styles = StyleSheet.create({
 
   // Grid
   gridWrapper: { flex: 1, paddingHorizontal: 12, paddingVertical: 8 },
+
+  // End confirm modal
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  endConfirmSheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, borderWidth: 1, padding: 20, gap: 16 },
+  sheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#555', alignSelf: 'center', marginBottom: 4 },
+  confirmTitle: { fontSize: 20, textAlign: 'center' },
+  confirmSub: { fontSize: 14, textAlign: 'center' },
+  confirmActions: { flexDirection: 'row', gap: 12 },
+  confirmBtn: { paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  confirmBtnText: { fontSize: 16 },
 
   // Controls
   controls: {
