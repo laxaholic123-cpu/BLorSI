@@ -13,7 +13,6 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   Modal,
   Platform,
   StyleSheet,
@@ -72,6 +71,7 @@ export default function ActiveCatanScreen() {
   const [robberPromptState, setRobberPromptState] = useState<RobberPromptState>('idle');
   const [robberHexNumber, setRobberHexNumber] = useState<number | null>(null);
   const [robberDontAskAgain, setRobberDontAskAgain] = useState(false);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
 
   const webTop = Platform.OS === 'web' ? 67 : 0;
   const webBottom = Platform.OS === 'web' ? 34 : 0;
@@ -168,23 +168,19 @@ export default function ActiveCatanScreen() {
 
   const handleEndGame = () => {
     haptic(Haptics.ImpactFeedbackStyle.Heavy);
-    Alert.alert(
-      'End Game?',
-      `${totalRolls} roll${totalRolls !== 1 ? 's' : ''} recorded. Results and statistics will be available.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'End Game',
-          style: 'destructive',
-          onPress: () => {
-            if (!activeSession) return;
-            playDoneSound(settings.soundEnabled);
-            void updateSession({ ...activeSession, status: 'completed', endedAt: new Date().toISOString() })
-              .then(() => { router.replace('/results'); });
-          },
-        },
-      ],
-    );
+    setShowEndConfirm(true);
+  };
+
+  const handleEndConfirm = async () => {
+    if (!activeSession) return;
+    setShowEndConfirm(false);
+    playDoneSound(settings.soundEnabled);
+    try {
+      await updateSession({ ...activeSession, status: 'completed', endedAt: new Date().toISOString() });
+    } catch {
+      // Storage error — navigate anyway so the user is never trapped
+    }
+    router.replace('/results');
   };
 
   const handleStartEditName = () => {
@@ -496,6 +492,40 @@ export default function ActiveCatanScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* ── End game confirmation modal ─────────────────────────────────────────── */}
+      <Modal
+        visible={showEndConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowEndConfirm(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.endConfirmSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.robberHandle} />
+            <Text style={[styles.robberTitle, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+              End Game?
+            </Text>
+            <Text style={[styles.robberSub, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+              {totalRolls} roll{totalRolls !== 1 ? 's' : ''} recorded.{'\n'}Results and statistics will be available.
+            </Text>
+            <View style={styles.robberActions}>
+              <TouchableOpacity
+                style={[styles.robberActionBtn, { backgroundColor: colors.muted, flex: 1 }]}
+                onPress={() => setShowEndConfirm(false)}
+              >
+                <Text style={[styles.robberActionText, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.robberActionBtn, { backgroundColor: colors.destructive, flex: 1 }]}
+                onPress={() => { void handleEndConfirm(); }}
+              >
+                <Text style={[styles.robberActionText, { color: '#FFFFFF', fontFamily: 'Inter_700Bold' }]}>End Game</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* ── Robber prompt modal ─────────────────────────────────────────────────── */}
       <Modal
         visible={robberPromptState === 'showing'}
@@ -633,8 +663,9 @@ const styles = StyleSheet.create({
   controlBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 10, gap: 3 },
   controlBtnText: { fontSize: 11 },
 
-  // Robber modal
+  // Modals
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  endConfirmSheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, borderWidth: 1, padding: 20, gap: 16 },
   robberSheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, borderWidth: 1, padding: 20, gap: 16, maxHeight: '70%' },
   robberHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#555', alignSelf: 'center', marginBottom: 4 },
   robberTitle: { fontSize: 20, textAlign: 'center' },
