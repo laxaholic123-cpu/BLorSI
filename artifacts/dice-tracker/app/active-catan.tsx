@@ -36,6 +36,7 @@ import {
   undoLastRoll,
 } from '@/services/rollInput';
 import { playDoneSound, playRollSound, playUndoSound } from '@/services/sound';
+import { confirmEndGame } from '@/services/endGame';
 import { generateId } from '@/types/models';
 import type { CatanPlayerExposureEvent } from '@/types/models';
 
@@ -175,12 +176,10 @@ export default function ActiveCatanScreen() {
     if (!activeSession) return;
     setShowEndConfirm(false);
     playDoneSound(settings.soundEnabled);
-    try {
-      await updateSession({ ...activeSession, status: 'completed', endedAt: new Date().toISOString() });
-    } catch {
-      // Storage error — navigate anyway so the user is never trapped
-    }
-    router.replace('/results');
+    await confirmEndGame(activeSession, {
+      updateSession,
+      navigate: (path) => router.replace(path as any),
+    });
   };
 
   const handleStartEditName = () => {

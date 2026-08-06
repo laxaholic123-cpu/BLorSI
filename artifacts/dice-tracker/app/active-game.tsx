@@ -23,6 +23,7 @@ import {
   undoLastRoll,
 } from '@/services/rollInput';
 import { playDoneSound, playRollSound, playUndoSound } from '@/services/sound';
+import { confirmEndGame } from '@/services/endGame';
 
 export default function ActiveGameScreen() {
   const colors = useColors();
@@ -140,18 +141,12 @@ export default function ActiveGameScreen() {
     if (!activeSession) return;
     setShowEndConfirm(false);
     playDoneSound(settings.soundEnabled);
-    try {
-      await updateSession({
-        ...activeSession,
-        status: 'completed' as const,
-        endedAt: new Date().toISOString(),
-      });
-      // endSession() is called by the results screen when the user taps Done,
-      // so activeSession remains readable while results are displayed.
-    } catch {
-      // Storage error — navigate anyway so the user is never trapped
-    }
-    router.replace('/results');
+    // endSession() is called by the results screen when the user taps Done,
+    // so activeSession remains readable while results are displayed.
+    await confirmEndGame(activeSession, {
+      updateSession,
+      navigate: (path) => router.replace(path as any),
+    });
   };
 
   const handleStartEditName = () => {
