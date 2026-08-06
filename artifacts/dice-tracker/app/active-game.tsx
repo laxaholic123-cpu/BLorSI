@@ -348,8 +348,6 @@ export default function ActiveGameScreen() {
       <View style={styles.gridWrapper}>
         <DiceGrid
           diceMode={activeSession.diceMode}
-          customMin={activeSession.minimumRoll}
-          customMax={activeSession.maximumRoll}
           onValuePress={handleRoll}
           lastPressedValue={lastPressedValue}
         />

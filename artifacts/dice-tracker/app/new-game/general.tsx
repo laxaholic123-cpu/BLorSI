@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -39,14 +38,13 @@ interface ModeOption {
 }
 
 const MODES: ModeOption[] = [
-  { mode: 'D4',     label: 'D4',     sub: '1–4'   },
-  { mode: 'D6',     label: 'D6',     sub: '1–6'   },
-  { mode: 'D8',     label: 'D8',     sub: '1–8'   },
-  { mode: 'D10',    label: 'D10',    sub: '1–10'  },
-  { mode: 'D12',    label: 'D12',    sub: '1–12'  },
-  { mode: 'D20',    label: 'D20',    sub: '1–20'  },
-  { mode: '2D6',    label: '2D6',    sub: '2–12'  },
-  { mode: 'custom', label: 'Custom', sub: 'any'   },
+  { mode: 'D4',  label: 'D4',  sub: '1–4'  },
+  { mode: 'D6',  label: 'D6',  sub: '1–6'  },
+  { mode: 'D8',  label: 'D8',  sub: '1–8'  },
+  { mode: 'D10', label: 'D10', sub: '1–10' },
+  { mode: 'D12', label: 'D12', sub: '1–12' },
+  { mode: 'D20', label: 'D20', sub: '1–20' },
+  { mode: '2D6', label: '2D6', sub: '2–12' },
 ];
 
 // ─── Local helpers ────────────────────────────────────────────────────────────
@@ -126,8 +124,6 @@ export default function GeneralGameSetupScreen() {
   const [gameName, setGameName] = useState('');
   // Initialise from saved settings; prefill effect below may override
   const [diceMode, setDiceMode] = useState<DiceMode>(() => settings.defaultDiceMode);
-  const [customMin, setCustomMin] = useState('1');
-  const [customMax, setCustomMax] = useState('10');
   const [playerCount, setPlayerCount] = useState(() => Math.min(Math.max(1, settings.defaultPlayerCount), 8));
   const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>(defaultConfigs);
   const [autoAdvance, setAutoAdvance] = useState(() => settings.defaultAutoAdvance);
@@ -179,18 +175,8 @@ export default function GeneralGameSetupScreen() {
     });
   };
 
-  const parsedMin = parseInt(customMin, 10);
-  const parsedMax = parseInt(customMax, 10);
-  const customValid =
-    diceMode !== 'custom' ||
-    (!isNaN(parsedMin) && !isNaN(parsedMax) && parsedMin >= 1 && parsedMax > parsedMin);
-
   const handleStart = async () => {
     if (isStarting) return;
-    if (!customValid) {
-      Alert.alert('Invalid range', 'Custom max must be greater than min, and min must be at least 1.');
-      return;
-    }
     haptic(Haptics.ImpactFeedbackStyle.Medium);
     setIsStarting(true);
     try {
@@ -202,8 +188,8 @@ export default function GeneralGameSetupScreen() {
         createdAt: new Date().toISOString(),
       }));
 
-      const minRoll = diceMode === 'custom' ? parsedMin : DICE_RANGES[diceMode].min;
-      const maxRoll = diceMode === 'custom' ? parsedMax : DICE_RANGES[diceMode].max;
+      const minRoll = DICE_RANGES[diceMode].min;
+      const maxRoll = DICE_RANGES[diceMode].max;
 
       const session: GameSession = {
         id: generateId(),
@@ -297,38 +283,6 @@ export default function GeneralGameSetupScreen() {
           </View>
         </View>
 
-        {/* ── Custom range ────────────────────────────────────── */}
-        {diceMode === 'custom' && (
-          <View style={styles.section}>
-            <SectionHeader label="CUSTOM RANGE" colors={colors} />
-            <View style={styles.rangeRow}>
-              <View style={styles.rangeField}>
-                <Text style={[styles.rangeFieldLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>Min</Text>
-                <TextInput
-                  style={[styles.rangeInput, { backgroundColor: colors.card, borderColor: customValid ? colors.border : colors.destructive, color: colors.foreground, fontFamily: 'Inter_700Bold' }]}
-                  value={customMin}
-                  onChangeText={setCustomMin}
-                  keyboardType="number-pad"
-                  maxLength={4}
-                  returnKeyType="done"
-                />
-              </View>
-              <Text style={[styles.rangeDash, { color: colors.mutedForeground, fontFamily: 'Inter_700Bold' }]}>–</Text>
-              <View style={styles.rangeField}>
-                <Text style={[styles.rangeFieldLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>Max</Text>
-                <TextInput
-                  style={[styles.rangeInput, { backgroundColor: colors.card, borderColor: customValid ? colors.border : colors.destructive, color: colors.foreground, fontFamily: 'Inter_700Bold' }]}
-                  value={customMax}
-                  onChangeText={setCustomMax}
-                  keyboardType="number-pad"
-                  maxLength={4}
-                  returnKeyType="done"
-                />
-              </View>
-            </View>
-          </View>
-        )}
-
         {/* ── Players ─────────────────────────────────────────── */}
         <View style={styles.section}>
           <View style={styles.sectionRow}>
@@ -414,10 +368,10 @@ export default function GeneralGameSetupScreen() {
         <TouchableOpacity
           style={[
             styles.startBtn,
-            { backgroundColor: isStarting || !customValid ? colors.accent : colors.primary },
+            { backgroundColor: isStarting ? colors.accent : colors.primary },
           ]}
           onPress={handleStart}
-          disabled={isStarting || !customValid}
+          disabled={isStarting}
           activeOpacity={0.85}
           testID="start-game-button"
         >
@@ -442,12 +396,6 @@ const styles = StyleSheet.create({
   modePill: { width: '23%', borderWidth: 1, borderRadius: 12, paddingVertical: 12, alignItems: 'center', gap: 2 },
   modePillLabel: { fontSize: 15 },
   modePillSub: { fontSize: 11 },
-
-  rangeRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-  rangeField: { gap: 6, alignItems: 'center' },
-  rangeFieldLabel: { fontSize: 12, letterSpacing: 0.5 },
-  rangeInput: { width: 80, height: 56, borderWidth: 1, borderRadius: 12, fontSize: 24, textAlign: 'center' },
-  rangeDash: { fontSize: 24, marginTop: 22 },
 
   playerList: { gap: 8 },
   playerRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, gap: 12 },

@@ -19,7 +19,6 @@ export default function NewGameLayout() {
       <Stack.Screen name="quick-game" options={{ headerShown: false }} />
       <Stack.Screen name="general" options={{ title: 'General Dice Game' }} />
       <Stack.Screen name="catan" options={{ title: 'Settlement Mode' }} />
-      <Stack.Screen name="custom" options={{ title: 'Custom Game' }} />
     </Stack>
   );
 }

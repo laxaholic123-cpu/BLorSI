@@ -107,11 +107,7 @@ export const getPrevPlayerIndex = (current: number, total: number): number =>
 // ─── Dice value helpers ───────────────────────────────────────────────────────
 
 /** Returns the ordered list of result values for the given dice mode. */
-export const getDiceValues = (
-  mode: DiceMode,
-  customMin = 1,
-  customMax = 6,
-): number[] => {
+export const getDiceValues = (mode: DiceMode): number[] => {
   const range = (a: number, b: number) =>
     Array.from({ length: b - a + 1 }, (_, i) => a + i);
   switch (mode) {
@@ -122,30 +118,17 @@ export const getDiceValues = (
     case 'D12':    return range(1, 12);
     case 'D20':    return range(1, 20);
     case '2D6':    return range(2, 12);
-    case 'custom': return range(customMin, customMax);
     default:       return range(1, 6);
   }
 };
 
-/** Returns the number of grid columns appropriate for a dice mode / range size. */
-export const getGridColumns = (mode: DiceMode, rangeSize: number): number => {
+/** Returns the number of grid columns appropriate for a dice mode. */
+export const getGridColumns = (mode: DiceMode): number => {
   if (mode === 'D4')  return 2;
   if (mode === 'D6')  return 3;
   if (mode === 'D8')  return 4;
   if (mode === 'D10') return 5;
   if (mode === 'D12') return 4;
   if (mode === 'D20') return 5;
-  if (mode === '2D6') return 4;
-  // Custom
-  if (rangeSize <= 4)  return 2;
-  if (rangeSize <= 9)  return 3;
-  if (rangeSize <= 16) return 4;
-  return 5;
+  return 4; // 2D6
 };
-
-/**
- * When a custom range has > 20 values, a keypad input is shown instead
- * of a full button grid.
- */
-export const shouldUseKeypad = (mode: DiceMode, min: number, max: number): boolean =>
-  mode === 'custom' && max - min + 1 > 20;

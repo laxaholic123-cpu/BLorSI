@@ -9,9 +9,9 @@
 
 export type RollSource = 'touchscreen' | 'bluetooth' | 'imported' | 'corrected';
 
-export type DiceMode = 'D4' | 'D6' | 'D8' | 'D10' | 'D12' | 'D20' | '2D6' | 'custom';
+export type DiceMode = 'D4' | 'D6' | 'D8' | 'D10' | 'D12' | 'D20' | '2D6';
 
-export type GameType = 'general' | 'catan' | 'custom';
+export type GameType = 'general' | 'catan';
 
 export type GameStatus = 'active' | 'paused' | 'completed' | 'abandoned';
 
@@ -161,7 +161,6 @@ export const DICE_RANGES: Record<DiceMode, { min: number; max: number }> = {
   D12: { min: 1, max: 12 },
   D20: { min: 1, max: 20 },
   '2D6': { min: 2, max: 12 },
-  custom: { min: 1, max: 6 }, // overridden at setup
 };
 
 /** Palette of distinct player colors */

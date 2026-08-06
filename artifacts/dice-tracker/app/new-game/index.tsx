@@ -16,7 +16,7 @@ const GAME_MODES = [
   {
     id: 'general',
     title: 'General Dice Game',
-    description: 'D4, D6, D8, D10, D12, D20, 2D6 totals, or a custom range. Supports 1–8 players.',
+    description: 'D4, D6, D8, D10, D12, D20, or 2D6 totals. Supports 1–8 players.',
     icon: 'dice-outline' as const,
     route: '/new-game/general',
     badge: null as string | null,
@@ -28,14 +28,6 @@ const GAME_MODES = [
       'Two-dice resource game with number exposure tracking, robber events, and per-player production analysis.',
     icon: 'grid-outline' as const,
     route: '/new-game/catan',
-    badge: null,
-  },
-  {
-    id: 'custom',
-    title: 'Custom Game',
-    description: 'Define your own game name, dice range, and player setup.',
-    icon: 'construct-outline' as const,
-    route: '/new-game/custom',
     badge: null,
   },
 ];

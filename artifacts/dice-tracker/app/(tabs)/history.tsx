@@ -60,9 +60,9 @@ function formatDuration(seconds: number): string {
 
 function gameLabel(session: GameSession): string {
   if (session.customGameName) return session.customGameName;
-  const gt = session.gameType;
-  if (gt === 'catan') return 'Settlement Mode';
-  if (gt === 'custom') return 'Custom';
+  if (session.gameType === 'catan') return 'Settlement Mode';
+  // Legacy sessions recorded before custom mode was removed show a safe label
+  if ((session.gameType as string) === 'custom') return 'Custom';
   return session.diceMode;
 }
 

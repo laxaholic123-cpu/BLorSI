@@ -141,12 +141,6 @@ describe('getExpectedProbabilities', () => {
     expect(probs[2]).toBeCloseTo(1 / 36, 10);
   });
 
-  it('custom range: uniform over [3, 7]', () => {
-    const probs = getExpectedProbabilities('custom', 3, 7);
-    for (let v = 3; v <= 7; v++) {
-      expect(probs[v]).toBeCloseTo(1 / 5, 10);
-    }
-  });
 });
 
 // ─── Expected mean & std dev ──────────────────────────────────────────────────
