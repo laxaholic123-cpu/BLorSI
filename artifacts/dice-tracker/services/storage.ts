@@ -130,9 +130,11 @@ export const setActiveSessionId = async (id: string | null): Promise<void> => {
 // ─── Sessions ─────────────────────────────────────────────────────────────────
 
 export const saveSession = async (session: GameSession): Promise<void> => {
+  // NOTE: Intentionally re-throws — callers that depend on persistence correctness
+  // (updateSession in GameContext) must be able to detect and handle write failures.
+  await AsyncStorage.setItem(KEYS.SESSION(session.id), JSON.stringify(session));
+  // Maintain an ordered index of all session IDs (best-effort, non-fatal)
   try {
-    await AsyncStorage.setItem(KEYS.SESSION(session.id), JSON.stringify(session));
-    // Maintain an ordered index of all session IDs
     const raw = await AsyncStorage.getItem(KEYS.SESSION_IDS);
     const ids: string[] = raw ? (JSON.parse(raw) as string[]) : [];
     if (!ids.includes(session.id)) {
@@ -140,7 +142,7 @@ export const saveSession = async (session: GameSession): Promise<void> => {
       await AsyncStorage.setItem(KEYS.SESSION_IDS, JSON.stringify(updated));
     }
   } catch {
-    // Non-fatal
+    // Index maintenance is non-fatal — the session record itself was saved above
   }
 };
 
@@ -192,11 +194,9 @@ export const deleteSession = async (id: string): Promise<void> => {
 // ─── Roll events ──────────────────────────────────────────────────────────────
 
 export const saveRollEvents = async (sessionId: string, events: RollEvent[]): Promise<void> => {
-  try {
-    await AsyncStorage.setItem(KEYS.ROLLS(sessionId), JSON.stringify(events));
-  } catch {
-    // Non-fatal
-  }
+  // NOTE: Intentionally re-throws — callers that depend on persistence correctness
+  // (persistRollEvents in GameContext) must be able to detect and handle write failures.
+  await AsyncStorage.setItem(KEYS.ROLLS(sessionId), JSON.stringify(events));
 };
 
 export const loadRollEvents = async (sessionId: string): Promise<RollEvent[]> => {

@@ -28,7 +28,7 @@ import { confirmEndGame } from '@/services/endGame';
 export default function ActiveGameScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { activeSession, rollEvents, persistRollEvents, updateSession, endSession } = useGame();
+  const { activeSession, rollEvents, setRollEvents, persistRollEvents, updateSession, loadActiveGame, endSession } = useGame();
   const { settings } = useSettings();
 
   const [lastPressedValue, setLastPressedValue] = useState<number | null>(null);
@@ -91,11 +91,25 @@ export default function ActiveGameScreen() {
       { session: activeSession, playerId: currentPlayer.id, value, source: 'touchscreen' },
       rollEvents,
     );
-    await persistRollEvents(activeSession.id, newEvents);
 
+    // Step 1: Persist the roll. If this fails, the roll was never saved — roll back.
+    try {
+      await persistRollEvents(activeSession.id, newEvents);
+    } catch {
+      setRollEvents(rollEvents);
+      setLastPressedValue(null);
+      return;
+    }
+
+    // Step 2: Roll is safely in storage. Advance the player. If this fails, the roll
+    // stays recorded; reload from storage to reconcile memory with persisted state.
     if (activeSession.autoAdvancePlayer && activeSession.players.length > 1) {
       const nextIdx = getNextPlayerIndex(activeSession.currentPlayerIndex, activeSession.players.length);
-      await updateSession({ ...activeSession, currentPlayerIndex: nextIdx });
+      try {
+        await updateSession({ ...activeSession, currentPlayerIndex: nextIdx });
+      } catch {
+        await loadActiveGame().catch(() => undefined);
+      }
     }
   };
 
@@ -105,13 +119,25 @@ export default function ActiveGameScreen() {
     playUndoSound(settings.soundEnabled);
 
     const { events: newEvents, undoneEvent } = undoLastRoll(rollEvents);
-    await persistRollEvents(activeSession.id, newEvents);
 
-    // Revert player index to who rolled that event
+    // Step 1: Persist the undo. If this fails, the undo was never saved — roll back.
+    try {
+      await persistRollEvents(activeSession.id, newEvents);
+    } catch {
+      setRollEvents(rollEvents);
+      return;
+    }
+
+    // Step 2: Undo is safely in storage. Revert the player index. If this fails,
+    // the undo stays recorded; reload from storage to reconcile memory.
     if (undoneEvent && activeSession.autoAdvancePlayer && activeSession.players.length > 1) {
       const undonePlayerIdx = activeSession.players.findIndex(p => p.id === undoneEvent.playerId);
       if (undonePlayerIdx !== -1) {
-        await updateSession({ ...activeSession, currentPlayerIndex: undonePlayerIdx });
+        try {
+          await updateSession({ ...activeSession, currentPlayerIndex: undonePlayerIdx });
+        } catch {
+          await loadActiveGame().catch(() => undefined);
+        }
       }
     }
 
@@ -122,14 +148,24 @@ export default function ActiveGameScreen() {
     if (!activeSession || !isMultiPlayer) return;
     haptic();
     const prevIdx = getPrevPlayerIndex(activeSession.currentPlayerIndex, activeSession.players.length);
-    await updateSession({ ...activeSession, currentPlayerIndex: prevIdx });
+    try {
+      await updateSession({ ...activeSession, currentPlayerIndex: prevIdx });
+    } catch {
+      // Reload from storage to reconcile in-memory state with what was actually persisted
+      await loadActiveGame().catch(() => undefined);
+    }
   };
 
   const handleNextPlayer = async () => {
     if (!activeSession || !isMultiPlayer) return;
     haptic();
     const nextIdx = getNextPlayerIndex(activeSession.currentPlayerIndex, activeSession.players.length);
-    await updateSession({ ...activeSession, currentPlayerIndex: nextIdx });
+    try {
+      await updateSession({ ...activeSession, currentPlayerIndex: nextIdx });
+    } catch {
+      // Reload from storage to reconcile in-memory state with what was actually persisted
+      await loadActiveGame().catch(() => undefined);
+    }
   };
 
   const handleEndGame = () => {

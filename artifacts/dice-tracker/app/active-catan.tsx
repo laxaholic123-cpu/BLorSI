@@ -58,10 +58,12 @@ export default function ActiveCatanScreen() {
   const {
     activeSession,
     rollEvents,
+    setRollEvents,
     exposureEvents,
     persistRollEvents,
     persistExposureEvents,
     updateSession,
+    loadActiveGame,
     endSession,
   } = useGame();
   const { settings } = useSettings();
@@ -121,14 +123,28 @@ export default function ActiveCatanScreen() {
       { session: activeSession, playerId: currentPlayer.id, value, source: 'touchscreen' },
       rollEvents,
     );
-    await persistRollEvents(activeSession.id, newEvents);
 
-    if (activeSession.autoAdvancePlayer && activeSession.players.length > 1) {
-      const nextIdx = getNextPlayerIndex(activeSession.currentPlayerIndex, activeSession.players.length);
-      await updateSession({ ...activeSession, currentPlayerIndex: nextIdx });
+    // Step 1: Persist the roll. If this fails, the roll was never saved — roll back.
+    try {
+      await persistRollEvents(activeSession.id, newEvents);
+    } catch {
+      setRollEvents(rollEvents);
+      setLastPressedValue(null);
+      return;
     }
 
-    // Show robber prompt on 7
+    // Step 2: Roll is safely in storage. Advance the player. If this fails, the roll
+    // stays recorded; reload from storage to reconcile memory with persisted state.
+    if (activeSession.autoAdvancePlayer && activeSession.players.length > 1) {
+      const nextIdx = getNextPlayerIndex(activeSession.currentPlayerIndex, activeSession.players.length);
+      try {
+        await updateSession({ ...activeSession, currentPlayerIndex: nextIdx });
+      } catch {
+        await loadActiveGame().catch(() => undefined);
+      }
+    }
+
+    // Show robber prompt on 7 (roll is safe regardless of player-advance outcome)
     if (
       value === 7 &&
       activeSession.settings.catanRobberTracking &&
@@ -145,10 +161,26 @@ export default function ActiveCatanScreen() {
     haptic(Haptics.ImpactFeedbackStyle.Medium);
     playUndoSound(settings.soundEnabled);
     const { events: newEvents, undoneEvent } = undoLastRoll(rollEvents);
-    await persistRollEvents(activeSession.id, newEvents);
+
+    // Step 1: Persist the undo. If this fails, the undo was never saved — roll back.
+    try {
+      await persistRollEvents(activeSession.id, newEvents);
+    } catch {
+      setRollEvents(rollEvents);
+      return;
+    }
+
+    // Step 2: Undo is safely in storage. Revert the player index. If this fails,
+    // the undo stays recorded; reload from storage to reconcile memory.
     if (undoneEvent && activeSession.autoAdvancePlayer && activeSession.players.length > 1) {
       const undonePlayerIdx = activeSession.players.findIndex(p => p.id === undoneEvent.playerId);
-      if (undonePlayerIdx !== -1) await updateSession({ ...activeSession, currentPlayerIndex: undonePlayerIdx });
+      if (undonePlayerIdx !== -1) {
+        try {
+          await updateSession({ ...activeSession, currentPlayerIndex: undonePlayerIdx });
+        } catch {
+          await loadActiveGame().catch(() => undefined);
+        }
+      }
     }
     setLastPressedValue(null);
   };
@@ -157,14 +189,24 @@ export default function ActiveCatanScreen() {
     if (!activeSession || !isMultiPlayer) return;
     haptic();
     setLastPressedValue(null);
-    await updateSession({ ...activeSession, currentPlayerIndex: getPrevPlayerIndex(activeSession.currentPlayerIndex, activeSession.players.length) });
+    try {
+      await updateSession({ ...activeSession, currentPlayerIndex: getPrevPlayerIndex(activeSession.currentPlayerIndex, activeSession.players.length) });
+    } catch {
+      // Reload from storage to reconcile in-memory state with what was actually persisted
+      await loadActiveGame().catch(() => undefined);
+    }
   };
 
   const handleNextPlayer = async () => {
     if (!activeSession || !isMultiPlayer) return;
     haptic();
     setLastPressedValue(null);
-    await updateSession({ ...activeSession, currentPlayerIndex: getNextPlayerIndex(activeSession.currentPlayerIndex, activeSession.players.length) });
+    try {
+      await updateSession({ ...activeSession, currentPlayerIndex: getNextPlayerIndex(activeSession.currentPlayerIndex, activeSession.players.length) });
+    } catch {
+      // Reload from storage to reconcile in-memory state with what was actually persisted
+      await loadActiveGame().catch(() => undefined);
+    }
   };
 
   const handleEndGame = () => {
