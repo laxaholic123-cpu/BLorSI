@@ -305,6 +305,68 @@ describe('loadSession — legacy custom session normalization', () => {
   });
 });
 
+// ─── loadPrefillSession legacy normalization ──────────────────────────────────
+
+describe('loadPrefillSession — legacy custom prefill normalization', () => {
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+  });
+
+  it('normalizes a legacy custom prefill on load', async () => {
+    const legacySession = makeSession({
+      id: 'legacy-prefill',
+      diceMode: 'custom' as any,
+      gameType: 'custom' as any,
+      minimumRoll: 4,
+      maximumRoll: 20,
+      customGameName: 'My Custom Game',
+    });
+    await savePrefillSession(legacySession);
+
+    const loaded = await loadPrefillSession();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.diceMode).toBe('2D6');
+    expect(loaded!.gameType).toBe('general');
+    expect(loaded!.minimumRoll).toBe(2);
+    expect(loaded!.maximumRoll).toBe(12);
+    // customGameName is deliberately retained so the user's label is preserved
+    expect(loaded!.customGameName).toBe('My Custom Game');
+  });
+
+  it('persists the normalized prefill so the second read is also clean', async () => {
+    const legacySession = makeSession({
+      id: 'legacy-prefill-2',
+      diceMode: 'custom' as any,
+      gameType: 'custom' as any,
+    });
+    await savePrefillSession(legacySession);
+
+    // First load triggers write-back
+    await loadPrefillSession();
+    // Second load reads the already-normalized record
+    const second = await loadPrefillSession();
+    expect(second!.diceMode).toBe('2D6');
+    expect(second!.gameType).toBe('general');
+  });
+
+  it('simulates duplicating a legacy custom session: prefill normalizes, players are retained', async () => {
+    // session-detail saves the (already loadSession-normalized) session as prefill
+    const normalizedByLoadSession = makeSession({
+      id: 'dup-test',
+      diceMode: 'custom' as any, // raw stored value before session-detail reads it
+      gameType: 'custom' as any,
+      minimumRoll: 3,
+      maximumRoll: 15,
+    });
+    await savePrefillSession(normalizedByLoadSession);
+
+    const prefill = await loadPrefillSession();
+    expect(prefill!.diceMode).toBe('2D6');
+    expect(prefill!.players).toHaveLength(2);
+    expect(prefill!.players[0]!.displayName).toBe('Alice');
+  });
+});
+
 // ─── importAllData legacy normalization ──────────────────────────────────────
 
 describe('importAllData — legacy custom session normalization', () => {

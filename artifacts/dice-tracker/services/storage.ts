@@ -147,8 +147,15 @@ export const saveSession = async (session: GameSession): Promise<void> => {
 export const loadSession = async (id: string): Promise<GameSession | null> => {
   try {
     const json = await AsyncStorage.getItem(KEYS.SESSION(id));
-    const session = json ? (JSON.parse(json) as GameSession) : null;
-    return session ? normalizeSession(session) : null;
+    if (!json) return null;
+    const raw = JSON.parse(json) as GameSession;
+    const normalized = normalizeSession(raw);
+    // Write back immediately if the session was migrated, so stale values
+    // don't persist across future reads.
+    if (normalized !== raw) {
+      await AsyncStorage.setItem(KEYS.SESSION(id), JSON.stringify(normalized));
+    }
+    return normalized;
   } catch {
     return null;
   }
@@ -293,7 +300,14 @@ export const savePrefillSession = async (session: GameSession): Promise<void> =>
 export const loadPrefillSession = async (): Promise<GameSession | null> => {
   try {
     const json = await AsyncStorage.getItem(PREFILL_KEY);
-    return json ? (JSON.parse(json) as GameSession) : null;
+    if (!json) return null;
+    const raw = JSON.parse(json) as GameSession;
+    const normalized = normalizeSession(raw);
+    // Persist the migrated prefill so subsequent reads are already clean.
+    if (normalized !== raw) {
+      await AsyncStorage.setItem(PREFILL_KEY, JSON.stringify(normalized));
+    }
+    return normalized;
   } catch {
     return null;
   }
