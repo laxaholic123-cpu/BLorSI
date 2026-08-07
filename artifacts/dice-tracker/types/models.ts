@@ -178,3 +178,24 @@ export const PLAYER_COLORS: string[] = [
 /** Generate a portable unique ID (no native crypto required) */
 export const generateId = (): string =>
   Date.now().toString(36) + Math.random().toString(36).substring(2, 11);
+
+// ─── Catan board layout types ────────────────────────────────────────────────
+
+/**
+ * Represents a single hex tile on the Catan board.
+ * Indices 0-18 read left-to-right, top-to-bottom in the 3-4-5-4-3 layout.
+ */
+export interface CatanHexDef {
+  index: number;
+  resource: ResourceType | null; // null = unknown / not yet set
+  number: number | null; // null = unknown or desert
+  confidence: 'high' | 'low';
+}
+
+/** A named saved board layout that can be reloaded on subsequent games. */
+export interface CatanBoardLayout {
+  id: string;
+  name: string;
+  hexes: CatanHexDef[];
+  savedAt: string; // ISO 8601
+}

@@ -42,6 +42,11 @@ function RootLayoutNav() {
         name="active-catan"
         options={{ headerShown: false, gestureEnabled: false }}
       />
+      {/* Catan board scan — photo-based settlement setup */}
+      <Stack.Screen
+        name="catan-board-scan"
+        options={{ headerShown: false }}
+      />
       {/* Catan exposure setup screens */}
       <Stack.Screen
         name="catan-exposure-quick"

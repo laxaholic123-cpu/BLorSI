@@ -158,7 +158,7 @@ export default function CatanGameSetupScreen() {
     });
   };
 
-  const createAndNavigate = async (detailed: boolean) => {
+  const createAndNavigate = async (dest: 'quick' | 'detailed' | 'scan') => {
     if (isStarting) return;
     haptic(Haptics.ImpactFeedbackStyle.Medium);
     setIsStarting(true);
@@ -190,15 +190,17 @@ export default function CatanGameSetupScreen() {
           trackWinner,
           trackPlacements,
           catanRobberTracking: robberTracking,
-          catanResourceTracking: detailed,
+          catanResourceTracking: dest === 'detailed',
         },
         schemaVersion: SCHEMA_VERSION,
       };
 
       await startSession(session);
       // Navigate to exposure setup — session is now in context
-      if (detailed) {
+      if (dest === 'detailed') {
         router.navigate('/catan-exposure-detailed' as any);
+      } else if (dest === 'scan') {
+        router.navigate('/catan-board-scan' as any);
       } else {
         router.navigate('/catan-exposure-quick' as any);
       }
@@ -307,6 +309,35 @@ export default function CatanGameSetupScreen() {
         <View style={styles.section}>
           <SectionLabel text="TRACKING MODE" colors={colors} />
 
+          {/* Scan Board */}
+          <TouchableOpacity
+            style={[
+              styles.trackCard,
+              {
+                backgroundColor: colors.card,
+                borderColor: '#10B981',
+                marginBottom: 10,
+                opacity: isStarting ? 0.7 : 1,
+              },
+            ]}
+            onPress={() => createAndNavigate('scan')}
+            disabled={isStarting}
+            activeOpacity={0.85}
+          >
+            <View style={[styles.trackIcon, { backgroundColor: '#10B98120' }]}>
+              <Ionicons name="camera-outline" size={28} color="#10B981" />
+            </View>
+            <View style={styles.trackContent}>
+              <Text style={[styles.trackTitle, { color: '#10B981', fontFamily: 'Inter_700Bold' }]}>
+                Scan Board 📷
+              </Text>
+              <Text style={[styles.trackDesc, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                Photograph the board — AI reads the hexes, then each player taps their settlements.
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#10B981" />
+          </TouchableOpacity>
+
           {/* Quick Setup */}
           <TouchableOpacity
             style={[
@@ -318,7 +349,7 @@ export default function CatanGameSetupScreen() {
                 opacity: isStarting ? 0.7 : 1,
               },
             ]}
-            onPress={() => createAndNavigate(false)}
+            onPress={() => createAndNavigate('quick')}
             disabled={isStarting}
             activeOpacity={0.85}
           >
@@ -346,7 +377,7 @@ export default function CatanGameSetupScreen() {
                 opacity: isStarting ? 0.7 : 1,
               },
             ]}
-            onPress={() => createAndNavigate(true)}
+            onPress={() => createAndNavigate('detailed')}
             disabled={isStarting}
             activeOpacity={0.85}
           >
