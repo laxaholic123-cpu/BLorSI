@@ -510,11 +510,11 @@ export default function CatanBoardScanScreen() {
             </Text>
           </View>
         )}
-        {lowConfIndices.length > 0 && !analysisError && (
+        {lowConfIndices.length > 0 && (
           <View style={[s.hintBanner, { backgroundColor: colors.muted, borderColor: colors.border }]}>
             <Ionicons name="alert-circle-outline" size={16} color="#F59E0B" />
             <Text style={[s.hintText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-              {lowConfIndices.length} hex{lowConfIndices.length === 1 ? '' : 'es'} flagged as uncertain (amber border). Long-press to correct.
+              {lowConfIndices.length} hex{lowConfIndices.length === 1 ? '' : 'es'} need{lowConfIndices.length === 1 ? 's' : ''} your attention — long-press any amber hex to correct it.
             </Text>
           </View>
         )}
