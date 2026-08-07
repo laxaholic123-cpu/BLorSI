@@ -20,7 +20,7 @@ import type {
   GameSession,
   RollEvent,
 } from '@/types/models';
-import { DEFAULT_SETTINGS, SCHEMA_VERSION } from '@/types/models';
+import { DEFAULT_SETTINGS, DICE_RANGES, SCHEMA_VERSION } from '@/types/models';
 
 // ─── Storage keys ────────────────────────────────────────────────────────────
 
@@ -55,6 +55,31 @@ export const ensureSchemaVersion = async (): Promise<void> => {
 /** Dice modes that no longer exist — map to a supported fallback. */
 const LEGACY_DICE_MODE_MAP: Record<string, DiceMode> = {
   custom: '2D6',
+};
+
+/**
+ * Normalise a persisted session that may have been recorded with a dice mode
+ * or game type that has since been removed (e.g. diceMode:'custom').
+ * Maps the stale fields to supported equivalents so the session can be
+ * displayed and played without crashing.
+ */
+export const normalizeSession = (session: GameSession): GameSession => {
+  const rawMode = session.diceMode as string;
+  const rawType = session.gameType as string;
+  if (!LEGACY_DICE_MODE_MAP[rawMode] && rawType !== 'custom') return session;
+
+  const normalizedMode: DiceMode = LEGACY_DICE_MODE_MAP[rawMode] ?? session.diceMode;
+  // Map 'custom' game type to 'general'; keep 'catan' unchanged
+  const normalizedType = rawType === 'custom' ? 'general' : session.gameType;
+  // Align stored min/max with the new mode's canonical range
+  const range = DICE_RANGES[normalizedMode];
+  return {
+    ...session,
+    diceMode: normalizedMode,
+    gameType: normalizedType,
+    minimumRoll: range.min,
+    maximumRoll: range.max,
+  };
 };
 
 export const loadSettings = async (): Promise<AppSettings> => {
@@ -122,7 +147,8 @@ export const saveSession = async (session: GameSession): Promise<void> => {
 export const loadSession = async (id: string): Promise<GameSession | null> => {
   try {
     const json = await AsyncStorage.getItem(KEYS.SESSION(id));
-    return json ? (JSON.parse(json) as GameSession) : null;
+    const session = json ? (JSON.parse(json) as GameSession) : null;
+    return session ? normalizeSession(session) : null;
   } catch {
     return null;
   }
@@ -236,8 +262,9 @@ export const importAllData = async (json: string): Promise<{ imported: number; e
       return { imported: 0, error: 'Invalid backup format — no sessions found.' };
     }
     let imported = 0;
-    for (const session of data.sessions) {
-      if (!session.id) continue;
+    for (const rawSession of data.sessions) {
+      if (!rawSession.id) continue;
+      const session = normalizeSession(rawSession);
       await saveSession(session);
       if (data.rollsBySession?.[session.id]) {
         await saveRollEvents(session.id, data.rollsBySession[session.id]!);

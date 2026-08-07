@@ -11,6 +11,9 @@ import {
   clearPrefillSession,
   importAllData,
   loadPrefillSession,
+  loadSession,
+  normalizeSession,
+  saveSession,
   savePrefillSession,
 } from '@/services/storage';
 import type { GameSession } from '@/types/models';
@@ -221,5 +224,124 @@ describe('prefill session', () => {
   it('handles clearPrefillSession gracefully when nothing is saved', async () => {
     // Should not throw
     await expect(clearPrefillSession()).resolves.not.toThrow();
+  });
+});
+
+// ─── normalizeSession ─────────────────────────────────────────────────────────
+
+describe('normalizeSession (legacy custom mode migration)', () => {
+  it('returns the session unchanged when diceMode is already valid', () => {
+    const session = makeSession({ diceMode: '2D6', gameType: 'general' });
+    expect(normalizeSession(session)).toBe(session); // same reference — no copy made
+  });
+
+  it('maps diceMode:custom to 2D6 and updates minimumRoll/maximumRoll', () => {
+    const session = makeSession({
+      diceMode: 'custom' as any,
+      gameType: 'custom' as any,
+      minimumRoll: 3,
+      maximumRoll: 15,
+    });
+    const normalized = normalizeSession(session);
+    expect(normalized.diceMode).toBe('2D6');
+    expect(normalized.gameType).toBe('general');
+    expect(normalized.minimumRoll).toBe(2);
+    expect(normalized.maximumRoll).toBe(12);
+  });
+
+  it('preserves all other session fields during normalization', () => {
+    const session = makeSession({
+      diceMode: 'custom' as any,
+      gameType: 'custom' as any,
+      minimumRoll: 3,
+      maximumRoll: 15,
+    });
+    const normalized = normalizeSession(session);
+    expect(normalized.id).toBe(session.id);
+    expect(normalized.players).toBe(session.players);
+    expect(normalized.customGameName).toBe(session.customGameName);
+    expect(normalized.status).toBe(session.status);
+  });
+
+  it('does not touch catan sessions', () => {
+    const session = makeCatanSession();
+    expect(normalizeSession(session)).toBe(session);
+  });
+});
+
+// ─── loadSession legacy normalization ────────────────────────────────────────
+
+describe('loadSession — legacy custom session normalization', () => {
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+  });
+
+  it('normalizes a persisted legacy custom session on load', async () => {
+    const legacySession = makeSession({
+      id: 'legacy-custom',
+      diceMode: 'custom' as any,
+      gameType: 'custom' as any,
+      minimumRoll: 3,
+      maximumRoll: 18,
+    });
+    await saveSession(legacySession);
+
+    const loaded = await loadSession('legacy-custom');
+    expect(loaded).not.toBeNull();
+    expect(loaded!.diceMode).toBe('2D6');
+    expect(loaded!.gameType).toBe('general');
+    expect(loaded!.minimumRoll).toBe(2);
+    expect(loaded!.maximumRoll).toBe(12);
+  });
+
+  it('returns a standard session unchanged from loadSession', async () => {
+    const session = makeSession({ id: 'standard-session' });
+    await saveSession(session);
+    const loaded = await loadSession('standard-session');
+    expect(loaded!.diceMode).toBe('2D6');
+    expect(loaded!.gameType).toBe('general');
+    expect(loaded!.minimumRoll).toBe(2);
+    expect(loaded!.maximumRoll).toBe(12);
+  });
+});
+
+// ─── importAllData legacy normalization ──────────────────────────────────────
+
+describe('importAllData — legacy custom session normalization', () => {
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+  });
+
+  it('normalizes a legacy custom session during import', async () => {
+    const legacySession = makeSession({
+      id: 'import-legacy',
+      diceMode: 'custom' as any,
+      gameType: 'custom' as any,
+      minimumRoll: 5,
+      maximumRoll: 30,
+    });
+    const payload = JSON.stringify({ sessions: [legacySession] });
+
+    const result = await importAllData(payload);
+    expect(result.imported).toBe(1);
+
+    // Read it back and confirm it was stored normalized
+    const stored = await loadSession('import-legacy');
+    expect(stored!.diceMode).toBe('2D6');
+    expect(stored!.gameType).toBe('general');
+    expect(stored!.minimumRoll).toBe(2);
+    expect(stored!.maximumRoll).toBe(12);
+  });
+
+  it('normalizes a mixed import (custom + standard) without touching the standard session', async () => {
+    const legacySession = makeSession({ id: 'old-custom', diceMode: 'custom' as any, gameType: 'custom' as any });
+    const normalSession = makeSession({ id: 'new-standard', diceMode: 'D6', minimumRoll: 1, maximumRoll: 6 });
+    const payload = JSON.stringify({ sessions: [legacySession, normalSession] });
+
+    const result = await importAllData(payload);
+    expect(result.imported).toBe(2);
+
+    const loaded = await loadSession('new-standard');
+    expect(loaded!.diceMode).toBe('D6');
   });
 });
