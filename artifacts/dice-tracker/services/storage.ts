@@ -16,6 +16,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
   AppSettings,
   CatanPlayerExposureEvent,
+  DiceMode,
   GameSession,
   RollEvent,
 } from '@/types/models';
@@ -51,11 +52,21 @@ export const ensureSchemaVersion = async (): Promise<void> => {
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
+/** Dice modes that no longer exist — map to a supported fallback. */
+const LEGACY_DICE_MODE_MAP: Record<string, DiceMode> = {
+  custom: '2D6',
+};
+
 export const loadSettings = async (): Promise<AppSettings> => {
   try {
     const json = await AsyncStorage.getItem(KEYS.SETTINGS);
     if (!json) return { ...DEFAULT_SETTINGS };
-    return { ...DEFAULT_SETTINGS, ...(JSON.parse(json) as Partial<AppSettings>) };
+    const stored = JSON.parse(json) as Partial<AppSettings>;
+    // Normalise any legacy dice modes that have since been removed
+    if (stored.defaultDiceMode && LEGACY_DICE_MODE_MAP[stored.defaultDiceMode as string]) {
+      stored.defaultDiceMode = LEGACY_DICE_MODE_MAP[stored.defaultDiceMode as string];
+    }
+    return { ...DEFAULT_SETTINGS, ...stored };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }

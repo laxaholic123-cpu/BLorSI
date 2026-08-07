@@ -136,7 +136,11 @@ export default function GeneralGameSetupScreen() {
       const prefill = await loadPrefillSession();
       if (!prefill || prefill.gameType === 'catan') return; // Catan prefill handled by catan.tsx
       await clearPrefillSession();
-      if (prefill.diceMode) setDiceMode(prefill.diceMode as DiceMode);
+      // Normalise legacy dice modes (e.g. 'custom') that have since been removed
+      const legacyDiceModeMap: Record<string, DiceMode> = { custom: '2D6' };
+      const prefillMode = prefill.diceMode as string;
+      const resolvedMode: DiceMode = legacyDiceModeMap[prefillMode] ?? (prefill.diceMode as DiceMode);
+      if (prefill.diceMode) setDiceMode(resolvedMode);
       const pc = Math.min(Math.max(1, prefill.players.length), 8);
       setPlayerCount(pc);
       setAutoAdvance(prefill.autoAdvancePlayer);

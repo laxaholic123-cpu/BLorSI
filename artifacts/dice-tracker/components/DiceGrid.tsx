@@ -23,12 +23,9 @@ const GAP = 8;
 /**
  * Renders a responsive grid of tappable number buttons for the given dice mode.
  *
- * - Standard modes (D4–D20, 2D6): auto-sized button grid, no scrolling needed.
- * - Custom ranges ≤ 20 values: button grid.
- * - Custom ranges > 20 values: numeric text-input keypad.
- *
- * Uses onLayout to calculate button dimensions once the container is measured,
- * so buttons fill the available space optimally on every screen size.
+ * Supports D4, D6, D8, D10, D12, D20, and 2D6. Uses onLayout to calculate
+ * button dimensions once the container is measured so buttons fill the
+ * available space optimally on every screen size.
  */
 export function DiceGrid({
   diceMode,
