@@ -274,6 +274,158 @@ describe('mergeEditedSettlements — non-initial event preservation', () => {
   });
 });
 
+// ─── enterPlacement guard simulation ─────────────────────────────────────────
+//
+// The catan-board-scan screen calls getLinkedBuildingEventCount before entering
+// placement in edit mode. These tests simulate that gate to confirm it surfaces
+// the correct block/allow decision — mirroring the handler's exact logic so any
+// regression in the guard is caught here.
+
+interface EnterPlacementDeps {
+  isEditMode: boolean;
+  editPlayerId: string | undefined;
+  exposureEvents: CatanPlayerExposureEvent[];
+  /** Receives the Alert message when the guard fires; null when proceeding. */
+  onAlert: (message: string) => void;
+  /** Called when the guard passes and placement phase would begin. */
+  onProceed: () => void;
+}
+
+/** Mirrors the enterPlacement guard in catan-board-scan.tsx. */
+function simulateEnterPlacement(deps: EnterPlacementDeps): void {
+  const { isEditMode, editPlayerId, exposureEvents, onAlert, onProceed } = deps;
+  if (isEditMode && editPlayerId) {
+    const linkedCount = getLinkedBuildingEventCount(exposureEvents, editPlayerId);
+    if (linkedCount > 0) {
+      onAlert(
+        `has ${linkedCount} in-game building change${linkedCount === 1 ? '' : 's'} (such as a city upgrade or building removal) on top of their starting positions. Undo those changes before editing settlements.`,
+      );
+      return;
+    }
+  }
+  onProceed();
+}
+
+describe('enterPlacement guard — edit mode with linked building events', () => {
+  it('blocks and fires alert when a city upgrade exists on an initial settlement location', () => {
+    const events = [
+      makeEvent('p1', 'initialSettlement', { hexIdentifiers: ['loc-A'] }),
+      makeEvent('p1', 'cityUpgrade', { hexIdentifiers: ['loc-A'], turnNumber: 5, productionWeight: 2 }),
+    ];
+    const onAlert = jest.fn();
+    const onProceed = jest.fn();
+
+    simulateEnterPlacement({ isEditMode: true, editPlayerId: 'p1', exposureEvents: events, onAlert, onProceed });
+
+    expect(onAlert).toHaveBeenCalledTimes(1);
+    expect(onProceed).not.toHaveBeenCalled();
+    expect(onAlert.mock.calls[0]![0]).toContain('1 in-game building change');
+  });
+
+  it('block message mentions plural changes when multiple linked events exist', () => {
+    const events = [
+      makeEvent('p1', 'initialSettlement', { hexIdentifiers: ['loc-A'] }),
+      makeEvent('p1', 'cityUpgrade', { hexIdentifiers: ['loc-A'], turnNumber: 5, productionWeight: 2 }),
+      makeEvent('p1', 'buildingRemoved', { hexIdentifiers: ['loc-A'], turnNumber: 9, productionWeight: 0 }),
+    ];
+    const onAlert = jest.fn();
+    const onProceed = jest.fn();
+
+    simulateEnterPlacement({ isEditMode: true, editPlayerId: 'p1', exposureEvents: events, onAlert, onProceed });
+
+    expect(onAlert).toHaveBeenCalledTimes(1);
+    expect(onProceed).not.toHaveBeenCalled();
+    expect(onAlert.mock.calls[0]![0]).toContain('2 in-game building changes');
+  });
+
+  it('blocks when a manualCorrection is linked to an initial settlement', () => {
+    const events = [
+      makeEvent('p1', 'initialSettlement', { hexIdentifiers: ['loc-B'] }),
+      makeEvent('p1', 'manualCorrection', { hexIdentifiers: ['loc-B'], turnNumber: 3 }),
+    ];
+    const onAlert = jest.fn();
+    const onProceed = jest.fn();
+
+    simulateEnterPlacement({ isEditMode: true, editPlayerId: 'p1', exposureEvents: events, onAlert, onProceed });
+
+    expect(onAlert).toHaveBeenCalledTimes(1);
+    expect(onProceed).not.toHaveBeenCalled();
+  });
+
+  it('proceeds when the player has only initial settlements (no linked events)', () => {
+    const events = [
+      makeEvent('p1', 'initialSettlement', { hexIdentifiers: ['loc-A'] }),
+      makeEvent('p1', 'initialSettlement', { hexIdentifiers: ['loc-B'] }),
+    ];
+    const onAlert = jest.fn();
+    const onProceed = jest.fn();
+
+    simulateEnterPlacement({ isEditMode: true, editPlayerId: 'p1', exposureEvents: events, onAlert, onProceed });
+
+    expect(onAlert).not.toHaveBeenCalled();
+    expect(onProceed).toHaveBeenCalledTimes(1);
+  });
+
+  it('proceeds when the player has no events at all', () => {
+    const events = [
+      makeEvent('p2', 'initialSettlement', { hexIdentifiers: ['loc-P2'] }),
+    ];
+    const onAlert = jest.fn();
+    const onProceed = jest.fn();
+
+    simulateEnterPlacement({ isEditMode: true, editPlayerId: 'p1', exposureEvents: events, onAlert, onProceed });
+
+    expect(onAlert).not.toHaveBeenCalled();
+    expect(onProceed).toHaveBeenCalledTimes(1);
+  });
+
+  it('proceeds when robber blocks exist (they are NOT linked to initial settlement locations)', () => {
+    const events = [
+      makeEvent('p1', 'initialSettlement', { hexIdentifiers: ['loc-A'] }),
+      makeEvent('p1', 'robberBlockStarted', { hexIdentifiers: ['rblock_abc'], turnNumber: 3 }),
+      makeEvent('p1', 'robberBlockEnded', { hexIdentifiers: ['rblock_abc'], turnNumber: 6 }),
+    ];
+    const onAlert = jest.fn();
+    const onProceed = jest.fn();
+
+    simulateEnterPlacement({ isEditMode: true, editPlayerId: 'p1', exposureEvents: events, onAlert, onProceed });
+
+    expect(onAlert).not.toHaveBeenCalled();
+    expect(onProceed).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT block the target player when another player has linked events at the same location', () => {
+    const events = [
+      makeEvent('p1', 'initialSettlement', { hexIdentifiers: ['loc-A'] }),
+      makeEvent('p2', 'initialSettlement', { hexIdentifiers: ['loc-A'] }),
+      makeEvent('p2', 'cityUpgrade', { hexIdentifiers: ['loc-A'], turnNumber: 5, productionWeight: 2 }),
+    ];
+    const onAlert = jest.fn();
+    const onProceed = jest.fn();
+
+    // Editing p1: p2's city upgrade at loc-A must not block p1
+    simulateEnterPlacement({ isEditMode: true, editPlayerId: 'p1', exposureEvents: events, onAlert, onProceed });
+
+    expect(onAlert).not.toHaveBeenCalled();
+    expect(onProceed).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the guard entirely when isEditMode is false (non-edit path always proceeds)', () => {
+    // Even with linked events in the list, non-edit mode never checks the guard
+    const events = [
+      makeEvent('p1', 'initialSettlement', { hexIdentifiers: ['loc-A'] }),
+      makeEvent('p1', 'cityUpgrade', { hexIdentifiers: ['loc-A'], turnNumber: 5, productionWeight: 2 }),
+    ];
+    const onAlert = jest.fn();
+    const onProceed = jest.fn();
+
+    simulateEnterPlacement({ isEditMode: false, editPlayerId: undefined, exposureEvents: events, onAlert, onProceed });
+
+    expect(onAlert).not.toHaveBeenCalled();
+    expect(onProceed).toHaveBeenCalledTimes(1);
+  });
+});
+
 // ─── End-to-end: getBuildingStatesAtTurn after merge ─────────────────────────
 
 describe('mergeEditedSettlements — end-to-end building state (no linked events)', () => {

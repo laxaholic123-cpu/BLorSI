@@ -45,7 +45,7 @@ import {
   saveBoardLayout,
 } from '@/services/boardLayouts';
 import { getBoardScanApiUrl } from '@/services/boardScanApi';
-import { mergeEditedSettlements } from '@/services/editSettlements';
+import { getLinkedBuildingEventCount, mergeEditedSettlements } from '@/services/editSettlements';
 import type { CatanBoardLayout, CatanHexDef, ResourceType } from '@/types/models';
 import { generateId } from '@/types/models';
 import type { CatanPlayerExposureEvent } from '@/types/models';
@@ -325,6 +325,22 @@ export default function CatanBoardScanScreen() {
   // ─────────────────────────────────────────────────────────────────────────
 
   const enterPlacement = () => {
+    // In edit mode, block if the player has city upgrades / removals / manual
+    // corrections on top of their starting settlement locations.  Replacing the
+    // initial settlements in that state would leave those dependent events
+    // pointing at now-deleted location IDs, producing phantom buildings.
+    if (isEditMode && editPlayerId) {
+      const linkedCount = getLinkedBuildingEventCount(exposureEvents, editPlayerId);
+      if (linkedCount > 0) {
+        const playerName = currentPlayer?.displayName ?? 'This player';
+        Alert.alert(
+          'Edit Blocked',
+          `${playerName} has ${linkedCount} in-game building change${linkedCount === 1 ? '' : 's'} (such as a city upgrade or building removal) on top of their starting positions. Undo those changes before editing settlements.`,
+          [{ text: 'OK' }],
+        );
+        return;
+      }
+    }
     setCurrentPlayerIdx(0);
     setCurrentHexSelection([]);
     setPlayerSetups(players.map(() => []));
