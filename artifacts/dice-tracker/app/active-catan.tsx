@@ -41,6 +41,15 @@ import { confirmEndGame } from '@/services/endGame';
 import { generateId } from '@/types/models';
 import type { CatanPlayerExposureEvent } from '@/types/models';
 import { getLinkedBuildingEventCount } from '@/services/editSettlements';
+import {
+  computePlayerProductionStats,
+  getActiveRobberBlockedNumbers,
+  getBuildingStatesAtTurn,
+  CATAN_PROBS,
+} from '@/services/catanStats';
+import { CATAN_SMALL_SAMPLE_THRESHOLD } from '@/types/catanStats';
+import { CatanProductionLeaderboard } from '@/components/CatanProductionLeaderboard';
+import { CatanRollHeatMap } from '@/components/CatanRollHeatMap';
 
 // ─── 2D6 number layout (7 first/center for prominence) ───────────────────────
 
@@ -78,6 +87,8 @@ export default function ActiveCatanScreen() {
   const [robberDontAskAgain, setRobberDontAskAgain] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [showEditSettlementspicker, setShowEditSettlementspicker] = useState(false);
+  // Heat map starts hidden so the dice pad is always immediately visible
+  const [showHeatMap, setShowHeatMap] = useState(false);
 
   const webTop = Platform.OS === 'web' ? 67 : 0;
   const webBottom = Platform.OS === 'web' ? 34 : 0;
@@ -108,6 +119,57 @@ export default function ActiveCatanScreen() {
   const haptic = (style = Haptics.ImpactFeedbackStyle.Light) => {
     if (settings.hapticsEnabled) void Haptics.impactAsync(style);
   };
+
+  // ── Live dashboard data ───────────────────────────────────────────────────────
+
+  /** Per-value roll frequency for the heat map */
+  const rollCounts = useMemo<Record<number, number>>(() => {
+    const counts: Record<number, number> = {};
+    for (const e of activeEvents) counts[e.value] = (counts[e.value] ?? 0) + 1;
+    return counts;
+  }, [activeEvents]);
+
+  /**
+   * Numbers covered by any player's CURRENTLY ACTIVE settlement or city.
+   * Uses getBuildingStatesAtTurn so that buildingRemoved and manualCorrection
+   * events are respected — a number is only highlighted if a building is
+   * still present there, not just historically placed.
+   */
+  const settlementNumbers = useMemo<Set<number>>(() => {
+    if (!activeSession) return new Set<number>();
+    const nums = new Set<number>();
+    for (const player of activeSession.players) {
+      const buildings = getBuildingStatesAtTurn(player.id, 99999, exposureEvents);
+      for (const bldg of buildings) {
+        for (const n of bldg.affectedNumbers) nums.add(n);
+      }
+    }
+    return nums;
+  }, [activeSession, exposureEvents]);
+
+  /** Per-player production stats — null when no exposure events recorded yet */
+  const playerProductionStats = useMemo(
+    () =>
+      activeSession && exposureEvents.length > 0
+        ? activeSession.players.map(p =>
+            computePlayerProductionStats(p, rollEvents, exposureEvents),
+          )
+        : null,
+    [activeSession, rollEvents, exposureEvents],
+  );
+
+  /** playerId → currently blocked numbers */
+  const activeRobberBlocks = useMemo<Map<string, number[]>>(() => {
+    const map = new Map<string, number[]>();
+    if (!activeSession) return map;
+    for (const player of activeSession.players) {
+      const blocked = getActiveRobberBlockedNumbers(player.id, 99999, exposureEvents);
+      if (blocked.length > 0) map.set(player.id, blocked);
+    }
+    return map;
+  }, [activeSession, exposureEvents]);
+
+  const isSmallSample = totalRolls < CATAN_SMALL_SAMPLE_THRESHOLD;
 
   // Clear grid highlight whenever the active player changes (auto-advance or manual Prev/Next)
   useEffect(() => {
@@ -344,6 +406,21 @@ export default function ActiveCatanScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top + webTop, paddingBottom: insets.bottom + webBottom }]}>
+      {/*
+        Layout contract:
+          • ScrollView (flex:1) holds the decorative/informational top content:
+            header, player banner, last-roll stats, live dashboard.
+            On small screens this area can scroll to reach dashboard details
+            without displacing the dice pad.
+          • The dice pad (gridWrapper), build row, and controls bar sit BELOW
+            the ScrollView and are NEVER scrolled away — they're always reachable.
+      */}
+      <ScrollView
+        style={styles.topScroll}
+        contentContainerStyle={styles.topScrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
       {/* ── Header ────────────────────────────────────────────────────────────── */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={styles.headerLeft}>
@@ -458,7 +535,32 @@ export default function ActiveCatanScreen() {
         </View>
       </View>
 
+      {/* ── Live production leaderboard ───────────────────────────────────────── */}
+      <CatanProductionLeaderboard
+        players={activeSession.players}
+        playerStats={playerProductionStats}
+        activeRobberBlocks={activeRobberBlocks}
+        currentPlayerIndex={activeSession.currentPlayerIndex}
+        isSmallSample={isSmallSample}
+        colors={colors}
+        onToggleHeatMap={() => setShowHeatMap(v => !v)}
+        showHeatMap={showHeatMap}
+      />
+
+      {/* ── Roll heat map ──────────────────────────────────────────────────────── */}
+      {showHeatMap && (
+        <CatanRollHeatMap
+          rollCounts={rollCounts}
+          totalRolls={totalRolls}
+          settlementNumbers={settlementNumbers}
+          colors={colors}
+        />
+      )}
+      </ScrollView>
+
       {/* ── Catan number grid ──────────────────────────────────────────────────── */}
+      {/* NOTE: gridWrapper intentionally has NO flex:1 — the ScrollView above   */}
+      {/* takes flex:1 and the grid sits at a fixed natural height below it.      */}
       <View style={styles.gridWrapper}>
         {/* 7 button — prominent robber button */}
         <TouchableOpacity
@@ -766,7 +868,12 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 22 },
   statLabel: { fontSize: 12 },
 
-  gridWrapper: { flex: 1, paddingHorizontal: 12, paddingVertical: 6, gap: 10 },
+  // The scrollable top content area — holds header, player banner, stats, dashboard.
+  // This takes the remaining vertical space above the fixed dice pad.
+  topScroll: { flex: 1 },
+  topScrollContent: { paddingBottom: 8 },
+  // The dice pad is OUTSIDE the scroll view so it is always visible and reachable.
+  gridWrapper: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6, gap: 10 },
 
   sevenBtn: {
     width: '100%',
