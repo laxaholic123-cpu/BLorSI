@@ -29,7 +29,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
@@ -45,6 +45,7 @@ import {
   saveBoardLayout,
 } from '@/services/boardLayouts';
 import { getBoardScanApiUrl } from '@/services/boardScanApi';
+import { mergeEditedSettlements } from '@/services/editSettlements';
 import type { CatanBoardLayout, CatanHexDef, ResourceType } from '@/types/models';
 import { generateId } from '@/types/models';
 import type { CatanPlayerExposureEvent } from '@/types/models';
@@ -99,8 +100,12 @@ function formatSavedDate(iso: string): string {
 export default function CatanBoardScanScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { activeSession, persistExposureEvents } = useGame();
+  const { activeSession, persistExposureEvents, exposureEvents } = useGame();
   const { settings } = useSettings();
+
+  // ── Edit-mode: editPlayerId is set when launched from an active game ────────
+  const { editPlayerId } = useLocalSearchParams<{ editPlayerId?: string }>();
+  const isEditMode = Boolean(editPlayerId);
 
   // ── Phase ──────────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<ScanPhase>('entry');
@@ -129,7 +134,11 @@ export default function CatanBoardScanScreen() {
   const [placementError, setPlacementError] = useState<string | null>(null);
 
   // ── Derived ────────────────────────────────────────────────────────────────
-  const players = activeSession?.players ?? [];
+  const allPlayers = activeSession?.players ?? [];
+  // In edit mode only the targeted player goes through placement
+  const players = isEditMode
+    ? allPlayers.filter(p => p.id === editPlayerId)
+    : allPlayers;
   const currentPlayer = players[currentPlayerIdx];
   const isLastPlayer = currentPlayerIdx === players.length - 1;
   const lowConfIndices = hexes.map((h, i) => (h.confidence === 'low' ? i : -1)).filter(i => i >= 0);
@@ -387,7 +396,7 @@ export default function CatanBoardScanScreen() {
     if (isSavingGame) return;
     setIsSavingGame(true);
     try {
-      const events: CatanPlayerExposureEvent[] = [];
+      const newEvents: CatanPlayerExposureEvent[] = [];
       for (let pi = 0; pi < players.length; pi++) {
         const player = players[pi]!;
         const setups = playerSetups[pi] ?? [];
@@ -399,7 +408,7 @@ export default function CatanBoardScanScreen() {
           const primaryResource = selectedHexes
             .find(h => h?.resource && h.resource !== 'desert' && h.resource !== null)
             ?.resource ?? undefined;
-          events.push({
+          newEvents.push({
             id: generateId(),
             sessionId: activeSession.id,
             playerId: player.id,
@@ -414,8 +423,18 @@ export default function CatanBoardScanScreen() {
           });
         }
       }
-      await persistExposureEvents(activeSession.id, events);
-      router.replace('/active-catan' as never);
+
+      if (isEditMode && editPlayerId) {
+        // Replace only the edited player's *initial* settlement events.
+        // All in-game events (city upgrades, settlements built mid-game,
+        // robber blocks, manual corrections) are preserved for every player.
+        const merged = mergeEditedSettlements(exposureEvents, newEvents, editPlayerId);
+        await persistExposureEvents(activeSession.id, merged);
+        router.back();
+      } else {
+        await persistExposureEvents(activeSession.id, newEvents);
+        router.replace('/active-catan' as never);
+      }
     } catch {
       Alert.alert('Error', 'Could not save settlement data. Please try again.');
     } finally {
@@ -424,10 +443,17 @@ export default function CatanBoardScanScreen() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Skip to existing quick setup
+  // Skip to existing quick setup (not available in edit mode)
   // ─────────────────────────────────────────────────────────────────────────
 
   const handleSkip = () => router.replace('/catan-exposure-quick' as never);
+
+  const handleBack = () => {
+    if (phase === 'review') setPhase('entry');
+    else if (phase === 'placement') setPhase('review');
+    else if (isEditMode) router.back();
+    else router.back();
+  };
 
   // ─────────────────────────────────────────────────────────────────────────
   // Renders
@@ -801,10 +827,12 @@ export default function CatanBoardScanScreen() {
   // ─────────────────────────────────────────────────────────────────────────
 
   const phaseTitles: Record<ScanPhase, string> = {
-    entry: 'Scan Board',
+    entry: isEditMode ? 'Edit Settlements' : 'Scan Board',
     analyzing: 'Scanning…',
     review: 'Review Board',
-    placement: `Place Settlements — ${currentPlayerIdx + 1}/${players.length}`,
+    placement: isEditMode
+      ? `Edit: ${currentPlayer?.displayName ?? 'Player'}`
+      : `Place Settlements — ${currentPlayerIdx + 1}/${players.length}`,
   };
 
   const hasModalOpen = correctionIdx !== null || showSaveModal || showLoadModal;
@@ -813,22 +841,18 @@ export default function CatanBoardScanScreen() {
     <View style={[s.root, { backgroundColor: colors.background }]}>
       {/* Header */}
       <View style={[s.header, { paddingTop: insets.top + (Platform.OS === 'web' ? 67 : 0) + 12, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => {
-          if (phase === 'review') setPhase('entry');
-          else if (phase === 'placement') setPhase('review');
-          else router.back();
-        }} hitSlop={8}>
+        <TouchableOpacity onPress={handleBack} hitSlop={8}>
           <Ionicons name="arrow-back" size={24} color={colors.foreground} />
         </TouchableOpacity>
         <Text style={[s.headerTitle, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
           {phaseTitles[phase]}
         </Text>
-        {phase !== 'placement' && (
+        {phase !== 'placement' && !isEditMode && (
           <TouchableOpacity onPress={handleSkip} hitSlop={8}>
             <Text style={[s.headerSkip, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>Skip</Text>
           </TouchableOpacity>
         )}
-        {phase === 'placement' && <View style={{ width: 40 }} />}
+        {(phase === 'placement' || isEditMode) && <View style={{ width: 40 }} />}
       </View>
 
       {/* Phase content */}

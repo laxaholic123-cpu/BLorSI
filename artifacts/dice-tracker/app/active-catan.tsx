@@ -13,6 +13,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Modal,
   Platform,
   StyleSheet,
@@ -39,6 +40,7 @@ import { playDoneSound, playRollSound, playUndoSound } from '@/services/sound';
 import { confirmEndGame } from '@/services/endGame';
 import { generateId } from '@/types/models';
 import type { CatanPlayerExposureEvent } from '@/types/models';
+import { getLinkedBuildingEventCount } from '@/services/editSettlements';
 
 // ─── 2D6 number layout (7 first/center for prominence) ───────────────────────
 
@@ -75,6 +77,7 @@ export default function ActiveCatanScreen() {
   const [robberHexNumber, setRobberHexNumber] = useState<number | null>(null);
   const [robberDontAskAgain, setRobberDontAskAgain] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [showEditSettlementspicker, setShowEditSettlementspicker] = useState(false);
 
   const webTop = Platform.OS === 'web' ? 67 : 0;
   const webBottom = Platform.OS === 'web' ? 34 : 0;
@@ -212,6 +215,39 @@ export default function ActiveCatanScreen() {
   const handleEndGame = () => {
     haptic(Haptics.ImpactFeedbackStyle.Heavy);
     setShowEndConfirm(true);
+  };
+
+  const handleEditSettlements = (playerId: string) => {
+    haptic();
+    setShowEditSettlementspicker(false);
+
+    // Guard: block the edit if the player has city upgrades, building removals,
+    // or manual corrections on top of their initial settlement positions.
+    // Editing in that state would leave those events referencing a now-deleted
+    // location, producing phantom buildings in the production statistics.
+    const linkedCount = getLinkedBuildingEventCount(exposureEvents, playerId);
+    if (linkedCount > 0) {
+      const player = activeSession?.players.find(p => p.id === playerId);
+      const name = player?.displayName ?? 'This player';
+      Alert.alert(
+        'Cannot Edit Settlements',
+        `${name} has ${linkedCount} building upgrade${linkedCount !== 1 ? 's' : ''} or correction${linkedCount !== 1 ? 's' : ''} on their starting positions. Remove those changes from the build menu first, then edit their starting spots.`,
+        [{ text: 'OK' }],
+      );
+      return;
+    }
+
+    router.push((`/catan-board-scan?editPlayerId=${encodeURIComponent(playerId)}`) as any);
+  };
+
+  const handleEditSettlementsPress = () => {
+    if (!activeSession) return;
+    haptic();
+    if (activeSession.players.length === 1 && activeSession.players[0]) {
+      handleEditSettlements(activeSession.players[0].id);
+    } else {
+      setShowEditSettlementspicker(true);
+    }
   };
 
   const handleEndConfirm = async () => {
@@ -508,6 +544,16 @@ export default function ActiveCatanScreen() {
           <Ionicons name="ellipsis-horizontal-circle-outline" size={14} color={colors.mutedForeground} />
           <Text style={[styles.buildPillText, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>More…</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
+          onPress={handleEditSettlementsPress}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Edit settlement positions"
+        >
+          <Ionicons name="map-outline" size={14} color={colors.mutedForeground} />
+          <Text style={[styles.buildPillText, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>Edit Settlements</Text>
+        </TouchableOpacity>
       </ScrollView>
 
       {/* ── Controls bar ───────────────────────────────────────────────────────── */}
@@ -532,6 +578,46 @@ export default function ActiveCatanScreen() {
           <Text style={[styles.controlBtnText, { color: colors.primary, fontFamily: 'Inter_500Medium' }]}>Stats</Text>
         </TouchableOpacity>
       </View>
+
+      {/* ── Edit Settlements player picker ─────────────────────────────────────── */}
+      <Modal
+        visible={showEditSettlementspicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowEditSettlementspicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.robberSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.robberHandle} />
+            <Text style={[styles.robberTitle, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+              Edit Settlements
+            </Text>
+            <Text style={[styles.robberSub, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+              Which player's positions need correcting?
+            </Text>
+            {activeSession?.players.map(player => (
+              <TouchableOpacity
+                key={player.id}
+                style={[styles.playerPickerRow, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                onPress={() => handleEditSettlements(player.id)}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.playerPickerDot, { backgroundColor: player.color }]} />
+                <Text style={[styles.playerPickerName, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
+                  {player.displayName}
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              style={[styles.robberActionBtn, { backgroundColor: colors.muted, marginTop: 4 }]}
+              onPress={() => setShowEditSettlementspicker(false)}
+            >
+              <Text style={[styles.robberActionText, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── End game confirmation modal ─────────────────────────────────────────── */}
       <Modal
@@ -729,4 +815,9 @@ const styles = StyleSheet.create({
   robberActions: { flexDirection: 'row', gap: 12 },
   robberActionBtn: { paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   robberActionText: { fontSize: 16 },
+
+  // Edit settlements player picker
+  playerPickerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 12, borderWidth: 1 },
+  playerPickerDot: { width: 14, height: 14, borderRadius: 7, flexShrink: 0 },
+  playerPickerName: { flex: 1, fontSize: 16 },
 });
