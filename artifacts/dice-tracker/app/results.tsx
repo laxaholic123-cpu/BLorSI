@@ -12,8 +12,9 @@
  * user explicitly taps Done.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
   Platform,
   ScrollView,
   StyleSheet,
@@ -26,14 +27,17 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { useGame } from '@/context/GameContext';
+import { useSettings } from '@/context/SettingsContext';
 import { computeAllStats, formatDuration } from '@/services/stats';
 import { computeCatanGameStats } from '@/services/catanStats';
 import type { CatanGameStats } from '@/types/catanStats';
+import { selectBestShareCard, CARD_METADATA } from '@/services/shareCard';
 
 export default function ResultsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { activeSession, rollEvents, exposureEvents, updateSession, endSession } = useGame();
+  const { settings } = useSettings();
   const webTop = Platform.OS === 'web' ? 67 : 0;
 
   // Winner selection state
@@ -58,6 +62,38 @@ export default function ResultsScreen() {
         : null,
     [activeSession, rollEvents, exposureEvents],
   );
+
+  // ── Verdict entrance animation ───────────────────────────────────────────────
+  // A gentle fade-up when the results screen first renders.
+  // Skip entirely when the user has requested reduced motion.
+  const verdictOpacity = useRef(
+    new Animated.Value(settings.reducedMotion ? 1 : 0),
+  ).current;
+  const verdictTranslateY = useRef(
+    new Animated.Value(settings.reducedMotion ? 0 : 10),
+  ).current;
+
+  useEffect(() => {
+    if (settings.reducedMotion) return;
+    // Small delay lets the scroll view settle before the headline animates in
+    const timer = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(verdictOpacity, {
+          toValue: 1,
+          duration: 380,
+          useNativeDriver: true,
+        }),
+        Animated.timing(verdictTranslateY, {
+          toValue: 0,
+          duration: 380,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }, 80);
+    return () => clearTimeout(timer);
+  // Run only once on mount — animation values are stable refs
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── No session guard ─────────────────────────────────────────────────────────
   if (!activeSession || !stats) {
@@ -181,7 +217,20 @@ export default function ResultsScreen() {
     router.replace('/');
   };
 
+  const handleShare = async () => {
+    // Capture id before endSession clears activeSession from context
+    const sessionId = activeSession.id;
+    const hasExposureData = !!(catanStats?.hasExposureData);
+    const bestCard = selectBestShareCard(activeSession, hasExposureData);
+    await endSession();
+    router.push(`/share-card?id=${encodeURIComponent(sessionId)}&cardType=${bestCard}` as any);
+  };
+
   const gameLabel = activeSession.customGameName ?? activeSession.diceMode.toUpperCase();
+
+  // Best share card for this session — used by the inline share preview
+  const bestCard = selectBestShareCard(activeSession, !!(catanStats?.hasExposureData));
+  const bestCardMeta = CARD_METADATA[bestCard];
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -224,23 +273,54 @@ export default function ResultsScreen() {
           )}
         </View>
 
-        {/* ── Verdict ── */}
-        <SectionLabel text="VERDICT" colors={colors} />
-        <View style={[styles.verdictCard, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-          <Text style={[styles.verdictHeadline, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
-            {stats.verdictHeadline}
-          </Text>
-          <Text style={[styles.verdictBody, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-            {stats.isSmallSample
-              ? `Only ${stats.totalRolls} rolls recorded — not enough for a reliable verdict. The dice cannot be judged on this evidence.`
-              : stats.verdictExplanation}
-          </Text>
-          {stats.meanZScore !== null && !stats.isSmallSample && (
-            <Text style={[styles.verdictNote, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-              Mean: {stats.mean?.toFixed(2)} vs expected {stats.expectedMean.toFixed(1)} (z = {stats.meanZScore.toFixed(2)})
+        {/* ── Verdict (animated entrance) ── */}
+        <Animated.View style={{ opacity: verdictOpacity, transform: [{ translateY: verdictTranslateY }] }}>
+          <SectionLabel text="VERDICT" colors={colors} />
+          <View style={[styles.verdictCard, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+            <Text style={[styles.verdictHeadline, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+              {stats.verdictHeadline}
             </Text>
-          )}
-        </View>
+            <Text style={[styles.verdictBody, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+              {stats.isSmallSample
+                ? `Only ${stats.totalRolls} rolls recorded — not enough for a reliable verdict. The dice cannot be judged on this evidence.`
+                : stats.verdictExplanation}
+            </Text>
+            {stats.meanZScore !== null && !stats.isSmallSample && (
+              <Text style={[styles.verdictNote, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                Mean: {stats.mean?.toFixed(2)} vs expected {stats.expectedMean.toFixed(1)} (z = {stats.meanZScore.toFixed(2)})
+              </Text>
+            )}
+          </View>
+
+          {/* ── Inline share preview ── */}
+          <TouchableOpacity
+            style={[styles.sharePreviewCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+            onPress={() => router.push(`/share-card?id=${encodeURIComponent(activeSession.id)}&cardType=${bestCard}` as any)}
+            activeOpacity={0.8}
+          >
+            <View style={styles.sharePreviewLeft}>
+              <Ionicons name={bestCardMeta.icon as any} size={18} color={colors.primary} />
+              <View style={styles.sharePreviewText}>
+                <Text style={[styles.sharePreviewLabel, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
+                  {bestCardMeta.label}
+                </Text>
+                <Text style={[styles.sharePreviewDesc, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                  {bestCardMeta.desc}
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              style={[styles.sharePreviewBtn, { backgroundColor: colors.primary }]}
+              onPress={handleShare}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="share-social-outline" size={15} color={colors.primaryForeground} />
+              <Text style={[styles.sharePreviewBtnText, { color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold' }]}>
+                Share
+              </Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Animated.View>
 
         {/* ── Distribution ── */}
         <SectionLabel text="DISTRIBUTION vs EXPECTED" colors={colors} />
@@ -533,16 +613,28 @@ export default function ResultsScreen() {
           </>
         )}
 
-        {/* ── Done button ── */}
-        <TouchableOpacity
-          style={[styles.doneBtn, { backgroundColor: colors.primary, marginTop: 24 }]}
-          onPress={handleDone}
-          activeOpacity={0.85}
-        >
-          <Text style={[styles.doneBtnText, { color: colors.primaryForeground, fontFamily: 'Inter_700Bold' }]}>
-            Done — Back to Home
-          </Text>
-        </TouchableOpacity>
+        {/* ── Footer actions ── */}
+        <View style={[styles.footerRow, { marginTop: 24 }]}>
+          <TouchableOpacity
+            style={[styles.footerShareBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+            onPress={handleShare}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="share-social-outline" size={18} color={colors.primary} />
+            <Text style={[styles.footerShareBtnText, { color: colors.primary, fontFamily: 'Inter_600SemiBold' }]}>
+              Share
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.doneBtn, styles.footerDoneBtn, { backgroundColor: colors.primary }]}
+            onPress={handleDone}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.doneBtnText, { color: colors.primaryForeground, fontFamily: 'Inter_700Bold' }]}>
+              Done
+            </Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
     </View>
   );
@@ -696,4 +788,45 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   doneBtnText: { fontSize: 17 },
+
+  // Footer action row (Share + Done)
+  footerRow: { flexDirection: 'row', gap: 10 },
+  footerShareBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  footerShareBtnText: { fontSize: 16 },
+  footerDoneBtn: { flex: 1 },
+
+  // Inline share preview card (below verdict)
+  sharePreviewCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginTop: 10,
+    gap: 12,
+  },
+  sharePreviewLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  sharePreviewText: { flex: 1, gap: 2 },
+  sharePreviewLabel: { fontSize: 14 },
+  sharePreviewDesc: { fontSize: 12 },
+  sharePreviewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  sharePreviewBtnText: { fontSize: 13 },
 });

@@ -40,18 +40,13 @@ import { computeAllStats, formatDuration } from '@/services/stats';
 import { computeCatanGameStats } from '@/services/catanStats';
 import type { CatanPlayerExposureEvent, GameSession, RollEvent } from '@/types/models';
 import type { CatanGameStats } from '@/types/catanStats';
+import { type CardType, CARD_METADATA, isCardType } from '@/services/shareCard';
 
-// ─── Card types ───────────────────────────────────────────────────────────────
+// ─── Card type list ───────────────────────────────────────────────────────────
 
-type CardType = 'verdict' | 'summary' | 'accolade' | 'rivalry' | 'catan';
-
-const CARD_TYPES: Array<{ type: CardType; label: string; icon: string; desc: string }> = [
-  { type: 'verdict', label: 'Verdict Card', icon: 'trophy-outline', desc: 'The final dice verdict' },
-  { type: 'summary', label: 'Game Summary', icon: 'bar-chart-outline', desc: 'Rolls, stats & duration' },
-  { type: 'accolade', label: 'Player Accolade', icon: 'ribbon-outline', desc: 'Spotlight one player' },
-  { type: 'rivalry', label: 'Rivalry Card', icon: 'swap-horizontal-outline', desc: 'Head-to-head (2-player)' },
-  { type: 'catan', label: 'Catan Production', icon: 'home-outline', desc: 'Settlement production table' },
-];
+const CARD_TYPES: Array<{ type: CardType; label: string; icon: string; desc: string }> = (
+  Object.entries(CARD_METADATA) as Array<[CardType, typeof CARD_METADATA[CardType]]>
+).map(([type, { label, icon, desc }]) => ({ type, label, icon, desc }));
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -71,14 +66,17 @@ export default function ShareCardScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { settings } = useSettings();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, cardType: cardTypeParam } = useLocalSearchParams<{ id: string; cardType?: string }>();
   const webTop = Platform.OS === 'web' ? 67 : 0;
 
   const [session, setSession] = useState<GameSession | null>(null);
   const [rollEvents, setRollEvents] = useState<RollEvent[]>([]);
   const [exposureEvents, setExposureEvents] = useState<CatanPlayerExposureEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedCard, setSelectedCard] = useState<CardType>('verdict');
+  // Pre-select card type from ?cardType= param if it is a valid CardType
+  const [selectedCard, setSelectedCard] = useState<CardType>(
+    isCardType(cardTypeParam) ? cardTypeParam : 'verdict',
+  );
   const [selectedPlayerIdx, setSelectedPlayerIdx] = useState(0);
   const [sharing, setSharing] = useState(false);
 
