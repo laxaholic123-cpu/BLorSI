@@ -126,7 +126,8 @@ export function CatanHexGrid({
               onLongPress={onHexLongPress ? () => onHexLongPress(i) : undefined}
             />
 
-            {/* Resource abbreviation */}
+            {/* Resource abbreviation — pointerEvents="none" so touches fall
+                through to the background Polygon above on Android. */}
             <SvgText
               x={cx}
               y={hasNumber ? cy - 10 : cy + 5}
@@ -134,14 +135,15 @@ export function CatanHexGrid({
               fill={rs.textColor}
               fontSize={11}
               fontWeight="700"
+              pointerEvents="none"
             >
               {rs.abbr}
             </SvgText>
 
-            {/* Number token */}
+            {/* Number token — same reason: none on all decorative shapes. */}
             {hasNumber && (
               <>
-                <Circle cx={cx} cy={cy + 12} r={13} fill="white" opacity={0.92} />
+                <Circle cx={cx} cy={cy + 12} r={13} fill="white" opacity={0.92} pointerEvents="none" />
                 <SvgText
                   x={cx}
                   y={cy + 17}
@@ -149,6 +151,7 @@ export function CatanHexGrid({
                   fill={hotNum ? '#CC0000' : '#111111'}
                   fontSize={13}
                   fontWeight="700"
+                  pointerEvents="none"
                 >
                   {hex.number}
                 </SvgText>
@@ -162,9 +165,10 @@ export function CatanHexGrid({
                   points={hexPoints(cx, cy, HEX_R - 1.5)}
                   fill={selectionColor}
                   opacity={0.3}
+                  pointerEvents="none"
                 />
                 {/* Selection rank badge */}
-                <Circle cx={cx - 24} cy={cy - 24} r={10} fill={selectionColor} opacity={0.9} />
+                <Circle cx={cx - 24} cy={cy - 24} r={10} fill={selectionColor} opacity={0.9} pointerEvents="none" />
                 <SvgText
                   x={cx - 24}
                   y={cy - 20}
@@ -172,6 +176,7 @@ export function CatanHexGrid({
                   fill="#000000"
                   fontSize={11}
                   fontWeight="700"
+                  pointerEvents="none"
                 >
                   {selRank + 1}
                 </SvgText>
@@ -180,7 +185,7 @@ export function CatanHexGrid({
 
             {/* Low-confidence amber corner mark */}
             {isLowConf && !isSelected && (
-              <Circle cx={cx + 22} cy={cy - 26} r={7} fill="#F59E0B" />
+              <Circle cx={cx + 22} cy={cy - 26} r={7} fill="#F59E0B" pointerEvents="none" />
             )}
           </G>
         );
