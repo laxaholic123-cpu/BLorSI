@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { useGame } from '@/context/GameContext';
 import { computeAllStats } from '@/services/stats';
+import { RollFrequencyChart } from '@/components/RollFrequencyChart';
 
 export default function StatsScreen() {
   const colors = useColors();
@@ -104,7 +105,8 @@ export default function StatsScreen() {
 
         {/* ── Distribution ── */}
         <SectionLabel text="DISTRIBUTION (vs expected)" colors={colors} />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <RollFrequencyChart frequencies={stats.frequencies} totalRolls={stats.totalRolls} />
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 8 }]}>
           {/* Column headers */}
           <View style={[styles.freqHeader, { borderBottomColor: colors.border }]}>
             <Text style={[styles.freqColVal, styles.colHdr, { color: colors.mutedForeground }]}>VAL</Text>
@@ -116,8 +118,8 @@ export default function StatsScreen() {
           {stats.frequencies.map((f, idx) => {
             const isAbove = f.deviation > 0.5;
             const isBelow = f.deviation < -0.5;
-            const barColor = isAbove ? colors.primary : isBelow ? colors.destructive : colors.mutedForeground;
-            const devColor = isAbove ? colors.primary : isBelow ? colors.destructive : colors.mutedForeground;
+            const barColor = isAbove ? '#1ABC9C' : isBelow ? '#5C7A9C' : colors.mutedForeground;
+            const devColor = isAbove ? '#1ABC9C' : isBelow ? '#5C7A9C' : colors.mutedForeground;
             const barPct = stats.totalRolls > 0 ? f.count / maxCount : 0;
             const isLast = idx === stats.frequencies.length - 1;
             return (

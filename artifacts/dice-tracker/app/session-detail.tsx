@@ -281,7 +281,7 @@ export default function SessionDetailScreen() {
           {stats.frequencies.map((f, idx) => {
             const isAbove = f.deviation > 0.5;
             const isBelow = f.deviation < -0.5;
-            const barColor = isAbove ? colors.primary : isBelow ? colors.destructive : colors.mutedForeground;
+            const barColor = isAbove ? '#1ABC9C' : isBelow ? '#5C7A9C' : colors.mutedForeground;
             const barPct = stats.totalRolls > 0 ? f.count / maxCount : 0;
             const isLast = idx === stats.frequencies.length - 1;
             return (

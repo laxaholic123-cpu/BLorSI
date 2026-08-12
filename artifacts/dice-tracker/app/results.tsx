@@ -32,6 +32,7 @@ import { computeAllStats, formatDuration } from '@/services/stats';
 import { computeCatanGameStats } from '@/services/catanStats';
 import type { CatanGameStats } from '@/types/catanStats';
 import { selectBestShareCard, CARD_METADATA } from '@/services/shareCard';
+import { RollFrequencyChart } from '@/components/RollFrequencyChart';
 
 export default function ResultsScreen() {
   const colors = useColors();
@@ -324,7 +325,8 @@ export default function ResultsScreen() {
 
         {/* ── Distribution ── */}
         <SectionLabel text="DISTRIBUTION vs EXPECTED" colors={colors} />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <RollFrequencyChart frequencies={stats.frequencies} totalRolls={stats.totalRolls} />
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 8 }]}>
           <View style={[styles.freqHeader, { borderBottomColor: colors.border }]}>
             <Text style={[styles.freqColVal, styles.colHdr, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>VAL</Text>
             <View style={styles.freqColBar} />
@@ -335,8 +337,8 @@ export default function ResultsScreen() {
           {stats.frequencies.map((f, idx) => {
             const isAbove = f.deviation > 0.5;
             const isBelow = f.deviation < -0.5;
-            const barColor = isAbove ? colors.primary : isBelow ? colors.destructive : colors.mutedForeground;
-            const devColor = isAbove ? colors.primary : isBelow ? colors.destructive : colors.mutedForeground;
+            const barColor = isAbove ? '#1ABC9C' : isBelow ? '#5C7A9C' : colors.mutedForeground;
+            const devColor = isAbove ? '#1ABC9C' : isBelow ? '#5C7A9C' : colors.mutedForeground;
             const barPct = stats.totalRolls > 0 ? f.count / maxCount : 0;
             const isLast = idx === stats.frequencies.length - 1;
             return (
