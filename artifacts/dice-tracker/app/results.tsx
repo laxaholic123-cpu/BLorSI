@@ -326,6 +326,22 @@ export default function ResultsScreen() {
         {/* ── Distribution ── */}
         <SectionLabel text="DISTRIBUTION vs EXPECTED" colors={colors} />
         <RollFrequencyChart frequencies={stats.frequencies} totalRolls={stats.totalRolls} />
+        {!stats.isSmallSample && (
+          <View style={styles.chartLegend}>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#1ABC9C' }]} />
+              <Text style={[styles.legendLabel, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                above expected
+              </Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#5C7A9C' }]} />
+              <Text style={[styles.legendLabel, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                below expected
+              </Text>
+            </View>
+          </View>
+        )}
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 8 }]}>
           <View style={[styles.freqHeader, { borderBottomColor: colors.border }]}>
             <Text style={[styles.freqColVal, styles.colHdr, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>VAL</Text>
@@ -737,6 +753,18 @@ const styles = StyleSheet.create({
   statBox: { flex: 1, alignItems: 'center', gap: 3 },
   statBoxValue: { fontSize: 20 },
   statBoxLabel: { fontSize: 11 },
+
+  // Distribution legend
+  chartLegend: {
+    flexDirection: 'row',
+    gap: 16,
+    marginTop: 8,
+    marginBottom: 0,
+    paddingHorizontal: 4,
+  },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legendDot: { width: 8, height: 8, borderRadius: 4 },
+  legendLabel: { fontSize: 12 },
 
   // Frequency table
   freqHeader: {
