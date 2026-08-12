@@ -113,17 +113,17 @@ export function CatanHexGrid({
         const hotNum = hex?.number === 6 || hex?.number === 8;
 
         return (
-          <G
-            key={i}
-            onPress={onHexPress ? () => onHexPress(i) : undefined}
-            onLongPress={onHexLongPress ? () => onHexLongPress(i) : undefined}
-          >
-            {/* Hex background */}
+          <G key={i}>
+            {/* Hex background — touch handlers live here so Android dispatches
+                press/long-press correctly. react-native-svg on Android does not
+                reliably fire events on <G> groups; only concrete shapes work. */}
             <Polygon
               points={hexPoints(cx, cy, HEX_R - 1.5)}
               fill={rs.fill}
               stroke={isSelected ? selectionColor : (isLowConf ? '#F59E0B' : '#111111')}
               strokeWidth={isSelected ? 3.5 : (isLowConf ? 3 : 1)}
+              onPress={onHexPress ? () => onHexPress(i) : undefined}
+              onLongPress={onHexLongPress ? () => onHexLongPress(i) : undefined}
             />
 
             {/* Resource abbreviation */}

@@ -265,7 +265,14 @@ export default function CatanBoardScanScreen() {
       setDetectedPieces(normalizePieces(Array.isArray(data.pieces) ? data.pieces : []));
       setPhase('review');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
+      // TypeError = network-level failure (device can't reach server).
+      // Any other Error = meaningful server/parse message worth showing.
+      const msg =
+        err instanceof TypeError
+          ? "Couldn't reach the board scanner — check your connection and try again"
+          : err instanceof Error
+            ? err.message
+            : 'Unknown error';
       setAnalysisError(msg);
       setPhase('review'); // Still go to review so user can set hexes manually
     }
