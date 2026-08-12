@@ -26,8 +26,10 @@ import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { useSettings } from '@/context/SettingsContext';
 import { useGame } from '@/context/GameContext';
-import { deleteSession, loadAllSessions, loadRollEvents } from '@/services/storage';
+import { deleteSession, loadAllSessions, loadExposureEvents, loadRollEvents } from '@/services/storage';
 import type { GameSession } from '@/types/models';
+import { CareerStatsPanel } from '@/components/CareerStatsPanel';
+import { computeCareerStats, type CareerStats } from '@/services/careerStats';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -84,6 +86,8 @@ export default function HistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   const [expandedDeleteId, setExpandedDeleteId] = useState<string | null>(null);
+  const [careerStats, setCareerStats] = useState<CareerStats | 'loading' | 'error' | null>(null);
+  const [careerExpanded, setCareerExpanded] = useState(false);
 
   const haptic = (style = Haptics.ImpactFeedbackStyle.Light) => {
     if (settings.hapticsEnabled) void Haptics.impactAsync(style);
@@ -112,18 +116,63 @@ export default function HistoryScreen() {
     void loadSessions().finally(() => setLoading(false));
   }, [loadSessions]);
 
-  // Refresh when screen comes back into focus (e.g. after deleting or completing a game)
-  useFocusEffect(
-    useCallback(() => {
-      void loadSessions();
-    }, [loadSessions]),
-  );
-
   const handleRefresh = async () => {
     setRefreshing(true);
     await loadSessions();
+    // Reset career stats so they reload fresh on next expand
+    if (careerExpanded) {
+      void loadCareerStats();
+    } else {
+      setCareerStats(null);
+    }
     setRefreshing(false);
   };
+
+  // Load career data — fetches fresh from storage every time it is called.
+  const loadCareerStats = useCallback(async () => {
+    setCareerStats('loading');
+    try {
+      const all = await loadAllSessions();
+      const rollsBySession: Record<string, import('@/types/models').RollEvent[]> = {};
+      const exposuresBySession: Record<string, import('@/types/models').CatanPlayerExposureEvent[]> = {};
+
+      await Promise.all(
+        all.map(async s => {
+          rollsBySession[s.id] = await loadRollEvents(s.id);
+          if (s.gameType === 'catan') {
+            exposuresBySession[s.id] = await loadExposureEvents(s.id);
+          }
+        }),
+      );
+
+      setCareerStats(computeCareerStats(all, rollsBySession, exposuresBySession));
+    } catch {
+      // Use a distinct sentinel so the panel can show a retry prompt rather
+      // than a misleading "play more games" nudge.
+      setCareerStats('error');
+    }
+  }, []);
+
+  const handleCareerToggle = useCallback(() => {
+    const nextExpanded = !careerExpanded;
+    setCareerExpanded(nextExpanded);
+    // Load when first opening, or retry after a previous error
+    if (nextExpanded && (careerStats === null || careerStats === 'error')) {
+      void loadCareerStats();
+    }
+  }, [careerExpanded, careerStats, loadCareerStats]);
+
+  // Refresh when screen comes back into focus (e.g. after completing or resuming a game).
+  // Also reload career stats if the panel is already open so totals stay current.
+  // Declared after loadCareerStats to avoid a temporal dead zone.
+  useFocusEffect(
+    useCallback(() => {
+      void loadSessions();
+      if (careerExpanded) {
+        void loadCareerStats();
+      }
+    }, [loadSessions, loadCareerStats, careerExpanded]),
+  );
 
   const handleDelete = (session: SessionRow) => {
     haptic(Haptics.ImpactFeedbackStyle.Medium);
@@ -140,6 +189,14 @@ export default function HistoryScreen() {
             await deleteSession(session.id);
             setSessions(prev => prev.filter(s => s.id !== session.id));
             setExpandedDeleteId(null);
+            // Career stats must reflect the deletion immediately.
+            // If the panel is open, reload now; otherwise discard the stale cache
+            // so the next expand fetches fresh data.
+            if (careerExpanded) {
+              void loadCareerStats();
+            } else {
+              setCareerStats(null);
+            }
           },
         },
       ],
@@ -229,6 +286,14 @@ export default function HistoryScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.primary} />}
         >
+          {/* Career stats panel — collapsed by default, loads lazily on expand */}
+          <CareerStatsPanel
+            stats={careerStats}
+            expanded={careerExpanded}
+            onToggle={handleCareerToggle}
+            colors={colors}
+          />
+
           {filtered.map(session => (
             <SessionCard
               key={session.id}
