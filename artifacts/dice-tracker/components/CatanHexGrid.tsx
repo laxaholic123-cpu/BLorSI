@@ -100,7 +100,7 @@ export function CatanHexGrid({
       width="100%"
       viewBox={`0 0 ${SVG_W} ${SVG_H}`}
       preserveAspectRatio="xMidYMid meet"
-      style={style}
+      style={[{ aspectRatio: SVG_W / SVG_H, width: '100%' }, style]}
     >
       {HEX_POS.map(([col, row], i) => {
         const { cx, cy } = hexCenter(col, row);
