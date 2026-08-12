@@ -27,6 +27,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -48,6 +49,17 @@ const CARD_TYPES: Array<{ type: CardType; label: string; icon: string; desc: str
   Object.entries(CARD_METADATA) as Array<[CardType, typeof CARD_METADATA[CardType]]>
 ).map(([type, { label, icon, desc }]) => ({ type, label, icon, desc }));
 
+// ─── Design tokens ────────────────────────────────────────────────────────────
+
+const CARD_BG_START = '#07111D';
+const CARD_BG_END   = '#0D1E2E';
+const ACCENT        = '#1ABC9C';
+const ACCENT_DIM    = '#127A65';
+const TEXT_PRIMARY  = '#F0F4F8';
+const TEXT_MUTED    = '#6B8299';
+const TEXT_DIM      = '#3A5068';
+const BORDER_SUBTLE = '#142030';
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatDate(iso: string): string {
@@ -58,6 +70,33 @@ function formatDate(iso: string): string {
 
 function gameLabel(session: GameSession): string {
   return session.customGameName ?? (session.gameType === 'catan' ? 'Settlement Mode' : session.diceMode);
+}
+
+/** Translucent dot grid decorative overlay */
+function DotGrid({ columns = 14, rows = 5, color = ACCENT }: { columns?: number; rows?: number; color?: string }) {
+  const dots = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < columns; c++) {
+      dots.push(
+        <View
+          key={`${r}-${c}`}
+          style={{
+            width: 2,
+            height: 2,
+            borderRadius: 1,
+            backgroundColor: color,
+            opacity: 0.12,
+            margin: 5,
+          }}
+        />,
+      );
+    }
+  }
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', position: 'absolute', right: 0, top: 0, width: columns * 12, overflow: 'hidden' }} pointerEvents="none">
+      {dots}
+    </View>
+  );
 }
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
@@ -73,7 +112,6 @@ export default function ShareCardScreen() {
   const [rollEvents, setRollEvents] = useState<RollEvent[]>([]);
   const [exposureEvents, setExposureEvents] = useState<CatanPlayerExposureEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  // Pre-select card type from ?cardType= param if it is a valid CardType
   const [selectedCard, setSelectedCard] = useState<CardType>(
     isCardType(cardTypeParam) ? cardTypeParam : 'verdict',
   );
@@ -110,7 +148,6 @@ export default function ShareCardScreen() {
     [session, rollEvents, exposureEvents],
   );
 
-  // Available card types for this session
   const availableCards = useMemo(() => {
     if (!session) return [];
     return CARD_TYPES.filter(c => {
@@ -122,7 +159,6 @@ export default function ShareCardScreen() {
   }, [session, catanStats]);
 
   useEffect(() => {
-    // Auto-select first available card when session loads
     if (availableCards.length > 0 && !availableCards.find(c => c.type === selectedCard)) {
       setSelectedCard(availableCards[0]!.type);
     }
@@ -133,7 +169,7 @@ export default function ShareCardScreen() {
   const captureCard = async (): Promise<string | null> => {
     if (!cardRef.current) return null;
     try {
-      const uri = await captureRef(cardRef, { format: 'jpg', quality: 0.92 });
+      const uri = await captureRef(cardRef, { format: 'jpg', quality: 0.95 });
       return uri;
     } catch {
       return null;
@@ -149,10 +185,7 @@ export default function ShareCardScreen() {
     setSharing(true);
     try {
       const uri = await captureCard();
-      if (!uri) {
-        Alert.alert('Could not capture card', 'Try the text share option instead.');
-        return;
-      }
+      if (!uri) { Alert.alert('Could not capture card', 'Try the text share option instead.'); return; }
       const canShare = await Sharing.isAvailableAsync();
       if (canShare) {
         await Sharing.shareAsync(uri, { mimeType: 'image/jpeg', dialogTitle: 'Share your result card' });
@@ -171,8 +204,6 @@ export default function ShareCardScreen() {
       Alert.alert('Not available', 'Saving to camera roll is not supported in web preview.');
       return;
     }
-    // Lazy-load expo-media-library so the screen doesn't crash in Expo Go,
-    // which doesn't bundle this native module.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     let MediaLibrary: typeof import('expo-media-library');
     try {
@@ -188,15 +219,9 @@ export default function ShareCardScreen() {
     setSharing(true);
     try {
       const { status } = await MediaLibrary.requestPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Allow access to Photos to save the card image.');
-        return;
-      }
+      if (status !== 'granted') { Alert.alert('Permission needed', 'Allow access to Photos to save the card image.'); return; }
       const uri = await captureCard();
-      if (!uri) {
-        Alert.alert('Could not capture card', 'Try the text share option instead.');
-        return;
-      }
+      if (!uri) { Alert.alert('Could not capture card', 'Try the text share option instead.'); return; }
       await MediaLibrary.saveToLibraryAsync(uri);
       Alert.alert('Saved!', 'Card image saved to your Photos.');
     } catch {
@@ -234,9 +259,7 @@ export default function ShareCardScreen() {
       'Tracked with Skill Check.',
     ].filter((l): l is string => l !== null && l !== '').join('\n');
 
-    try {
-      await Share.share({ message: lines });
-    } catch {}
+    try { await Share.share({ message: lines }); } catch {}
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -369,7 +392,7 @@ const CardRenderer = React.forwardRef<View, {
   catanStats: CatanGameStats | null;
   playerIdx: number;
   colors: ReturnType<typeof useColors>;
-}>(function CardRenderer({ type, session, rollEvents, stats, catanStats, playerIdx, colors }, ref) {
+}>(function CardRenderer({ type, session, rollEvents, stats, catanStats, playerIdx }, ref) {
   const activeRolls = rollEvents.filter(r => !r.deletedAt);
   const durationSeconds = session.endedAt
     ? Math.round((new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime()) / 1000)
@@ -378,166 +401,321 @@ const CardRenderer = React.forwardRef<View, {
     ? session.players.find(p => p.id === session.winnerPlayerId)
     : null;
 
-  const cardBase = [
-    cardStyles.card,
-    { backgroundColor: '#0F1923', borderColor: '#1ABC9C22' },
-  ];
-
   return (
     <View ref={ref} collapsable={false} style={cardStyles.wrapper}>
+      {/* ── Verdict ─────────────────────────────────────────────────────── */}
       {type === 'verdict' && (
-        <View style={cardBase}>
+        <LinearGradient
+          colors={[CARD_BG_START, CARD_BG_END, '#0A1E30']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[cardStyles.card, cardStyles.verdictCard]}
+        >
+          <DotGrid columns={12} rows={6} color={ACCENT} />
+
           <CardHeader session={session} activeRollCount={activeRolls.length} durationSeconds={durationSeconds} />
-          <View style={[cardStyles.verdictBox, { borderColor: '#1ABC9C33' }]}>
-            <Text style={[cardStyles.verdictHeadline, { color: '#1ABC9C' }]}>
+
+          {/* Verdict hero */}
+          <View style={cardStyles.verdictHero}>
+            <View style={cardStyles.verdictIconBadge}>
+              <Text style={cardStyles.verdictIconText}>⚄</Text>
+            </View>
+            <Text style={cardStyles.verdictHeadlineLarge} numberOfLines={2}>
               {stats.verdictHeadline}
             </Text>
-            <Text style={cardStyles.verdictBody} numberOfLines={4}>
-              {stats.isSmallSample
-                ? `Only ${stats.totalRolls} rolls — verdict requires more data.`
-                : stats.verdictExplanation}
-            </Text>
+            {!stats.isSmallSample && (
+              <Text style={cardStyles.verdictBodyText} numberOfLines={3}>
+                {stats.verdictExplanation}
+              </Text>
+            )}
+            {stats.isSmallSample && (
+              <View style={cardStyles.smallSamplePill}>
+                <Text style={cardStyles.smallSampleText}>Only {stats.totalRolls} rolls — more data needed</Text>
+              </View>
+            )}
           </View>
+
+          {/* Stats strip */}
           {stats.mean !== null && (
-            <View style={cardStyles.statRow}>
-              <MiniStat label="Mean" value={stats.mean.toFixed(2)} accent />
-              <MiniStat label="Expected" value={stats.expectedMean.toFixed(1)} />
-              <MiniStat label="Rolls" value={String(activeRolls.length)} />
-              {stats.meanZScore !== null && <MiniStat label="Z-score" value={stats.meanZScore.toFixed(2)} />}
+            <View style={cardStyles.statStrip}>
+              <StatChip label="Mean" value={stats.mean.toFixed(2)} accent />
+              <View style={cardStyles.statDivider} />
+              <StatChip label="Expected" value={stats.expectedMean.toFixed(1)} />
+              <View style={cardStyles.statDivider} />
+              <StatChip label="Rolls" value={String(activeRolls.length)} />
+              {stats.meanZScore !== null && (
+                <>
+                  <View style={cardStyles.statDivider} />
+                  <StatChip label="Z-score" value={stats.meanZScore.toFixed(2)} />
+                </>
+              )}
             </View>
           )}
+
           <CardFooter winner={winner} />
-        </View>
+        </LinearGradient>
       )}
 
+      {/* ── Summary ─────────────────────────────────────────────────────── */}
       {type === 'summary' && (
-        <View style={cardBase}>
+        <LinearGradient
+          colors={[CARD_BG_START, CARD_BG_END]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={cardStyles.card}
+        >
           <CardHeader session={session} activeRollCount={activeRolls.length} durationSeconds={durationSeconds} />
-          <View style={cardStyles.statRow}>
-            <MiniStat label="Rolls" value={String(activeRolls.length)} accent />
-            <MiniStat label="Mode" value={stats.mode.slice(0, 2).join('/') || '—'} />
-            <MiniStat label="Mean" value={stats.mean?.toFixed(1) ?? '—'} />
-            <MiniStat label="Players" value={String(session.players.length)} />
+
+          <View style={cardStyles.statStrip}>
+            <StatChip label="Rolls" value={String(activeRolls.length)} accent />
+            <View style={cardStyles.statDivider} />
+            <StatChip label="Mode" value={stats.mode.slice(0, 2).join('/') || '—'} />
+            <View style={cardStyles.statDivider} />
+            <StatChip label="Mean" value={stats.mean?.toFixed(1) ?? '—'} />
+            <View style={cardStyles.statDivider} />
+            <StatChip label="Players" value={String(session.players.length)} />
           </View>
-          {stats.frequencies.slice(0, 8).map(f => {
-            const barPct = activeRolls.length > 0 ? f.count / Math.max(...stats.frequencies.map(ff => ff.count), 1) : 0;
-            const isHot = f.deviation > 0.5;
-            return (
-              <View key={f.value} style={cardStyles.freqRow}>
-                <Text style={cardStyles.freqVal}>{f.value}</Text>
-                <View style={cardStyles.freqBarTrack}>
-                  <View style={[cardStyles.freqBarFill, { width: `${barPct * 100}%` as `${number}%`, backgroundColor: isHot ? '#1ABC9C' : '#334' }]} />
+
+          {/* Frequency chart */}
+          <View style={cardStyles.freqChart}>
+            {stats.frequencies.slice(0, 8).map(f => {
+              const maxCount = Math.max(...stats.frequencies.map(ff => ff.count), 1);
+              const barPct = activeRolls.length > 0 ? f.count / maxCount : 0;
+              const isHot = f.deviation > 0.5;
+              const isCold = f.deviation < -0.5;
+              const barColor = isHot ? ACCENT : isCold ? '#5C7A9C' : '#2A4060';
+              return (
+                <View key={f.value} style={cardStyles.freqRow}>
+                  <Text style={cardStyles.freqVal}>{f.value}</Text>
+                  <View style={cardStyles.freqBarTrack}>
+                    <View style={[cardStyles.freqBarFill, { width: `${barPct * 100}%` as `${number}%`, backgroundColor: barColor }]} />
+                  </View>
+                  <Text style={cardStyles.freqCount}>{f.count}</Text>
                 </View>
-                <Text style={cardStyles.freqCount}>{f.count}</Text>
-              </View>
-            );
-          })}
+              );
+            })}
+          </View>
+
           <CardFooter winner={winner} />
-        </View>
+        </LinearGradient>
       )}
 
+      {/* ── Accolade ────────────────────────────────────────────────────── */}
       {type === 'accolade' && (() => {
         const player = session.players[playerIdx] ?? session.players[0];
         if (!player) return null;
         const playerSummary = stats.playerSummaries.find(ps => ps.playerId === player.id);
         const isD20 = session.diceMode === 'D20';
+        const isWinner = player.id === session.winnerPlayerId;
         return (
-          <View style={[...cardBase, { borderLeftColor: player.color, borderLeftWidth: 4 }]}>
+          <LinearGradient
+            colors={[CARD_BG_START, CARD_BG_END]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[cardStyles.card, { borderLeftColor: player.color, borderLeftWidth: 4 }]}
+          >
+            {/* Player color glow strip */}
+            <View style={[cardStyles.playerGlowStrip, { backgroundColor: player.color + '18' }]} />
+
             <CardHeader session={session} activeRollCount={activeRolls.length} durationSeconds={durationSeconds} />
-            <View style={[cardStyles.accladeNameRow, { borderColor: player.color + '33' }]}>
-              <View style={[cardStyles.playerDotLarge, { backgroundColor: player.color }]} />
-              <Text style={[cardStyles.accladeName, { color: player.color }]}>{player.displayName}</Text>
-              {player.id === session.winnerPlayerId && <Text style={cardStyles.trophy}>🏆</Text>}
+
+            {/* Player hero */}
+            <View style={cardStyles.accoladeHero}>
+              <View style={[cardStyles.accoladeAvatar, { backgroundColor: player.color + '30', borderColor: player.color + '60' }]}>
+                <Text style={[cardStyles.accoladeAvatarText, { color: player.color }]}>
+                  {player.displayName.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <View style={{ flex: 1, gap: 3 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={[cardStyles.accoladeName, { color: player.color }]} numberOfLines={1}>
+                    {player.displayName}
+                  </Text>
+                  {isWinner && <Text style={cardStyles.trophyBadge}>🏆</Text>}
+                </View>
+                <Text style={cardStyles.accoladeSubtitle}>{gameLabel(session)}</Text>
+              </View>
             </View>
+
             {playerSummary && (
-              <View style={cardStyles.statRow}>
-                <MiniStat label="Rolls" value={String(playerSummary.rollCount)} accent />
-                <MiniStat label="Avg" value={playerSummary.mean?.toFixed(2) ?? '—'} />
-                <MiniStat label="Mode" value={playerSummary.mode.slice(0, 2).join('/') || '—'} />
-                {isD20 && <MiniStat label="Nat 20s" value={String(playerSummary.nat20Count)} />}
+              <View style={cardStyles.statStrip}>
+                <StatChip label="Rolls" value={String(playerSummary.rollCount)} accent />
+                <View style={cardStyles.statDivider} />
+                <StatChip label="Avg" value={playerSummary.mean?.toFixed(2) ?? '—'} />
+                <View style={cardStyles.statDivider} />
+                <StatChip label="Mode" value={playerSummary.mode.slice(0, 2).join('/') || '—'} />
+                {isD20 && (
+                  <>
+                    <View style={cardStyles.statDivider} />
+                    <StatChip label="Nat 20s" value={String(playerSummary.nat20Count)} accent />
+                  </>
+                )}
               </View>
             )}
             {playerSummary?.longestStreak && (
-              <Text style={cardStyles.notableText}>
-                🔥 Rolled {playerSummary.longestStreak.value} × {playerSummary.longestStreak.length} in a row
-              </Text>
+              <View style={cardStyles.streakBadge}>
+                <Text style={cardStyles.streakText}>
+                  🔥 Rolled {playerSummary.longestStreak.value} × {playerSummary.longestStreak.length} in a row
+                </Text>
+              </View>
             )}
             <CardFooter winner={null} />
-          </View>
+          </LinearGradient>
         );
       })()}
 
+      {/* ── Rivalry ─────────────────────────────────────────────────────── */}
       {type === 'rivalry' && session.players.length >= 2 && (() => {
         const [p1, p2] = [session.players[0]!, session.players[1]!];
         const s1 = stats.playerSummaries.find(ps => ps.playerId === p1.id);
         const s2 = stats.playerSummaries.find(ps => ps.playerId === p2.id);
+        const p1wins = p1.id === session.winnerPlayerId;
+        const p2wins = p2.id === session.winnerPlayerId;
         return (
-          <View style={cardBase}>
+          <LinearGradient
+            colors={[CARD_BG_START, CARD_BG_END]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={cardStyles.card}
+          >
             <CardHeader session={session} activeRollCount={activeRolls.length} durationSeconds={durationSeconds} />
-            <View style={cardStyles.rivalryRow}>
-              <View style={cardStyles.rivalryPlayer}>
-                <View style={[cardStyles.playerDotLarge, { backgroundColor: p1.color, alignSelf: 'center' }]} />
-                <Text style={[cardStyles.rivalryName, { color: p1.color }]} numberOfLines={1}>{p1.displayName}</Text>
+
+            {/* Rivalry split */}
+            <View style={cardStyles.rivalrySplit}>
+              {/* Player 1 */}
+              <View style={[cardStyles.rivalryHalf, cardStyles.rivalryHalfLeft, { borderColor: p1.color + (p1wins ? 'AA' : '30') }]}>
+                <LinearGradient
+                  colors={[p1.color + '22', p1.color + '08']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFillObject}
+                />
+                <View style={[cardStyles.rivalryAvatarBig, { backgroundColor: p1.color + '40', borderColor: p1.color }]}>
+                  <Text style={[cardStyles.rivalryAvatarText, { color: p1.color }]}>
+                    {p1.displayName.charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+                <Text style={[cardStyles.rivalryPlayerName, { color: p1.color }]} numberOfLines={1}>{p1.displayName}</Text>
+                {p1wins && <Text style={cardStyles.rivalryWinnerLabel}>WINNER</Text>}
                 {s1 && (
-                  <>
-                    <Text style={cardStyles.rivalryBigStat}>{s1.rollCount}</Text>
-                    <Text style={cardStyles.rivalryLabel}>rolls</Text>
-                    <Text style={cardStyles.rivalryBigStat}>{s1.mean?.toFixed(1) ?? '—'}</Text>
-                    <Text style={cardStyles.rivalryLabel}>avg</Text>
-                  </>
+                  <View style={cardStyles.rivalryStats}>
+                    <View style={cardStyles.rivalryStatItem}>
+                      <Text style={cardStyles.rivalryStatValue}>{s1.rollCount}</Text>
+                      <Text style={cardStyles.rivalryStatLabel}>rolls</Text>
+                    </View>
+                    <View style={cardStyles.rivalryStatItem}>
+                      <Text style={cardStyles.rivalryStatValue}>{s1.mean?.toFixed(1) ?? '—'}</Text>
+                      <Text style={cardStyles.rivalryStatLabel}>avg</Text>
+                    </View>
+                  </View>
                 )}
-                {p1.id === session.winnerPlayerId && <Text style={cardStyles.trophy}>🏆</Text>}
               </View>
-              <Text style={cardStyles.rivalryVs}>vs</Text>
-              <View style={[cardStyles.rivalryPlayer, { alignItems: 'flex-end' }]}>
-                <View style={[cardStyles.playerDotLarge, { backgroundColor: p2.color, alignSelf: 'center' }]} />
-                <Text style={[cardStyles.rivalryName, { color: p2.color, textAlign: 'right' }]} numberOfLines={1}>{p2.displayName}</Text>
+
+              {/* VS badge */}
+              <View style={cardStyles.rivalryVsBadge}>
+                <Text style={cardStyles.rivalryVsText}>VS</Text>
+              </View>
+
+              {/* Player 2 */}
+              <View style={[cardStyles.rivalryHalf, cardStyles.rivalryHalfRight, { borderColor: p2.color + (p2wins ? 'AA' : '30') }]}>
+                <LinearGradient
+                  colors={[p2.color + '08', p2.color + '22']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFillObject}
+                />
+                <View style={[cardStyles.rivalryAvatarBig, { backgroundColor: p2.color + '40', borderColor: p2.color }]}>
+                  <Text style={[cardStyles.rivalryAvatarText, { color: p2.color }]}>
+                    {p2.displayName.charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+                <Text style={[cardStyles.rivalryPlayerName, { color: p2.color }]} numberOfLines={1}>{p2.displayName}</Text>
+                {p2wins && <Text style={cardStyles.rivalryWinnerLabel}>WINNER</Text>}
                 {s2 && (
-                  <>
-                    <Text style={[cardStyles.rivalryBigStat, { textAlign: 'right' }]}>{s2.rollCount}</Text>
-                    <Text style={[cardStyles.rivalryLabel, { textAlign: 'right' }]}>rolls</Text>
-                    <Text style={[cardStyles.rivalryBigStat, { textAlign: 'right' }]}>{s2.mean?.toFixed(1) ?? '—'}</Text>
-                    <Text style={[cardStyles.rivalryLabel, { textAlign: 'right' }]}>avg</Text>
-                  </>
+                  <View style={cardStyles.rivalryStats}>
+                    <View style={cardStyles.rivalryStatItem}>
+                      <Text style={cardStyles.rivalryStatValue}>{s2.rollCount}</Text>
+                      <Text style={cardStyles.rivalryStatLabel}>rolls</Text>
+                    </View>
+                    <View style={cardStyles.rivalryStatItem}>
+                      <Text style={cardStyles.rivalryStatValue}>{s2.mean?.toFixed(1) ?? '—'}</Text>
+                      <Text style={cardStyles.rivalryStatLabel}>avg</Text>
+                    </View>
+                  </View>
                 )}
-                {p2.id === session.winnerPlayerId && <Text style={[cardStyles.trophy, { textAlign: 'right' }]}>🏆</Text>}
               </View>
             </View>
+
             <CardFooter winner={null} />
-          </View>
+          </LinearGradient>
         );
       })()}
 
+      {/* ── Catan Production ────────────────────────────────────────────── */}
       {type === 'catan' && catanStats && (
-        <View style={cardBase}>
+        <LinearGradient
+          colors={[CARD_BG_START, CARD_BG_END]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={cardStyles.card}
+        >
           <CardHeader session={session} activeRollCount={activeRolls.length} durationSeconds={durationSeconds} />
-          <View style={cardStyles.tableHeader}>
-            <Text style={[cardStyles.tableCell, { flex: 1, color: '#888' }]}>PLAYER</Text>
-            <Text style={[cardStyles.tableCell, { width: 50, color: '#888', textAlign: 'right' }]}>EXP</Text>
-            <Text style={[cardStyles.tableCell, { width: 50, color: '#888', textAlign: 'right' }]}>GOT</Text>
-            <Text style={[cardStyles.tableCell, { width: 48, color: '#888', textAlign: 'right' }]}>±%</Text>
-          </View>
-          {catanStats.playerStats.map(ps => {
-            const player = session.players.find(p => p.id === ps.playerId);
-            const pct = Math.round(ps.productionLuckPct);
-            const pctColor = pct > 10 ? '#1ABC9C' : pct < -10 ? '#E05C5C' : '#888';
-            return (
-              <View key={ps.playerId} style={cardStyles.tableRow}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                  <View style={[cardStyles.playerDot, { backgroundColor: player?.color ?? '#1ABC9C' }]} />
-                  <Text style={[cardStyles.tableCell, { color: '#EEE' }]} numberOfLines={1}>{ps.displayName}</Text>
+
+          <Text style={cardStyles.catanSectionTitle}>PRODUCTION</Text>
+
+          <View style={cardStyles.catanChart}>
+            {catanStats.playerStats.map(ps => {
+              const player = session.players.find(p => p.id === ps.playerId);
+              const color = player?.color ?? ACCENT;
+              const pct = Math.round(ps.productionLuckPct);
+              const pctColor = pct > 10 ? ACCENT : pct < -10 ? '#E06060' : TEXT_MUTED;
+              const maxProduction = Math.max(...catanStats.playerStats.map(p => Math.max(p.totalExpectedProduction, p.totalActualProduction)), 1);
+              const expectedWidth = ps.totalExpectedProduction / maxProduction;
+              const actualWidth = ps.totalActualProduction / maxProduction;
+
+              return (
+                <View key={ps.playerId} style={cardStyles.catanRow}>
+                  {/* Player label */}
+                  <View style={cardStyles.catanLabel}>
+                    <View style={[cardStyles.catanDot, { backgroundColor: color }]} />
+                    <Text style={cardStyles.catanName} numberOfLines={1}>{ps.displayName}</Text>
+                  </View>
+                  {/* Bar chart */}
+                  <View style={cardStyles.catanBars}>
+                    {/* Expected bar */}
+                    <View style={cardStyles.catanBarRow}>
+                      <Text style={cardStyles.catanBarLabel}>EXP</Text>
+                      <View style={cardStyles.catanBarTrack}>
+                        <View style={[cardStyles.catanBarFill, { width: `${expectedWidth * 100}%` as `${number}%`, backgroundColor: TEXT_DIM }]} />
+                      </View>
+                      <Text style={cardStyles.catanBarVal}>{ps.totalExpectedProduction.toFixed(1)}</Text>
+                    </View>
+                    {/* Actual bar */}
+                    <View style={cardStyles.catanBarRow}>
+                      <Text style={cardStyles.catanBarLabel}>GOT</Text>
+                      <View style={cardStyles.catanBarTrack}>
+                        <View style={[cardStyles.catanBarFill, { width: `${actualWidth * 100}%` as `${number}%`, backgroundColor: color }]} />
+                      </View>
+                      <Text style={[cardStyles.catanBarVal, { color: TEXT_PRIMARY }]}>{ps.totalActualProduction.toFixed(1)}</Text>
+                    </View>
+                  </View>
+                  {/* Delta */}
+                  <Text style={[cardStyles.catanDelta, { color: pctColor }]}>
+                    {pct === 0 ? '—' : `${pct > 0 ? '+' : ''}${pct}%`}
+                  </Text>
                 </View>
-                <Text style={[cardStyles.tableCell, { width: 50, color: '#888', textAlign: 'right' }]}>{ps.totalExpectedProduction.toFixed(1)}</Text>
-                <Text style={[cardStyles.tableCell, { width: 50, color: '#EEE', fontFamily: 'Inter_700Bold', textAlign: 'right' }]}>{ps.totalActualProduction.toFixed(1)}</Text>
-                <Text style={[cardStyles.tableCell, { width: 48, color: pctColor, textAlign: 'right' }]}>{pct === 0 ? '—' : `${pct > 0 ? '+' : ''}${pct}%`}</Text>
-              </View>
-            );
-          })}
+              );
+            })}
+          </View>
+
           {catanStats.findings && (
-            <Text style={cardStyles.notableText}>{catanStats.findings.headline}</Text>
+            <View style={cardStyles.catanFinding}>
+              <Text style={cardStyles.catanFindingText}>{catanStats.findings.headline}</Text>
+            </View>
           )}
+
           <CardFooter winner={winner} />
-        </View>
+        </LinearGradient>
       )}
     </View>
   );
@@ -545,13 +723,22 @@ const CardRenderer = React.forwardRef<View, {
 
 // ─── Card sub-components ──────────────────────────────────────────────────────
 
-function CardHeader({ session, activeRollCount, durationSeconds }: { session: GameSession; activeRollCount: number; durationSeconds: number | null }) {
+function CardHeader({ session, activeRollCount, durationSeconds }: {
+  session: GameSession;
+  activeRollCount: number;
+  durationSeconds: number | null;
+}) {
   return (
     <View style={cardStyles.headerRow}>
       <View style={cardStyles.wordmark}>
-        <View style={[cardStyles.wordmarkDot, { backgroundColor: '#1ABC9C' }]}>
+        <LinearGradient
+          colors={[ACCENT, ACCENT_DIM]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={cardStyles.wordmarkDot}
+        >
           <Text style={cardStyles.wordmarkCheck}>✓</Text>
-        </View>
+        </LinearGradient>
         <Text style={cardStyles.wordmarkText}>SKILL CHECK</Text>
       </View>
       <View style={cardStyles.headerRight}>
@@ -567,17 +754,20 @@ function CardHeader({ session, activeRollCount, durationSeconds }: { session: Ga
 function CardFooter({ winner }: { winner: { displayName: string } | null | undefined }) {
   return (
     <View style={cardStyles.footer}>
-      {winner && <Text style={[cardStyles.footerText, { color: '#1ABC9C' }]}>🏆 {winner.displayName}</Text>}
+      {winner
+        ? <Text style={cardStyles.footerWinner}>🏆 {winner.displayName}</Text>
+        : <View />
+      }
       <Text style={cardStyles.footerTagline}>Bad luck or skill issue?</Text>
     </View>
   );
 }
 
-function MiniStat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function StatChip({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
-    <View style={cardStyles.miniStat}>
-      <Text style={[cardStyles.miniStatValue, { color: accent ? '#1ABC9C' : '#EEE' }]}>{value}</Text>
-      <Text style={cardStyles.miniStatLabel}>{label}</Text>
+    <View style={cardStyles.statChip}>
+      <Text style={[cardStyles.statChipValue, accent && cardStyles.statChipValueAccent]}>{value}</Text>
+      <Text style={cardStyles.statChipLabel}>{label}</Text>
     </View>
   );
 }
@@ -627,52 +817,138 @@ const styles = StyleSheet.create({
 });
 
 const cardStyles = StyleSheet.create({
-  wrapper: { borderRadius: 16, overflow: 'hidden' },
-  card: { padding: 20, gap: 14, borderRadius: 16, borderWidth: 1 },
+  wrapper: { borderRadius: 18, overflow: 'hidden' },
+  card: { padding: 22, gap: 16, borderRadius: 18, overflow: 'hidden' },
 
+  // Verdict card
+  verdictCard: { gap: 18 },
+  verdictHero: { alignItems: 'center', gap: 12, paddingVertical: 8 },
+  verdictIconBadge: {
+    width: 52, height: 52, borderRadius: 14,
+    backgroundColor: ACCENT + '20',
+    borderWidth: 1, borderColor: ACCENT + '40',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  verdictIconText: { fontSize: 26 },
+  verdictHeadlineLarge: {
+    fontSize: 26, fontFamily: 'Inter_700Bold', color: TEXT_PRIMARY,
+    textAlign: 'center', lineHeight: 32,
+  },
+  verdictBodyText: { fontSize: 13, color: TEXT_MUTED, textAlign: 'center', lineHeight: 20, paddingHorizontal: 8 },
+  smallSamplePill: {
+    backgroundColor: '#1E2A36',
+    borderRadius: 8, paddingHorizontal: 14, paddingVertical: 7,
+    borderWidth: 1, borderColor: BORDER_SUBTLE,
+  },
+  smallSampleText: { fontSize: 12, color: TEXT_MUTED, fontFamily: 'Inter_400Regular' },
+
+  // Stat strip (shared)
+  statStrip: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#0A1825', borderRadius: 12,
+    paddingVertical: 12, paddingHorizontal: 8,
+    borderWidth: 1, borderColor: BORDER_SUBTLE,
+  },
+  statDivider: { width: 1, height: 28, backgroundColor: BORDER_SUBTLE, marginHorizontal: 4 },
+  statChip: { flex: 1, alignItems: 'center', gap: 3 },
+  statChipValue: { fontSize: 20, fontFamily: 'Inter_700Bold', color: TEXT_PRIMARY },
+  statChipValueAccent: { color: ACCENT },
+  statChipLabel: { fontSize: 10, color: TEXT_MUTED, letterSpacing: 0.5, fontFamily: 'Inter_500Medium' },
+
+  // Header
   headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  wordmark: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  wordmarkDot: { width: 26, height: 26, borderRadius: 7, alignItems: 'center', justifyContent: 'center' },
-  wordmarkCheck: { fontSize: 15, color: '#000', fontWeight: '700' },
-  wordmarkText: { fontSize: 10, color: '#888', letterSpacing: 1.5, fontFamily: 'Inter_500Medium' },
-  headerRight: { flex: 1, alignItems: 'flex-end' },
-  headerGame: { fontSize: 12, color: '#CCC', fontFamily: 'Inter_600SemiBold' },
-  headerMeta: { fontSize: 10, color: '#666', marginTop: 2 },
+  wordmark: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  wordmarkDot: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  wordmarkCheck: { fontSize: 14, color: '#000', fontWeight: '800' },
+  wordmarkText: { fontSize: 10, color: TEXT_MUTED, letterSpacing: 2, fontFamily: 'Inter_600SemiBold' },
+  headerRight: { flex: 1, alignItems: 'flex-end', gap: 2 },
+  headerGame: { fontSize: 11, color: TEXT_PRIMARY, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.5 },
+  headerMeta: { fontSize: 10, color: TEXT_MUTED },
 
-  verdictBox: { borderWidth: 1, borderRadius: 10, padding: 14, gap: 6 },
-  verdictHeadline: { fontSize: 18, fontFamily: 'Inter_700Bold' },
-  verdictBody: { fontSize: 12, color: '#888', lineHeight: 18 },
+  // Footer
+  footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 },
+  footerWinner: { fontSize: 12, color: ACCENT, fontFamily: 'Inter_600SemiBold' },
+  footerTagline: { fontSize: 10, color: TEXT_DIM, fontFamily: 'Inter_400Regular' },
 
-  statRow: { flexDirection: 'row', gap: 12 },
-  miniStat: { flex: 1, alignItems: 'center', gap: 3 },
-  miniStatValue: { fontSize: 20, fontFamily: 'Inter_700Bold' },
-  miniStatLabel: { fontSize: 10, color: '#666', letterSpacing: 0.5 },
-
+  // Summary frequency chart
+  freqChart: { gap: 7 },
   freqRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  freqVal: { width: 22, fontSize: 12, color: '#AAA', fontFamily: 'Inter_600SemiBold' },
-  freqBarTrack: { flex: 1, height: 6, backgroundColor: '#1A2030', borderRadius: 3, overflow: 'hidden' },
-  freqBarFill: { height: 6, borderRadius: 3 },
-  freqCount: { width: 24, textAlign: 'right', fontSize: 11, color: '#CCC' },
+  freqVal: { width: 22, fontSize: 12, color: TEXT_MUTED, fontFamily: 'Inter_600SemiBold' },
+  freqBarTrack: { flex: 1, height: 7, backgroundColor: '#0D1825', borderRadius: 4, overflow: 'hidden' },
+  freqBarFill: { height: 7, borderRadius: 4 },
+  freqCount: { width: 24, textAlign: 'right', fontSize: 11, color: TEXT_MUTED, fontFamily: 'Inter_500Medium' },
 
-  accladeNameRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderWidth: 1, borderRadius: 10 },
-  accladeName: { fontSize: 20, fontFamily: 'Inter_700Bold', flex: 1 },
-  playerDotLarge: { width: 16, height: 16, borderRadius: 8 },
-  trophy: { fontSize: 22 },
-  notableText: { fontSize: 13, color: '#AAA', fontStyle: 'italic' },
+  // Accolade
+  playerGlowStrip: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 4 },
+  accoladeHero: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingBottom: 4 },
+  accoladeAvatar: {
+    width: 54, height: 54, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5,
+  },
+  accoladeAvatarText: { fontSize: 24, fontFamily: 'Inter_700Bold' },
+  accoladeName: { fontSize: 22, fontFamily: 'Inter_700Bold', flex: 1 },
+  accoladeSubtitle: { fontSize: 11, color: TEXT_MUTED, fontFamily: 'Inter_400Regular' },
+  trophyBadge: { fontSize: 20 },
+  streakBadge: {
+    backgroundColor: '#0A1825',
+    borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9,
+    borderWidth: 1, borderColor: BORDER_SUBTLE,
+  },
+  streakText: { fontSize: 13, color: TEXT_MUTED, fontStyle: 'italic' },
 
-  rivalryRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 20 },
-  rivalryPlayer: { flex: 1, gap: 4 },
-  rivalryName: { fontSize: 16, fontFamily: 'Inter_700Bold' },
-  rivalryBigStat: { fontSize: 26, color: '#EEE', fontFamily: 'Inter_700Bold' },
-  rivalryLabel: { fontSize: 10, color: '#666' },
-  rivalryVs: { fontSize: 18, color: '#444', fontFamily: 'Inter_700Bold', alignSelf: 'center' },
+  // Rivalry
+  rivalrySplit: { flexDirection: 'row', gap: 12, alignItems: 'stretch' },
+  rivalryHalf: {
+    flex: 1, borderRadius: 12, borderWidth: 1.5,
+    padding: 14, gap: 10, alignItems: 'center',
+    overflow: 'hidden',
+  },
+  rivalryHalfLeft: {},
+  rivalryHalfRight: {},
+  rivalryAvatarBig: {
+    width: 48, height: 48, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5,
+  },
+  rivalryAvatarText: { fontSize: 22, fontFamily: 'Inter_700Bold' },
+  rivalryPlayerName: { fontSize: 15, fontFamily: 'Inter_700Bold', textAlign: 'center' },
+  rivalryWinnerLabel: {
+    fontSize: 9, color: ACCENT, fontFamily: 'Inter_700Bold',
+    letterSpacing: 1.5, backgroundColor: ACCENT + '20',
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4,
+  },
+  rivalryStats: { gap: 4, width: '100%' },
+  rivalryStatItem: { alignItems: 'center' },
+  rivalryStatValue: { fontSize: 24, color: TEXT_PRIMARY, fontFamily: 'Inter_700Bold' },
+  rivalryStatLabel: { fontSize: 10, color: TEXT_MUTED, letterSpacing: 0.5 },
+  rivalryVsBadge: {
+    alignSelf: 'center',
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: '#0A1825',
+    borderWidth: 1, borderColor: BORDER_SUBTLE,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  rivalryVsText: { fontSize: 11, color: TEXT_MUTED, fontFamily: 'Inter_700Bold', letterSpacing: 0.5 },
 
-  tableHeader: { flexDirection: 'row', paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: '#1E2A36' },
-  tableRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6 },
-  tableCell: { fontSize: 12, fontFamily: 'Inter_400Regular' },
-  playerDot: { width: 8, height: 8, borderRadius: 4 },
-
-  footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
-  footerText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
-  footerTagline: { fontSize: 10, color: '#444', fontFamily: 'Inter_400Regular' },
+  // Catan Production
+  catanSectionTitle: { fontSize: 10, color: TEXT_MUTED, fontFamily: 'Inter_600SemiBold', letterSpacing: 2 },
+  catanChart: { gap: 12 },
+  catanRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  catanLabel: { width: 80, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  catanDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
+  catanName: { fontSize: 11, color: TEXT_PRIMARY, fontFamily: 'Inter_500Medium', flex: 1 },
+  catanBars: { flex: 1, gap: 4 },
+  catanBarRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  catanBarLabel: { width: 26, fontSize: 9, color: TEXT_MUTED, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.5 },
+  catanBarTrack: { flex: 1, height: 7, backgroundColor: '#0D1825', borderRadius: 4, overflow: 'hidden' },
+  catanBarFill: { height: 7, borderRadius: 4 },
+  catanBarVal: { width: 30, fontSize: 10, color: TEXT_MUTED, fontFamily: 'Inter_500Medium', textAlign: 'right' },
+  catanDelta: { width: 38, fontSize: 12, fontFamily: 'Inter_700Bold', textAlign: 'right' },
+  catanFinding: {
+    backgroundColor: '#0A1825',
+    borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9,
+    borderWidth: 1, borderColor: BORDER_SUBTLE,
+  },
+  catanFindingText: { fontSize: 12, color: TEXT_MUTED, fontStyle: 'italic' },
 });
