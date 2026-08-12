@@ -46,6 +46,8 @@ import {
 } from '@/services/boardLayouts';
 import { getBoardScanApiUrl } from '@/services/boardScanApi';
 import { getLinkedBuildingEventCount, mergeEditedSettlements } from '@/services/editSettlements';
+import { normalizePieces, type DetectedPiece } from '@/utils/normalizePieces';
+import { matchPieceToPlayer } from '@/utils/matchPieceToPlayer';
 import type { CatanBoardLayout, CatanHexDef, ResourceType } from '@/types/models';
 import { generateId } from '@/types/models';
 import type { CatanPlayerExposureEvent } from '@/types/models';
@@ -132,6 +134,10 @@ export default function CatanBoardScanScreen() {
   const [playerSetups, setPlayerSetups] = useState<Settlement[][]>([]);
   const [isSavingGame, setIsSavingGame] = useState(false);
   const [placementError, setPlacementError] = useState<string | null>(null);
+
+  // ── AI piece detection ─────────────────────────────────────────────────────
+  const [detectedPieces, setDetectedPieces] = useState<DetectedPiece[]>([]);
+  const [photoDetectedCount, setPhotoDetectedCount] = useState(0);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const allPlayers = activeSession?.players ?? [];
@@ -221,6 +227,7 @@ export default function CatanBoardScanScreen() {
     }
 
     setAnalysisError(null);
+    setDetectedPieces([]);
     setPhase('analyzing');
 
     try {
@@ -238,7 +245,7 @@ export default function CatanBoardScanScreen() {
         throw new Error(err.error ?? `Server error ${response.status}`);
       }
 
-      const data = await response.json() as { hexes: unknown[] };
+      const data = await response.json() as { hexes: unknown[]; pieces?: unknown[] };
       const rawHexes = Array.isArray(data.hexes) ? data.hexes : [];
 
       // Merge AI result into our hex array (keep any previously set values as fallback)
@@ -255,6 +262,7 @@ export default function CatanBoardScanScreen() {
         }
       }
       setHexes(merged);
+      setDetectedPieces(normalizePieces(Array.isArray(data.pieces) ? data.pieces : []));
       setPhase('review');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -343,8 +351,34 @@ export default function CatanBoardScanScreen() {
     }
     setCurrentPlayerIdx(0);
     setCurrentHexSelection([]);
-    setPlayerSetups(players.map(() => []));
     setPlacementError(null);
+
+    // Pre-fill settlement positions from AI-detected piece colors (non-edit mode only)
+    if (!isEditMode && detectedPieces.length > 0) {
+      const prefilledSetups: Settlement[][] = players.map(() => []);
+      let matchedCount = 0;
+      for (const piece of detectedPieces) {
+        // Settlements on desert produce nothing — skip if AI misidentified the hex
+        if (hexes[piece.hexIndex]?.resource === 'desert') continue;
+        const matched = matchPieceToPlayer(piece.color, players);
+        if (matched) {
+          const playerIdx = players.findIndex(p => p.id === matched.id);
+          if (playerIdx >= 0) {
+            prefilledSetups[playerIdx]!.push({
+              locationId: generateId(),
+              hexIndices: [piece.hexIndex],
+            });
+            matchedCount++;
+          }
+        }
+      }
+      setPlayerSetups(prefilledSetups);
+      setPhotoDetectedCount(matchedCount);
+    } else {
+      setPlayerSetups(players.map(() => []));
+      setPhotoDetectedCount(0);
+    }
+
     setPhase('placement');
   };
 
@@ -622,6 +656,16 @@ export default function CatanBoardScanScreen() {
             </Text>
           </View>
         </View>
+
+        {/* AI detection notice (shown when settlements were pre-filled from photo) */}
+        {photoDetectedCount > 0 && (
+          <View style={[s.detectionBanner, { backgroundColor: colors.primary + '18', borderColor: colors.primary + '40' }]}>
+            <Ionicons name="scan-outline" size={15} color={colors.primary} />
+            <Text style={[s.detectionBannerText, { color: colors.primary, fontFamily: 'Inter_400Regular' }]}>
+              Detected {photoDetectedCount} settlement{photoDetectedCount === 1 ? '' : 's'} from photo — tap any hex to adjust
+            </Text>
+          </View>
+        )}
 
         {/* Hex grid in selection mode */}
         <CatanHexGrid
@@ -1001,6 +1045,8 @@ const s = StyleSheet.create({
   placementError: { fontSize: 13, textAlign: 'center' },
   doneBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 18, borderRadius: 14, marginTop: 4 },
   doneBtnText: { fontSize: 17 },
+  detectionBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10, borderRadius: 10, borderWidth: 1, marginBottom: 4 },
+  detectionBannerText: { fontSize: 13, flex: 1 },
 
   // Correction panel
   correctionOverlay: {

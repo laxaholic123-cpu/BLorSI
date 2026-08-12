@@ -16,6 +16,7 @@
 import { Router } from "express";
 import OpenAI from "openai";
 import { normalizeHexes } from "../utils/normalizeHexes.js";
+import { normalizePieces } from "../utils/normalizePieces.js";
 
 const router = Router();
 
@@ -52,18 +53,25 @@ The board has 19 hexagonal tiles arranged in a standard 3-4-5-4-3 pattern:
 - Row 4 (4 tiles):          hexes 12, 13, 14, 15
 - Row 5 (bottom, 3 tiles): hexes 16, 17, 18
 
-For each hex (index 0-18), identify:
-- resource: exactly one of "grain" (wheat fields), "ore" (mountains/rock), "lumber" (forest), "brick" (hills/clay), "wool" (pasture/sheep), "desert"
-- number: the circular number token visible on the tile (2-12), or null if desert or the token is not visible
-- confidence: "high" if clearly visible, "low" if uncertain or obscured
+Respond with ONLY a valid JSON object with exactly two keys — no markdown fences, no explanation:
 
-Catan tile counts for reference: 1 desert, 4 grain, 3 ore, 4 lumber, 3 brick, 4 wool.
-Number token counts: 2×1, 3×2, 4×2, 5×2, 6×2, 8×2, 9×2, 10×2, 11×2, 12×1.
+1. "hexes" — array of 19 objects, one per tile (index 0–18):
+   {"index": 0, "resource": "grain", "number": 6, "confidence": "high"}
+   - resource: one of "grain" (wheat), "ore" (mountains), "lumber" (forest), "brick" (hills), "wool" (pasture), "desert"
+   - number: the circular number token (2–12), or null for desert / not visible
+   - confidence: "high" if clearly visible, "low" if uncertain
+   Tile counts: 1 desert, 4 grain, 3 ore, 4 lumber, 3 brick, 4 wool.
+   Token counts: 2×1, 3×2, 4×2, 5×2, 6×2, 8×2, 9×2, 10×2, 11×2, 12×1.
+   Use null for resource or number if genuinely undetectable.
 
-Respond with ONLY a valid JSON array — no markdown fences, no explanation, no extra text:
-[{"index":0,"resource":"grain","number":6,"confidence":"high"},{"index":1,...},...]
+2. "pieces" — array of any visible player settlement or city pieces on the board.
+   For each visible piece: {"hexIndex": 7, "color": "#E32B2B"}
+   - hexIndex: which of the 19 hex tiles (0–18) the piece sits on or adjacent to
+   - color: the approximate color of the piece as a CSS hex string (e.g. "#FF0000" for red, "#2255CC" for blue)
+   Return an empty array [] if no player pieces are visible.
 
-Include all 19 hexes. Use null for resource or number if genuinely undetectable.`;
+Example response format:
+{"hexes": [{"index":0,"resource":"grain","number":6,"confidence":"high"}, ...], "pieces": [{"hexIndex":7,"color":"#E32B2B"}]}`;
 
 // ─── Route ────────────────────────────────────────────────────────────────────
 
@@ -120,7 +128,7 @@ router.post("/analyze", async (req, res, next) => {
 
     // ── Parse & normalise response ──────────────────────────────────────────
 
-    const raw = completion.choices[0]?.message?.content ?? "[]";
+    const raw = completion.choices[0]?.message?.content ?? "{}";
     let parsed: unknown;
     try {
       const cleaned = raw.replace(/```json\n?|```/g, "").trim();
@@ -130,8 +138,22 @@ router.post("/analyze", async (req, res, next) => {
       return;
     }
 
-    const hexes = normalizeHexes(parsed);
-    res.json({ hexes });
+    // Support both the new object format { hexes, pieces } and the legacy
+    // plain-array format (in case a cached/older client sends the old prompt).
+    const parsedObj =
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    const rawHexes = Array.isArray(parsedObj["hexes"])
+      ? parsedObj["hexes"]
+      : Array.isArray(parsed)
+        ? parsed          // legacy: AI returned a plain hex array
+        : [];
+    const rawPieces = parsedObj["pieces"] ?? [];
+
+    const hexes = normalizeHexes(rawHexes);
+    const pieces = normalizePieces(rawPieces);
+    res.json({ hexes, pieces });
   } catch (err) {
     next(err);
   }
