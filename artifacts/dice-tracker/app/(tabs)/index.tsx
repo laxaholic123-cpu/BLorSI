@@ -1,8 +1,6 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
-  Modal,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -22,7 +20,6 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { activeSession } = useGame();
   const { settings } = useSettings();
-  const [signInVisible, setSignInVisible] = useState(false);
 
   const webTop = Platform.OS === 'web' ? 67 : 0;
   const webBottom = Platform.OS === 'web' ? 34 : 0;
@@ -171,50 +168,29 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* ── Sign in ───────────────────────────────────────────── */}
+        {/* ── Backup ────────────────────────────────────────────────
+            This used to advertise "Sign in to sync across devices", which
+            opened a Coming Soon dialog. There is no backend and the app is
+            deliberately offline-first, so it pointed at a feature that does not
+            exist. Export/import is the real answer to moving your history to a
+            new phone, and it works today — it was just buried in Settings. */}
         <View>
           <View style={[styles.divider, { backgroundColor: colors.border }]} />
           <TouchableOpacity
             style={styles.signInRow}
-            onPress={() => setSignInVisible(true)}
+            onPress={() => router.push('/settings')}
             activeOpacity={0.7}
-            testID="sign-in-button"
+            testID="backup-button"
           >
-            <Ionicons name="cloud-outline" size={15} color={colors.mutedForeground} />
+            <Ionicons name="save-outline" size={15} color={colors.mutedForeground} />
             <Text style={[styles.signInText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-              Sign in to sync across devices
+              Back up or move your history
             </Text>
             <Ionicons name="chevron-forward" size={13} color={colors.mutedForeground} />
           </TouchableOpacity>
         </View>
       </ScrollView>
 
-      {/* ── Coming-soon modal ─────────────────────────────────── */}
-      <Modal visible={signInVisible} transparent animationType="fade" onRequestClose={() => setSignInVisible(false)}>
-        <Pressable style={styles.overlay} onPress={() => setSignInVisible(false)}>
-          <Pressable style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <View style={[styles.modalAccentBar, { backgroundColor: colors.primary }]} />
-            <Ionicons name="cloud" size={40} color={colors.primary} style={styles.modalIcon} />
-            <Text style={[styles.modalTitle, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
-              Cloud Sync Coming Soon
-            </Text>
-            <Text style={[styles.modalBody, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-              User accounts, cloud sync, and cross-device history are planned for a future update.
-            </Text>
-            <Text style={[styles.modalBody, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-              All your games are saved locally and won't be lost.
-            </Text>
-            <TouchableOpacity
-              style={[styles.modalBtn, { backgroundColor: colors.primary }]}
-              onPress={() => setSignInVisible(false)}
-            >
-              <Text style={[styles.modalBtnText, { color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold' }]}>
-                Got it
-              </Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
     </View>
   );
 }
@@ -247,12 +223,4 @@ const styles = StyleSheet.create({
   signInRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 10 },
   signInText: { fontSize: 13, flex: 1, textAlign: 'center' },
 
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', alignItems: 'center', justifyContent: 'center', padding: 24 },
-  modalCard: { width: '100%', maxWidth: 380, borderRadius: 20, borderWidth: 1, padding: 28, alignItems: 'center', overflow: 'hidden' },
-  modalAccentBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 4 },
-  modalIcon: { marginTop: 12, marginBottom: 16 },
-  modalTitle: { fontSize: 20, marginBottom: 12, textAlign: 'center' },
-  modalBody: { fontSize: 14, lineHeight: 22, textAlign: 'center', marginBottom: 8 },
-  modalBtn: { marginTop: 16, paddingVertical: 14, paddingHorizontal: 40, borderRadius: 12 },
-  modalBtnText: { fontSize: 16 },
 });

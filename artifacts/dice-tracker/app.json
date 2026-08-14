@@ -17,19 +17,15 @@
       "supportsTablet": false
     },
     "android": {
-      "backgroundColor": "#141414"
+      "backgroundColor": "#141414",
+      "package": "com.laxaholic123.skillcheck"
     },
     "web": {
       "favicon": "./assets/images/icon.png",
       "backgroundColor": "#141414"
     },
     "plugins": [
-      [
-        "expo-router",
-        {
-          "origin": "https://replit.com/"
-        }
-      ],
+      "expo-router",
       "expo-font",
       "expo-web-browser"
     ],
