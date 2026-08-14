@@ -15,12 +15,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
   AppSettings,
+  CatanBoardLayout,
   CatanPlayerExposureEvent,
   DiceMode,
   GameSession,
   RollEvent,
 } from '@/types/models';
 import { DEFAULT_SETTINGS, DICE_RANGES, SCHEMA_VERSION } from '@/types/models';
+import { STANDARD_PORT_LAYOUT } from '@/services/catanBoard';
 
 // ─── Storage keys ────────────────────────────────────────────────────────────
 
@@ -34,19 +36,65 @@ const KEYS = {
   EXPOSURES: (sessionId: string) => `blosi:exposures:${sessionId}`,
 } as const;
 
+/** Owned by boardLayouts.ts; referenced here so migrations can reach it. */
+const LAYOUTS_KEY = 'blosi:board_layouts';
+
 // ─── Schema migration ─────────────────────────────────────────────────────────
 
+/**
+ * v1 → v2: CatanBoardLayout gained a required `ports` array.
+ *
+ * Existing layouts were saved before ports existed, so they are backfilled with
+ * the standard frame arrangement — which is what most groups are using anyway,
+ * and is editable afterwards. Layouts that somehow already carry ports are left
+ * untouched so re-running the migration cannot clobber real data.
+ */
+const migrateBoardLayoutsToV2 = async (): Promise<void> => {
+  const raw = await AsyncStorage.getItem(LAYOUTS_KEY);
+  if (!raw) return; // Nothing saved yet — nothing to migrate.
+
+  const layouts = JSON.parse(raw) as Array<Partial<CatanBoardLayout>>;
+  if (!Array.isArray(layouts)) return;
+
+  let changed = false;
+  const upgraded = layouts.map(layout => {
+    if (Array.isArray(layout.ports)) return layout;
+    changed = true;
+    return { ...layout, ports: [...STANDARD_PORT_LAYOUT] };
+  });
+
+  if (changed) {
+    await AsyncStorage.setItem(LAYOUTS_KEY, JSON.stringify(upgraded));
+  }
+};
+
+/**
+ * Bring stored data up to SCHEMA_VERSION.
+ *
+ * Migrations run in order and must be idempotent — a failure partway through
+ * leaves the version stamp unchanged, so the next launch retries from the same
+ * point. The version is only stamped after every step has succeeded, which is
+ * why the stamp is inside the try rather than in a finally.
+ */
 export const ensureSchemaVersion = async (): Promise<void> => {
   try {
     const stored = await AsyncStorage.getItem(KEYS.SCHEMA_VERSION);
     const version = stored ? parseInt(stored, 10) : 0;
-    if (version < SCHEMA_VERSION) {
-      // Future migrations go here, keyed by version number.
-      // Example: if (version < 2) { await migrateTo2(); }
-      await AsyncStorage.setItem(KEYS.SCHEMA_VERSION, String(SCHEMA_VERSION));
+    if (Number.isNaN(version) || version >= SCHEMA_VERSION) {
+      if (version !== SCHEMA_VERSION) {
+        await AsyncStorage.setItem(KEYS.SCHEMA_VERSION, String(SCHEMA_VERSION));
+      }
+      return;
     }
+
+    if (version < 2) {
+      await migrateBoardLayoutsToV2();
+    }
+
+    await AsyncStorage.setItem(KEYS.SCHEMA_VERSION, String(SCHEMA_VERSION));
   } catch {
-    // Non-fatal — the app still works without a successful migration
+    // Non-fatal — the app still works, and the unchanged version stamp means
+    // the migration will be attempted again on the next launch.
   }
 };
 

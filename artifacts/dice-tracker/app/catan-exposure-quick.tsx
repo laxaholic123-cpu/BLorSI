@@ -30,7 +30,8 @@ import { useColors } from '@/hooks/useColors';
 import { useGame } from '@/context/GameContext';
 import { useSettings } from '@/context/SettingsContext';
 import { generateId } from '@/types/models';
-import type { CatanPlayerExposureEvent } from '@/types/models';
+import type { CatanPlayerExposureEvent, PortType } from '@/types/models';
+import { describePort } from '@/services/catanBoard';
 
 // Settlement numbers (2D6, no 7)
 const CATAN_NUMBERS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12];
@@ -40,9 +41,21 @@ const PIPS: Record<number, number> = {
   2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 8: 5, 9: 4, 10: 3, 11: 2, 12: 1,
 };
 
+/** Port options offered per settlement. An intersection serves at most one. */
+const PORT_OPTIONS: { value: PortType; label: string }[] = [
+  { value: 'generic', label: '3:1' },
+  { value: 'grain', label: '2:1 grain' },
+  { value: 'ore', label: '2:1 ore' },
+  { value: 'lumber', label: '2:1 lumber' },
+  { value: 'brick', label: '2:1 brick' },
+  { value: 'wool', label: '2:1 wool' },
+];
+
 interface Settlement {
   locationId: string;
   numbers: number[]; // up to 3 hex numbers for this settlement
+  /** Port this settlement sits on, if any. Trade only — never production. */
+  port?: PortType;
 }
 
 interface PlayerSetup {
@@ -125,6 +138,12 @@ export default function CatanExposureQuickScreen() {
     updateCurrentSettlement(s => ({ ...s, numbers: s.numbers.filter(n => n !== num) }));
   };
 
+  /** Tapping the selected port clears it, so "no port" stays reachable. */
+  const togglePort = (port: PortType) => {
+    haptic();
+    updateCurrentSettlement(s => ({ ...s, port: s.port === port ? undefined : port }));
+  };
+
   const handleAddSettlement = () => {
     haptic();
     if (activeSettlement.numbers.length === 0) {
@@ -173,6 +192,7 @@ export default function CatanExposureQuickScreen() {
           hexIdentifiers: [settlement.locationId],
           productionWeight: 1,
           robberBlocked: false,
+          ...(settlement.port ? { portAccess: settlement.port } : {}),
         });
       }
     }
@@ -276,6 +296,13 @@ export default function CatanExposureQuickScreen() {
                     <Text style={[styles.numChipPips, { color: colors.primary, fontFamily: 'Inter_400Regular' }]}>{'·'.repeat(PIPS[n] ?? 1)}</Text>
                   </View>
                 ))}
+                {s.port && (
+                  <View style={[styles.numChip, { backgroundColor: colors.mutedForeground + '22' }]}>
+                    <Text style={[styles.numChipText, { color: colors.mutedForeground, fontFamily: 'Inter_700Bold' }]}>
+                      {describePort(s.port)}
+                    </Text>
+                  </View>
+                )}
               </View>
             </View>
             <TouchableOpacity onPress={() => handleRemoveSettlement(idx)} hitSlop={8}>
@@ -324,6 +351,42 @@ export default function CatanExposureQuickScreen() {
                   </Text>
                   <Text style={[styles.numBtnPips, { color: selected ? colors.primaryForeground : colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
                     {'·'.repeat(PIPS[num] ?? 1)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* Port selector — trade rate only, never counted as production */}
+          <Text style={[styles.portLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+            ON A PORT? (OPTIONAL)
+          </Text>
+          <View style={styles.portGrid}>
+            {PORT_OPTIONS.map(opt => {
+              const selected = activeSettlement.port === opt.value;
+              return (
+                <TouchableOpacity
+                  key={opt.value}
+                  style={[
+                    styles.portBtn,
+                    {
+                      backgroundColor: selected ? colors.primary : colors.card,
+                      borderColor: selected ? colors.primary : colors.border,
+                    },
+                  ]}
+                  onPress={() => togglePort(opt.value)}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.portBtnText,
+                      {
+                        color: selected ? colors.primaryForeground : colors.foreground,
+                        fontFamily: 'Inter_600SemiBold',
+                      },
+                    ]}
+                  >
+                    {opt.label}
                   </Text>
                 </TouchableOpacity>
               );
@@ -478,6 +541,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   numBtnCountText: { fontSize: 11 },
+  portLabel: { fontSize: 11, letterSpacing: 0.5, marginTop: 14, marginBottom: 6 },
+  portGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  portBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1.5 },
+  portBtnText: { fontSize: 13 },
 
   addBtn: {
     flexDirection: 'row',

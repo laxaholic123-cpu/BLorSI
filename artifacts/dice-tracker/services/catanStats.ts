@@ -5,7 +5,13 @@
  * Time-aware: production weights are applied only for the turns they were active.
  */
 
-import type { CatanPlayerExposureEvent, GameSession, Player, RollEvent } from '@/types/models';
+import type {
+  CatanPlayerExposureEvent,
+  GameSession,
+  Player,
+  PortType,
+  RollEvent,
+} from '@/types/models';
 import type {
   BuildingState,
   CatanGameStats,
@@ -247,6 +253,18 @@ export function computePlayerProductionStats(
     }
   }
 
+  // ── Port access (initial setup) ─────────────────────────────────────────
+  // Collected from the events rather than the resolved building states, since
+  // ports are a property of the intersection, not of production.
+  const portAccess: PortType[] = [];
+  for (const event of playerEvents) {
+    if (event.turnNumber !== 0) continue;
+    if (event.eventType !== 'initialSettlement') continue;
+    if (event.portAccess && !portAccess.includes(event.portAccess)) {
+      portAccess.push(event.portAccess);
+    }
+  }
+
   // ── Placement strength (initial setup, turnNumber = 0) ──────────────────
   const initialBuildings = getBuildingStatesAtTurn(player.id, 0, playerEvents);
   let placementStrength = 0;
@@ -287,6 +305,7 @@ export function computePlayerProductionStats(
       : 0,
     placementStrength,
     numberDiversity: exposedNumbers.size,
+    portAccess,
     robberLostProduction,
     initialBuildingCount: initialBuildings.length,
     finalCityCount,

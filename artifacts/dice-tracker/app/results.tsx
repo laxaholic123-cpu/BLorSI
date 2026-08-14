@@ -31,6 +31,7 @@ import { useSettings } from '@/context/SettingsContext';
 import { computeAllStats, formatDuration } from '@/services/stats';
 import { computeCatanGameStats } from '@/services/catanStats';
 import { describePercentile } from '@/services/luckEngine';
+import { describePort } from '@/services/catanBoard';
 import type { CatanGameStats } from '@/types/catanStats';
 import { selectBestShareCard, CARD_METADATA } from '@/services/shareCard';
 import { RollFrequencyChart } from '@/components/RollFrequencyChart';
@@ -617,6 +618,13 @@ export default function ResultsScreen() {
                             <View style={[{ backgroundColor: player?.color ?? colors.primary, width: 8, height: 8, borderRadius: 4 }]} />
                             <Text style={[styles.freqText, { color: colors.foreground, fontFamily: 'Inter_600SemiBold', flex: 1 }]} numberOfLines={1}>
                               {ps.displayName}
+                              {/* Ports are trade access, not production — shown
+                                  beside placement strength rather than folded
+                                  into it, because there is no honest exchange
+                                  rate between pips and a 2:1 port. */}
+                              {ps.portAccess.length > 0
+                                ? ` · ${ps.portAccess.map(describePort).join(', ')}`
+                                : ''}
                             </Text>
                           </View>
                           <Text style={[styles.freqText, { color: ratingColor, fontFamily: 'Inter_600SemiBold', marginRight: 8 }]}>

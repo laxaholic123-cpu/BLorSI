@@ -4,7 +4,7 @@
  * All types are plain data objects — no UI or React Native imports allowed here.
  */
 
-import type { ResourceType } from '@/types/models';
+import type { PortType, ResourceType } from '@/types/models';
 
 // ─── Building state ───────────────────────────────────────────────────────────
 
@@ -42,6 +42,16 @@ export interface CatanPlayerProductionStats {
   placementStrength: number;
   /** Count of unique numbers in the initial placement */
   numberDiversity: number;
+  /**
+   * Ports this player's initial buildings sit on.
+   *
+   * Deliberately NOT folded into placementStrength. Ports change trade rates,
+   * not dice production, and there is no honest exchange rate between "pips"
+   * and "2:1 ore access" — inventing one would be the same category of made-up
+   * threshold the verdict layer was rebuilt to remove. Reported alongside
+   * placement strength so a player can weigh it themselves.
+   */
+  portAccess: PortType[];
   /** Weighted production lost because a robber block was active */
   robberLostProduction: number;
   /** Buildings present at initial setup (turnNumber = 0) */

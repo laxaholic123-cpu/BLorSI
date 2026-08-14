@@ -380,7 +380,7 @@ describe('classifyRollLuck', () => {
       totalActualProduction: 10, totalExpectedProduction: 10,
       productionLuck: 0, productionLuckPct: 0,
       placementStrength: 0.5, numberDiversity: 3,
-      robberLostProduction: 0, initialBuildingCount: 2, finalCityCount: 0,
+      robberLostProduction: 0, initialBuildingCount: 2, finalCityCount: 0, portAccess: [],
     }];
     expect(classifyRollLuck(stats)).toBe('neutral');
   });
@@ -391,7 +391,7 @@ describe('classifyRollLuck', () => {
       totalActualProduction: 15, totalExpectedProduction: 10,
       productionLuck: 5, productionLuckPct: 50,
       placementStrength: 0.5, numberDiversity: 3,
-      robberLostProduction: 0, initialBuildingCount: 2, finalCityCount: 0,
+      robberLostProduction: 0, initialBuildingCount: 2, finalCityCount: 0, portAccess: [],
     }];
     expect(classifyRollLuck(stats)).toBe('lucky');
   });
@@ -402,7 +402,7 @@ describe('classifyRollLuck', () => {
       totalActualProduction: 5, totalExpectedProduction: 10,
       productionLuck: -5, productionLuckPct: -50,
       placementStrength: 0.5, numberDiversity: 3,
-      robberLostProduction: 0, initialBuildingCount: 2, finalCityCount: 0,
+      robberLostProduction: 0, initialBuildingCount: 2, finalCityCount: 0, portAccess: [],
     }];
     expect(classifyRollLuck(stats)).toBe('unlucky');
   });
@@ -417,7 +417,7 @@ describe('classifyExposureLuck', () => {
     productionLuck: actual - expected,
     productionLuckPct: expected > 0 ? ((actual - expected) / expected) * 100 : 0,
     placementStrength: 0.5, numberDiversity: 3,
-    robberLostProduction: 0, initialBuildingCount: 2, finalCityCount: 0,
+    robberLostProduction: 0, initialBuildingCount: 2, finalCityCount: 0, portAccess: [],
   });
 
   it('average when within 15%', () => {
@@ -445,7 +445,7 @@ describe('classifyPlacementRating', () => {
     totalActualProduction: 10, totalExpectedProduction: 10,
     productionLuck: 0, productionLuckPct: 0,
     placementStrength, numberDiversity: 3,
-    robberLostProduction: 0, initialBuildingCount: 2, finalCityCount: 0,
+    robberLostProduction: 0, initialBuildingCount: 2, finalCityCount: 0, portAccess: [],
   });
 
   it('weak when strength < 0.40', () => {
@@ -498,7 +498,7 @@ describe('classifyCatanVerdict', () => {
     productionLuck: actual - expected,
     productionLuckPct: expected > 0 ? ((actual - expected) / expected) * 100 : 0,
     placementStrength: placement, numberDiversity: 3,
-    robberLostProduction: 0, initialBuildingCount: 2, finalCityCount: 0,
+    robberLostProduction: 0, initialBuildingCount: 2, finalCityCount: 0, portAccess: [],
   });
 
   it('too_early when small sample', () => {

@@ -63,7 +63,7 @@ const CONTENT: Record<InfoType, { title: string; sections: Array<{ heading?: str
       },
       {
         heading: 'What This Tool Cannot Measure',
-        body: 'Settlement Mode measures dice luck and placement strength relative to the numbers rolled. It cannot measure trading strategy, development card decisions, road placement, port use, or any other non-dice elements of the game. A verdict of "bad luck" reflects the dice, not the quality of play.',
+        body: 'Settlement Mode measures dice luck and placement strength relative to the numbers rolled. Ports are recorded as placement context, but only which ports you sit on — not whether you traded through them. It cannot measure trading strategy, development card decisions, road placement, or any other non-dice element of the game. A verdict of "bad luck" reflects the dice, not the quality of play.',
       },
       {
         heading: 'Disclaimer',
