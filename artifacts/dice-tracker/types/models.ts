@@ -34,6 +34,19 @@ export type PortType = 'generic' | PortResource;
  */
 export type HexEdge = 0 | 1 | 2 | 3 | 4 | 5;
 
+/**
+ * Development card types in the base game deck.
+ *
+ * Unlike ports, dev card draws ARE luck: the deck composition is fixed and
+ * public, the order is random, and what you get is not a decision you made.
+ */
+export type CatanDevCardType =
+  | 'knight'
+  | 'victoryPoint'
+  | 'roadBuilding'
+  | 'yearOfPlenty'
+  | 'monopoly';
+
 export type CatanExposureEventType =
   | 'initialSettlement'
   | 'settlementBuilt'
@@ -58,9 +71,10 @@ export interface Player {
 export interface GameSessionSettings {
   recordIndividualDice: boolean;
   trackWinner: boolean;
-  trackPlacements: boolean;
   catanRobberTracking: boolean;
   catanResourceTracking: boolean;
+  /** Record development card draws so deck luck can be measured. */
+  catanDevCardTracking: boolean;
 }
 
 export interface GameSession {
@@ -80,8 +94,6 @@ export interface GameSession {
   endedAt?: string; // ISO 8601
   status: GameStatus;
   winnerPlayerId?: string;
-  /** Ordered array of player IDs (first = 1st place) */
-  placements: string[];
   settings: GameSessionSettings;
   finalVerdict?: string;
   /** Schema version for migration support */
@@ -146,6 +158,23 @@ export interface CatanPlayerExposureEvent {
   notes?: string;
 }
 
+/**
+ * A development card draw. Immutable, like RollEvent — undo by setting
+ * deletedAt rather than removing the record.
+ */
+export interface CatanDevCardEvent {
+  id: string;
+  sessionId: string;
+  playerId: string;
+  cardType: CatanDevCardType;
+  turnNumber: number;
+  /** Monotonically increasing draw order within the session */
+  sequenceNumber: number;
+  timestamp: string; // ISO 8601
+  /** ISO 8601 — set when this draw is marked deleted (undo) */
+  deletedAt?: string;
+}
+
 export interface AppSettings {
   hapticsEnabled: boolean;
   soundEnabled: boolean;
@@ -174,8 +203,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
  * Schema version — bump when a migration is needed.
  *
  * v2: CatanBoardLayout gained a required `ports` array.
+ * v3: GameSessionSettings dropped the inert `trackPlacements` flag (nothing
+ *     ever read it, and GameSession.placements was never populated) and gained
+ *     catanDevCardTracking.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** Dice range definitions */
 export const DICE_RANGES: Record<DiceMode, { min: number; max: number }> = {

@@ -44,11 +44,10 @@ const BASE_SESSION: Omit<GameSession, 'id' | 'players' | 'startedAt' | 'status'>
   maximumRoll: 12,
   currentPlayerIndex: 0,
   autoAdvancePlayer: true,
-  placements: [],
   settings: {
     recordIndividualDice: false,
     trackWinner: false,
-    trackPlacements: false,
+    catanDevCardTracking: false,
     catanRobberTracking: true,
     catanResourceTracking: false,
   },

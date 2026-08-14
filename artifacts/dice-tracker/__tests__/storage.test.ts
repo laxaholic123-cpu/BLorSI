@@ -44,11 +44,10 @@ function makeSession(overrides?: Partial<GameSession>): GameSession {
     startedAt: '2026-01-01T10:00:00Z',
     endedAt: '2026-01-01T11:00:00Z',
     status: 'completed',
-    placements: [],
     settings: {
       recordIndividualDice: true,
       trackWinner: true,
-      trackPlacements: false,
+      catanDevCardTracking: false,
       catanRobberTracking: false,
       catanResourceTracking: false,
     },
@@ -65,7 +64,7 @@ function makeCatanSession(): GameSession {
     settings: {
       recordIndividualDice: true,
       trackWinner: true,
-      trackPlacements: true,
+      catanDevCardTracking: true,
       catanRobberTracking: true,
       catanResourceTracking: false,
     },
@@ -245,7 +244,7 @@ describe('prefill session', () => {
 
     expect(loaded?.gameType).toBe('catan');
     expect(loaded?.settings.catanRobberTracking).toBe(true);
-    expect(loaded?.settings.trackPlacements).toBe(true);
+    expect(loaded?.settings.catanDevCardTracking).toBe(true);
   });
 
   it('handles clearPrefillSession gracefully when nothing is saved', async () => {

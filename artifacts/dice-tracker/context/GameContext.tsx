@@ -9,12 +9,19 @@
  */
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import type { CatanPlayerExposureEvent, GameSession, RollEvent } from '@/types/models';
+import type {
+  CatanDevCardEvent,
+  CatanPlayerExposureEvent,
+  GameSession,
+  RollEvent,
+} from '@/types/models';
 import {
   getActiveSessionId,
+  loadDevCardEvents,
   loadExposureEvents,
   loadRollEvents,
   loadSession,
+  saveDevCardEvents,
   saveExposureEvents,
   saveRollEvents,
   saveSession,
@@ -25,6 +32,7 @@ interface GameContextValue {
   activeSession: GameSession | null;
   rollEvents: RollEvent[];
   exposureEvents: CatanPlayerExposureEvent[];
+  devCardEvents: CatanDevCardEvent[];
   isLoading: boolean;
   /** Re-load the active session from storage (e.g. after an app resume) */
   loadActiveGame: () => Promise<void>;
@@ -42,6 +50,8 @@ interface GameContextValue {
   setExposureEvents: (events: CatanPlayerExposureEvent[]) => void;
   /** Replace exposure events in context and persist to storage */
   persistExposureEvents: (sessionId: string, events: CatanPlayerExposureEvent[]) => Promise<void>;
+  setDevCardEvents: (events: CatanDevCardEvent[]) => void;
+  persistDevCardEvents: (sessionId: string, events: CatanDevCardEvent[]) => Promise<void>;
 }
 
 const GameContext = createContext<GameContextValue | null>(null);
@@ -50,6 +60,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const [activeSession, setActiveSession] = useState<GameSession | null>(null);
   const [rollEvents, setRollEvents] = useState<RollEvent[]>([]);
   const [exposureEvents, setExposureEvents] = useState<CatanPlayerExposureEvent[]>([]);
+  const [devCardEvents, setDevCardEvents] = useState<CatanDevCardEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const loadActiveGame = useCallback(async () => {
@@ -68,6 +79,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         if (session.gameType === 'catan') {
           const exposures = await loadExposureEvents(sessionId);
           setExposureEvents(exposures);
+          setDevCardEvents(await loadDevCardEvents(sessionId));
         }
       } else {
         // Stale active session ID — clear it
@@ -89,6 +101,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     setActiveSession(session);
     setRollEvents([]);
     setExposureEvents([]);
+    setDevCardEvents([]);
     await saveSession(session);
     await setActiveSessionId(session.id);
   }, []);
@@ -102,6 +115,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     setActiveSession(null);
     setRollEvents([]);
     setExposureEvents([]);
+    setDevCardEvents([]);
     await setActiveSessionId(null);
   }, []);
 
@@ -118,12 +132,21 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
+  const persistDevCardEvents = useCallback(
+    async (sessionId: string, events: CatanDevCardEvent[]) => {
+      setDevCardEvents(events);
+      await saveDevCardEvents(sessionId, events);
+    },
+    [],
+  );
+
   return (
     <GameContext.Provider
       value={{
         activeSession,
         rollEvents,
         exposureEvents,
+        devCardEvents,
         isLoading,
         loadActiveGame,
         startSession,
@@ -133,6 +156,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         persistRollEvents,
         setExposureEvents,
         persistExposureEvents,
+        setDevCardEvents,
+        persistDevCardEvents,
       }}
     >
       {children}

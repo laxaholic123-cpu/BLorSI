@@ -35,11 +35,10 @@ const session = (players: Player[], overrides: Partial<GameSession> = {}): GameS
   autoAdvancePlayer: true,
   startedAt: '2026-01-01T00:00:00Z',
   status: 'completed',
-  placements: [],
   settings: {
     recordIndividualDice: false,
     trackWinner: false,
-    trackPlacements: false,
+    catanDevCardTracking: false,
     catanRobberTracking: false,
     catanResourceTracking: false,
   },

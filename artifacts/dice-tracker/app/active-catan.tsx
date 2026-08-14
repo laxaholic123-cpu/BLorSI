@@ -39,7 +39,17 @@ import {
 import { playDoneSound, playRollSound, playUndoSound } from '@/services/sound';
 import { confirmEndGame } from '@/services/endGame';
 import { generateId } from '@/types/models';
-import type { CatanPlayerExposureEvent } from '@/types/models';
+import type {
+  CatanDevCardEvent,
+  CatanDevCardType,
+  CatanPlayerExposureEvent,
+} from '@/types/models';
+import {
+  DEV_CARD_LABELS,
+  DEV_CARD_TYPES,
+  DEV_DECK_COMPOSITION,
+  DEV_DECK_SIZE,
+} from '@/services/devCards';
 import { getLinkedBuildingEventCount } from '@/services/editSettlements';
 import {
   computePlayerProductionStats,
@@ -71,8 +81,10 @@ export default function ActiveCatanScreen() {
     rollEvents,
     setRollEvents,
     exposureEvents,
+    devCardEvents,
     persistRollEvents,
     persistExposureEvents,
+    persistDevCardEvents,
     updateSession,
     loadActiveGame,
     endSession,
@@ -87,6 +99,7 @@ export default function ActiveCatanScreen() {
   const [robberDontAskAgain, setRobberDontAskAgain] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [showEditSettlementspicker, setShowEditSettlementspicker] = useState(false);
+  const [devCardPickerOpen, setDevCardPickerOpen] = useState(false);
   // Heat map starts hidden so the dice pad is always immediately visible
   const [showHeatMap, setShowHeatMap] = useState(false);
 
@@ -95,6 +108,19 @@ export default function ActiveCatanScreen() {
 
   // ── Derived state ────────────────────────────────────────────────────────────
   const activeEvents = useMemo(() => rollEvents.filter(e => !e.deletedAt), [rollEvents]);
+  // Live deck tally, so the picker can grey out a card type already exhausted.
+  const devCardCounts = useMemo(() => {
+    const counts: Partial<Record<CatanDevCardType, number>> = {};
+    for (const event of devCardEvents) {
+      if (event.deletedAt) continue;
+      counts[event.cardType] = (counts[event.cardType] ?? 0) + 1;
+    }
+    return counts;
+  }, [devCardEvents]);
+  const devCardsRemaining = useMemo(
+    () => Math.max(0, DEV_DECK_SIZE - devCardEvents.filter(e => !e.deletedAt).length),
+    [devCardEvents],
+  );
   const currentPlayer = activeSession?.players[activeSession.currentPlayerIndex] ?? null;
   const lastEvent = activeEvents.at(-1) ?? null;
   const totalRolls = activeEvents.length;
@@ -339,6 +365,32 @@ export default function ActiveCatanScreen() {
         i === activeSession.currentPlayerIndex ? { ...p, displayName: trimmed } : p,
       ),
     });
+  };
+
+  // ── Development card handlers ─────────────────────────────────────────────────
+
+  const handleRecordDevCard = async (cardType: CatanDevCardType) => {
+    if (!activeSession) return;
+    haptic();
+    const nextSequence = devCardEvents.reduce((max, e) => Math.max(max, e.sequenceNumber), 0) + 1;
+    const event: CatanDevCardEvent = {
+      id: generateId(),
+      sessionId: activeSession.id,
+      playerId: activeSession.players[activeSession.currentPlayerIndex]?.id ?? '',
+      cardType,
+      turnNumber,
+      sequenceNumber: nextSequence,
+      timestamp: new Date().toISOString(),
+    };
+    setDevCardPickerOpen(false);
+    try {
+      await persistDevCardEvents(activeSession.id, [...devCardEvents, event]);
+    } catch {
+      Alert.alert(
+        'Draw not saved',
+        'The card was recorded for this session but could not be written to storage. Deck luck may be incomplete.',
+      );
+    }
   };
 
   // ── Robber prompt handlers ────────────────────────────────────────────────────
@@ -638,6 +690,18 @@ export default function ActiveCatanScreen() {
           <Ionicons name="business-outline" size={14} color={colors.primary} />
           <Text style={[styles.buildPillText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>City</Text>
         </TouchableOpacity>
+        {activeSession.settings.catanDevCardTracking && (
+          <TouchableOpacity
+            style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
+            onPress={() => setDevCardPickerOpen(true)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="albums-outline" size={14} color={colors.primary} />
+            <Text style={[styles.buildPillText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
+              Dev Card
+            </Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
           onPress={() => router.push('/catan-development' as any)}
@@ -714,6 +778,57 @@ export default function ActiveCatanScreen() {
             <TouchableOpacity
               style={[styles.robberActionBtn, { backgroundColor: colors.muted, marginTop: 4 }]}
               onPress={() => setShowEditSettlementspicker(false)}
+            >
+              <Text style={[styles.robberActionText, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Development card draw ───────────────────────────────────────────────── */}
+      <Modal
+        visible={devCardPickerOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setDevCardPickerOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.robberSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.robberHandle} />
+            <Text style={[styles.robberTitle, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+              Development Card
+            </Text>
+            <Text style={[styles.robberSub, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+              {currentPlayer ? `What did ${currentPlayer.displayName} draw?` : 'What was drawn?'}
+              {` ${devCardsRemaining} left in the deck.`}
+            </Text>
+            {DEV_CARD_TYPES.map(type => {
+              const drawn = devCardCounts[type] ?? 0;
+              const inDeck = DEV_DECK_COMPOSITION[type];
+              const exhausted = drawn >= inDeck;
+              return (
+                <TouchableOpacity
+                  key={type}
+                  style={[
+                    styles.playerPickerRow,
+                    { backgroundColor: colors.muted, borderColor: colors.border, opacity: exhausted ? 0.4 : 1 },
+                  ]}
+                  onPress={() => void handleRecordDevCard(type)}
+                  disabled={exhausted}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.playerPickerName, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
+                    {DEV_CARD_LABELS[type]}
+                  </Text>
+                  <Text style={[styles.robberSub, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginBottom: 0 }]}>
+                    {inDeck - drawn}/{inDeck}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+            <TouchableOpacity
+              style={[styles.robberActionBtn, { backgroundColor: colors.muted, marginTop: 4 }]}
+              onPress={() => setDevCardPickerOpen(false)}
             >
               <Text style={[styles.robberActionText, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>Cancel</Text>
             </TouchableOpacity>

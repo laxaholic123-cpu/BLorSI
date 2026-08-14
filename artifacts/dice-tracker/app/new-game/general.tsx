@@ -208,11 +208,10 @@ export default function GeneralGameSetupScreen() {
         startedAt: new Date().toISOString(),
         status: 'active',
         winnerPlayerId: undefined,
-        placements: [],
         settings: {
           recordIndividualDice: diceMode === '2D6',
           trackWinner,
-          trackPlacements: false,
+          catanDevCardTracking: false,
           catanRobberTracking: false,
           catanResourceTracking: false,
         },

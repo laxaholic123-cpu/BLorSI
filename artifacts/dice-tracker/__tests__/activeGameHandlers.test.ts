@@ -45,11 +45,10 @@ function makeSession(overrides?: Partial<GameSession>): GameSession {
     autoAdvancePlayer: true,
     startedAt: '2026-01-01T10:00:00Z',
     status: 'active',
-    placements: [],
     settings: {
       recordIndividualDice: false,
       trackWinner: false,
-      trackPlacements: false,
+      catanDevCardTracking: false,
       catanRobberTracking: false,
       catanResourceTracking: false,
     },

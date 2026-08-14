@@ -47,6 +47,7 @@ import {
 import { getBoardScanApiUrl } from '@/services/boardScanApi';
 import { getLinkedBuildingEventCount, mergeEditedSettlements } from '@/services/editSettlements';
 import { normalizePieces, type DetectedPiece } from '@/utils/normalizePieces';
+import { describeChange, reconcileBoard, type BoardChange } from '@/services/boardConstraints';
 import { matchPieceToPlayer } from '@/utils/matchPieceToPlayer';
 import type { CatanBoardLayout, CatanHexDef, ResourceType } from '@/types/models';
 import { generateId } from '@/types/models';
@@ -114,6 +115,8 @@ export default function CatanBoardScanScreen() {
 
   // ── Board hexes ────────────────────────────────────────────────────────────
   const [hexes, setHexes] = useState<CatanHexDef[]>(makeEmptyLayout);
+  /** Repairs the constraint solver made to the scan, shown in review. */
+  const [boardCorrections, setBoardCorrections] = useState<BoardChange[]>([]);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   // ── Saved layouts ──────────────────────────────────────────────────────────
@@ -261,7 +264,13 @@ export default function CatanBoardScanScreen() {
           };
         }
       }
-      setHexes(merged);
+      // Force the reading into a board that could actually come out of the box.
+      // A scan reporting five ore tiles or three 6s is provably wrong, and the
+      // solver moves the least-confident readings rather than handing the player
+      // an impossible board to correct by hand.
+      const { hexes: reconciled, changes } = reconcileBoard(merged);
+      setHexes(reconciled);
+      setBoardCorrections(changes);
       setDetectedPieces(normalizePieces(Array.isArray(data.pieces) ? data.pieces : []));
       setPhase('review');
     } catch (err) {
@@ -599,6 +608,26 @@ export default function CatanBoardScanScreen() {
             <Text style={[s.hintText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
               {lowConfIndices.length} hex{lowConfIndices.length === 1 ? '' : 'es'} need{lowConfIndices.length === 1 ? 's' : ''} your attention — long-press any amber hex to correct it.
             </Text>
+          </View>
+        )}
+        {boardCorrections.length > 0 && (
+          <View style={[s.hintBanner, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+            <Ionicons name="construct-outline" size={16} color={colors.mutedForeground} />
+            <View style={{ flex: 1 }}>
+              <Text style={[s.hintText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                The scan didn&apos;t match the pieces in the box, so{' '}
+                {boardCorrections.length} reading{boardCorrections.length === 1 ? ' was' : 's were'} adjusted
+                to make the board possible. Check these:
+              </Text>
+              {boardCorrections.slice(0, 6).map((change, i) => (
+                <Text
+                  key={`${change.hexIndex}-${change.field}-${i}`}
+                  style={[s.hintText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}
+                >
+                  • {describeChange(change)}
+                </Text>
+              ))}
+            </View>
           </View>
         )}
 

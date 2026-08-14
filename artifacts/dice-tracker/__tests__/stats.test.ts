@@ -54,11 +54,10 @@ const makeSession = (
   endedAt: '2024-01-01T01:00:00Z',
   status: 'completed',
   winnerPlayerId: undefined,
-  placements: [],
   settings: {
     recordIndividualDice: false,
     trackWinner: false,
-    trackPlacements: false,
+    catanDevCardTracking: false,
     catanRobberTracking: false,
     catanResourceTracking: false,
   },

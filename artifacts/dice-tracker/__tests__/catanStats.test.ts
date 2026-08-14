@@ -50,11 +50,10 @@ const makeSession = (players: Player[], overrides: Partial<GameSession> = {}): G
   startedAt: '2024-01-01T00:00:00Z',
   status: 'active',
   winnerPlayerId: undefined,
-  placements: [],
   settings: {
     recordIndividualDice: true,
     trackWinner: false,
-    trackPlacements: false,
+    catanDevCardTracking: false,
     catanRobberTracking: true,
     catanResourceTracking: false,
   },

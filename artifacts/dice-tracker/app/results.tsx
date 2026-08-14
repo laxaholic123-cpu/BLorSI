@@ -32,6 +32,7 @@ import { computeAllStats, formatDuration } from '@/services/stats';
 import { computeCatanGameStats } from '@/services/catanStats';
 import { describePercentile } from '@/services/luckEngine';
 import { describePort } from '@/services/catanBoard';
+import { computeDevCardStats, DEV_DECK_SIZE } from '@/services/devCards';
 import type { CatanGameStats } from '@/types/catanStats';
 import { selectBestShareCard, CARD_METADATA } from '@/services/shareCard';
 import { RollFrequencyChart } from '@/components/RollFrequencyChart';
@@ -39,7 +40,7 @@ import { RollFrequencyChart } from '@/components/RollFrequencyChart';
 export default function ResultsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { activeSession, rollEvents, exposureEvents, updateSession, endSession } = useGame();
+  const { activeSession, rollEvents, exposureEvents, devCardEvents, updateSession, endSession } = useGame();
   const { settings } = useSettings();
   const webTop = Platform.OS === 'web' ? 67 : 0;
 
@@ -66,6 +67,14 @@ export default function ResultsScreen() {
         ? computeCatanGameStats(activeSession, rollEvents, exposureEvents, { simulate: true })
         : null,
     [activeSession, rollEvents, exposureEvents],
+  );
+
+  const devCardStats = useMemo(
+    () =>
+      activeSession?.gameType === 'catan' && devCardEvents.length > 0
+        ? computeDevCardStats(activeSession.players, devCardEvents, { simulate: true })
+        : null,
+    [activeSession, devCardEvents],
   );
 
   // ── Verdict entrance animation ───────────────────────────────────────────────
@@ -636,6 +645,44 @@ export default function ResultsScreen() {
                         </View>
                       );
                     })}
+                </View>
+              </>
+            )}
+
+            {/* Development card deck luck */}
+            {devCardStats && devCardStats.totalDraws > 0 && (
+              <>
+                <SectionLabel text="DEVELOPMENT CARDS" colors={colors} />
+                <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  {devCardStats.playerStats
+                    .filter(ds => ds.counts.total > 0)
+                    .map((ds, idx, arr) => (
+                      <View
+                        key={ds.playerId}
+                        style={[
+                          styles.freqRow,
+                          { borderBottomColor: colors.border, borderBottomWidth: idx === arr.length - 1 ? 0 : StyleSheet.hairlineWidth },
+                        ]}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.freqText, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]} numberOfLines={1}>
+                            {ds.displayName}
+                          </Text>
+                          <Text style={[styles.verdictNote, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                            {ds.counts.total} card{ds.counts.total === 1 ? '' : 's'} · {ds.counts.knight} knight
+                            {ds.counts.knight === 1 ? '' : 's'} · {ds.counts.victoryPoint} VP
+                          </Text>
+                          {typeof ds.victoryPointPercentile === 'number' && (
+                            <Text style={[styles.verdictNote, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                              Victory points: {describePercentile(ds.victoryPointPercentile)}
+                            </Text>
+                          )}
+                        </View>
+                      </View>
+                    ))}
+                  <Text style={[styles.verdictNote, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginTop: 8 }]}>
+                    {devCardStats.remainingInDeck} of {DEV_DECK_SIZE} cards left undrawn.
+                  </Text>
                 </View>
               </>
             )}

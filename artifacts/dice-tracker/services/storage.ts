@@ -16,6 +16,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
   AppSettings,
   CatanBoardLayout,
+  CatanDevCardEvent,
   CatanPlayerExposureEvent,
   DiceMode,
   GameSession,
@@ -34,6 +35,7 @@ const KEYS = {
   SESSION: (id: string) => `blosi:session:${id}`,
   ROLLS: (sessionId: string) => `blosi:rolls:${sessionId}`,
   EXPOSURES: (sessionId: string) => `blosi:exposures:${sessionId}`,
+  DEV_CARDS: (sessionId: string) => `blosi:devcards:${sessionId}`,
 } as const;
 
 /** Owned by boardLayouts.ts; referenced here so migrations can reach it. */
@@ -69,6 +71,55 @@ const migrateBoardLayoutsToV2 = async (): Promise<void> => {
 };
 
 /**
+ * v2 → v3: GameSessionSettings dropped `trackPlacements` and gained
+ * `catanDevCardTracking`; GameSession dropped `placements`.
+ *
+ * Both removed fields were inert — nothing ever read the flag and the array was
+ * never populated — so this rewrite loses no information. It runs anyway rather
+ * than leaving the dead keys in storage, because a stored shape that no longer
+ * matches the type is exactly what makes the NEXT migration hard to reason
+ * about.
+ */
+const migrateSessionSettingsToV3 = async (): Promise<void> => {
+  const raw = await AsyncStorage.getItem(KEYS.SESSION_IDS);
+  const indexed: string[] = raw ? (JSON.parse(raw) as string[]) : [];
+  const onDisk = await scanSessionIdsFromKeys();
+  const ids = [...new Set([...indexed, ...onDisk])];
+  if (ids.length === 0) return;
+
+  const pairs = await AsyncStorage.multiGet(ids.map(id => KEYS.SESSION(id)));
+  const writes: [string, string][] = [];
+
+  for (const [key, json] of pairs) {
+    if (!json) continue;
+    let session: Record<string, unknown>;
+    try {
+      session = JSON.parse(json) as Record<string, unknown>;
+    } catch {
+      continue; // Leave a corrupted record alone rather than making it worse.
+    }
+
+    const settings = (session['settings'] ?? {}) as Record<string, unknown>;
+    const needsUpdate =
+      'trackPlacements' in settings ||
+      'placements' in session ||
+      !('catanDevCardTracking' in settings);
+    if (!needsUpdate) continue;
+
+    delete settings['trackPlacements'];
+    delete session['placements'];
+    // Existing games were played without dev card tracking, so leaving it off
+    // is the only reading of the past that is actually true.
+    if (!('catanDevCardTracking' in settings)) settings['catanDevCardTracking'] = false;
+    session['settings'] = settings;
+
+    writes.push([key, JSON.stringify(session)]);
+  }
+
+  if (writes.length > 0) await AsyncStorage.multiSet(writes);
+};
+
+/**
  * Bring stored data up to SCHEMA_VERSION.
  *
  * Migrations run in order and must be idempotent — a failure partway through
@@ -89,6 +140,9 @@ export const ensureSchemaVersion = async (): Promise<void> => {
 
     if (version < 2) {
       await migrateBoardLayoutsToV2();
+    }
+    if (version < 3) {
+      await migrateSessionSettingsToV3();
     }
 
     await AsyncStorage.setItem(KEYS.SCHEMA_VERSION, String(SCHEMA_VERSION));
@@ -320,6 +374,25 @@ export const loadExposureEvents = async (
   }
 };
 
+// ─── Catan development card events ────────────────────────────────────────────
+
+export const saveDevCardEvents = async (
+  sessionId: string,
+  events: CatanDevCardEvent[],
+): Promise<void> => {
+  // Re-throws like saveRollEvents — a lost draw silently corrupts deck luck.
+  await AsyncStorage.setItem(KEYS.DEV_CARDS(sessionId), JSON.stringify(events));
+};
+
+export const loadDevCardEvents = async (sessionId: string): Promise<CatanDevCardEvent[]> => {
+  try {
+    const json = await AsyncStorage.getItem(KEYS.DEV_CARDS(sessionId));
+    return json ? (JSON.parse(json) as CatanDevCardEvent[]) : [];
+  } catch {
+    return [];
+  }
+};
+
 // ─── Export / import ──────────────────────────────────────────────────────────
 
 /**
@@ -335,14 +408,24 @@ export const exportAllData = async (): Promise<string> => {
   const sessions = await loadAllSessions();
   const rollsBySession: Record<string, RollEvent[]> = {};
   const exposuresBySession: Record<string, CatanPlayerExposureEvent[]> = {};
+  const devCardsBySession: Record<string, CatanDevCardEvent[]> = {};
   for (const session of sessions) {
     rollsBySession[session.id] = await loadRollEvents(session.id);
     if (session.gameType === 'catan') {
       exposuresBySession[session.id] = await loadExposureEvents(session.id);
+      devCardsBySession[session.id] = await loadDevCardEvents(session.id);
     }
   }
   return JSON.stringify(
-    { schemaVersion: SCHEMA_VERSION, exportedAt: new Date().toISOString(), settings, sessions, rollsBySession, exposuresBySession },
+    {
+      schemaVersion: SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      settings,
+      sessions,
+      rollsBySession,
+      exposuresBySession,
+      devCardsBySession,
+    },
     null,
     2,
   );
@@ -366,6 +449,14 @@ const isPlausibleExposureEvent = (e: unknown): e is CatanPlayerExposureEvent =>
   typeof (e as CatanPlayerExposureEvent).playerId === 'string' &&
   Array.isArray((e as CatanPlayerExposureEvent).affectedNumbers);
 
+/** Shape check for a dev card draw coming from an untrusted backup file. */
+const isPlausibleDevCardEvent = (e: unknown): e is CatanDevCardEvent =>
+  typeof e === 'object' &&
+  e !== null &&
+  typeof (e as CatanDevCardEvent).id === 'string' &&
+  typeof (e as CatanDevCardEvent).playerId === 'string' &&
+  typeof (e as CatanDevCardEvent).cardType === 'string';
+
 /**
  * Merge a backup into local storage.
  *
@@ -382,6 +473,7 @@ export const importAllData = async (
       sessions?: GameSession[];
       rollsBySession?: Record<string, unknown>;
       exposuresBySession?: Record<string, unknown>;
+      devCardsBySession?: Record<string, unknown>;
     };
     if (!data.sessions || !Array.isArray(data.sessions)) {
       return { imported: 0, skipped: 0, error: 'Invalid backup format — no sessions found.' };
@@ -409,6 +501,10 @@ export const importAllData = async (
       const rawExposures = data.exposuresBySession?.[session.id];
       if (Array.isArray(rawExposures)) {
         await saveExposureEvents(session.id, rawExposures.filter(isPlausibleExposureEvent));
+      }
+      const rawDevCards = data.devCardsBySession?.[session.id];
+      if (Array.isArray(rawDevCards)) {
+        await saveDevCardEvents(session.id, rawDevCards.filter(isPlausibleDevCardEvent));
       }
       imported++;
     }

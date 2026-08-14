@@ -43,8 +43,8 @@ beforeEach(async () => {
 });
 
 describe('SCHEMA_VERSION', () => {
-  it('is 2 now that board layouts carry ports', () => {
-    expect(SCHEMA_VERSION).toBe(2);
+  it('is 3 — v2 added board layout ports, v3 reworked session settings', () => {
+    expect(SCHEMA_VERSION).toBe(3);
   });
 });
 
@@ -149,6 +149,118 @@ describe('ensureSchemaVersion — v1 to v2', () => {
 
     // Version stays at 1 so the next launch retries rather than skipping.
     expect(await AsyncStorage.getItem(VERSION_KEY)).toBe('1');
+  });
+});
+
+describe('ensureSchemaVersion — v2 to v3', () => {
+  const v2Session = (id: string) => ({
+    id,
+    gameType: 'catan',
+    diceMode: '2D6',
+    minimumRoll: 2,
+    maximumRoll: 12,
+    players: [],
+    currentPlayerIndex: 0,
+    autoAdvancePlayer: true,
+    startedAt: '2026-01-01T00:00:00Z',
+    status: 'completed',
+    placements: [], // removed in v3
+    settings: {
+      recordIndividualDice: true,
+      trackWinner: true,
+      trackPlacements: true, // removed in v3
+      catanRobberTracking: true,
+      catanResourceTracking: false,
+    },
+    schemaVersion: 2,
+  });
+
+  const seedV2 = async (id: string) => {
+    await AsyncStorage.setItem(VERSION_KEY, '2');
+    await AsyncStorage.setItem('blosi:session_ids', JSON.stringify([id]));
+    await AsyncStorage.setItem(`blosi:session:${id}`, JSON.stringify(v2Session(id)));
+  };
+
+  const readSession = async (id: string) =>
+    JSON.parse((await AsyncStorage.getItem(`blosi:session:${id}`))!) as {
+      placements?: unknown;
+      settings: Record<string, unknown>;
+    };
+
+  it('drops the inert trackPlacements flag', async () => {
+    await seedV2('s1');
+    await ensureSchemaVersion();
+    const session = await readSession('s1');
+    expect('trackPlacements' in session.settings).toBe(false);
+  });
+
+  it('drops the never-populated placements array', async () => {
+    await seedV2('s1');
+    await ensureSchemaVersion();
+    const session = await readSession('s1');
+    expect('placements' in session).toBe(false);
+  });
+
+  it('defaults dev card tracking off for games played before it existed', async () => {
+    await seedV2('s1');
+    await ensureSchemaVersion();
+    const session = await readSession('s1');
+    // Those games genuinely had no dev card data — off is the only true reading.
+    expect(session.settings['catanDevCardTracking']).toBe(false);
+  });
+
+  it('preserves the settings it is not migrating', async () => {
+    await seedV2('s1');
+    await ensureSchemaVersion();
+    const session = await readSession('s1');
+    expect(session.settings['trackWinner']).toBe(true);
+    expect(session.settings['catanRobberTracking']).toBe(true);
+    expect(session.settings['recordIndividualDice']).toBe(true);
+  });
+
+  it('is idempotent', async () => {
+    await seedV2('s1');
+    await ensureSchemaVersion();
+    const first = await AsyncStorage.getItem('blosi:session:s1');
+    await ensureSchemaVersion();
+    expect(await AsyncStorage.getItem('blosi:session:s1')).toBe(first);
+  });
+
+  it('reaches a session the index lost track of', async () => {
+    await AsyncStorage.setItem(VERSION_KEY, '2');
+    await AsyncStorage.setItem('blosi:session_ids', JSON.stringify([]));
+    await AsyncStorage.setItem('blosi:session:orphan', JSON.stringify(v2Session('orphan')));
+
+    await ensureSchemaVersion();
+
+    const session = await readSession('orphan');
+    expect('trackPlacements' in session.settings).toBe(false);
+  });
+
+  it('leaves a corrupted session record alone rather than making it worse', async () => {
+    await AsyncStorage.setItem(VERSION_KEY, '2');
+    await AsyncStorage.setItem('blosi:session_ids', JSON.stringify(['bad']));
+    await AsyncStorage.setItem('blosi:session:bad', 'not json at all');
+
+    await ensureSchemaVersion();
+
+    expect(await AsyncStorage.getItem('blosi:session:bad')).toBe('not json at all');
+    expect(await AsyncStorage.getItem(VERSION_KEY)).toBe(String(SCHEMA_VERSION));
+  });
+
+  it('runs both migrations for storage still on v1', async () => {
+    await AsyncStorage.setItem(VERSION_KEY, '1');
+    await AsyncStorage.setItem(LAYOUTS_KEY, JSON.stringify([v1Layout('a', 'Board')]));
+    await AsyncStorage.setItem('blosi:session_ids', JSON.stringify(['s1']));
+    await AsyncStorage.setItem('blosi:session:s1', JSON.stringify(v2Session('s1')));
+
+    await ensureSchemaVersion();
+
+    const layouts = await loadBoardLayouts();
+    expect(layouts[0]!.ports).toHaveLength(PORT_COUNT);
+    const session = await readSession('s1');
+    expect('trackPlacements' in session.settings).toBe(false);
+    expect(await AsyncStorage.getItem(VERSION_KEY)).toBe(String(SCHEMA_VERSION));
   });
 });
 

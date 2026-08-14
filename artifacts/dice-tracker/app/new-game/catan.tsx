@@ -7,7 +7,7 @@
  * Flow:
  *   1. Show disclaimer (top of screen)
  *   2. Player count + names + colors (3–6 players)
- *   3. Options: auto-advance, winner tracking, placement tracking, robber tracking
+ *   3. Options: auto-advance, winner tracking, dev card tracking, robber tracking
  *   4. Two CTA buttons: Quick Setup / Detailed Setup
  *      → createSession() then navigate to appropriate exposure screen
  */
@@ -108,7 +108,7 @@ export default function CatanGameSetupScreen() {
   const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>(defaultConfigs);
   const [autoAdvance, setAutoAdvance] = useState(() => settings.defaultAutoAdvance);
   const [trackWinner, setTrackWinner] = useState(true);
-  const [trackPlacements, setTrackPlacements] = useState(false);
+  const [devCardTracking, setDevCardTracking] = useState(false);
   const [robberTracking, setRobberTracking] = useState(true);
   const [isStarting, setIsStarting] = useState(false);
 
@@ -122,7 +122,7 @@ export default function CatanGameSetupScreen() {
       setPlayerCount(pc);
       setAutoAdvance(prefill.autoAdvancePlayer);
       if (prefill.settings.trackWinner !== undefined) setTrackWinner(prefill.settings.trackWinner);
-      if (prefill.settings.trackPlacements !== undefined) setTrackPlacements(prefill.settings.trackPlacements);
+      if (prefill.settings.catanDevCardTracking !== undefined) setDevCardTracking(prefill.settings.catanDevCardTracking);
       if (prefill.settings.catanRobberTracking !== undefined) setRobberTracking(prefill.settings.catanRobberTracking);
       setPlayerConfigs(prev => {
         const next = [...prev];
@@ -184,11 +184,10 @@ export default function CatanGameSetupScreen() {
         startedAt: new Date().toISOString(),
         status: 'active',
         winnerPlayerId: undefined,
-        placements: [],
         settings: {
           recordIndividualDice: true,
           trackWinner,
-          trackPlacements,
+          catanDevCardTracking: devCardTracking,
           catanRobberTracking: robberTracking,
           catanResourceTracking: dest === 'detailed',
         },
@@ -288,10 +287,10 @@ export default function CatanGameSetupScreen() {
             />
             <OptionDivider colors={colors} />
             <OptionRow
-              title="Track placements"
-              desc="Record 2nd, 3rd place finishers too"
-              value={trackPlacements}
-              onChange={v => { haptic(); setTrackPlacements(v); }}
+              title="Track development cards"
+              desc="Log each card drawn to measure deck luck"
+              value={devCardTracking}
+              onChange={v => { haptic(); setDevCardTracking(v); }}
               colors={colors}
             />
             <OptionDivider colors={colors} />
