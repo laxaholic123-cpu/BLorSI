@@ -221,6 +221,44 @@ describe('computeDevCardStats', () => {
     );
   });
 
+  it('gives the same answer regardless of the order cards were drawn in', () => {
+    // This is why entry can wait until the game is over. Dealing without
+    // replacement is exchangeable: given how many cards each player drew, the
+    // joint distribution of their hands does not depend on who drew when. If
+    // this ever stopped holding, end-of-game entry would be losing information.
+    const interleaved = [
+      draw('alice', 'knight'),
+      draw('bob', 'victoryPoint'),
+      draw('alice', 'victoryPoint'),
+      draw('bob', 'knight'),
+      draw('alice', 'knight'),
+      draw('bob', 'monopoly'),
+    ];
+    // Same per-player counts, but grouped by player the way end-of-game entry
+    // rebuilds them.
+    seq = 0;
+    const grouped = [
+      draw('alice', 'knight'),
+      draw('alice', 'knight'),
+      draw('alice', 'victoryPoint'),
+      draw('bob', 'knight'),
+      draw('bob', 'victoryPoint'),
+      draw('bob', 'monopoly'),
+    ];
+
+    const opts = { simulate: true, iterations: 3000, seed: 42 } as const;
+    const a = computeDevCardStats(players, interleaved, opts);
+    const b = computeDevCardStats(players, grouped, opts);
+
+    for (const playerId of ['alice', 'bob']) {
+      const fromA = a.playerStats.find(p => p.playerId === playerId)!;
+      const fromB = b.playerStats.find(p => p.playerId === playerId)!;
+      expect(fromA.counts).toEqual(fromB.counts);
+      expect(fromA.victoryPointPercentile).toBe(fromB.victoryPointPercentile);
+      expect(fromA.knightPercentile).toBe(fromB.knightPercentile);
+    }
+  });
+
   it('surfaces deck problems alongside the stats', () => {
     const events = Array.from({ length: 6 }, () => draw('alice', 'victoryPoint'));
     const stats = computeDevCardStats(players, events);

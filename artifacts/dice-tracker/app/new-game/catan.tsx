@@ -288,7 +288,7 @@ export default function CatanGameSetupScreen() {
             <OptionDivider colors={colors} />
             <OptionRow
               title="Track development cards"
-              desc="Log each card drawn to measure deck luck"
+              desc="Count everyone's cards after the game to measure deck luck"
               value={devCardTracking}
               onChange={v => { haptic(); setDevCardTracking(v); }}
               colors={colors}

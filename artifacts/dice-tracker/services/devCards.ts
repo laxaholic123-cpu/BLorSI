@@ -218,13 +218,24 @@ export function computeDevCardStats(
 
   const counts = players.map(p => countsForPlayer(p.id, events));
 
-  // Draws by players not in this session cannot be simulated, so they are left
-  // out of the deal pattern rather than silently shifting everyone else's odds.
+  // The deal pattern is derived from per-player COUNTS, not from the order the
+  // draws were recorded in.
+  //
+  // Dealing without replacement is exchangeable: given how many cards each
+  // player took, the joint distribution of their hands is the same whoever drew
+  // when. Building the pattern from counts makes the code match that fact
+  // exactly rather than approximately — two recordings with the same counts
+  // return bit-identical percentiles instead of differing by simulation noise.
+  // It is also what lets cards be entered after the game, when the order is no
+  // longer known and never mattered.
+  //
+  // Draws by players not in this session are excluded, rather than silently
+  // shifting everyone else's odds.
   const drawOrder: number[] = [];
-  for (const draw of draws) {
-    const idx = playerIndex.get(draw.playerId);
-    if (idx !== undefined) drawOrder.push(idx);
-  }
+  players.forEach((player, index) => {
+    if (!playerIndex.has(player.id)) return;
+    for (let i = 0; i < counts[index]!.total; i++) drawOrder.push(index);
+  });
 
   let vpPercentiles: number[] | undefined;
   let knightPercentiles: number[] | undefined;

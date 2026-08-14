@@ -649,6 +649,30 @@ export default function ResultsScreen() {
               </>
             )}
 
+            {/* Prompt to enter dev cards — only now the game is over, so nobody's
+                hand was ever displayed while it mattered. */}
+            {activeSession.settings.catanDevCardTracking && (!devCardStats || devCardStats.totalDraws === 0) && (
+              <>
+                <SectionLabel text="DEVELOPMENT CARDS" colors={colors} />
+                <TouchableOpacity
+                  style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, flexDirection: 'row', alignItems: 'center', gap: 10 }]}
+                  onPress={() => router.push('/catan-dev-cards' as any)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="albums-outline" size={20} color={colors.primary} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.freqText, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
+                      Count everyone&apos;s cards
+                    </Text>
+                    <Text style={[styles.verdictNote, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                      Knights are face up and victory points are revealed — takes a moment, and shows who the deck favoured.
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={colors.mutedForeground} />
+                </TouchableOpacity>
+              </>
+            )}
+
             {/* Development card deck luck */}
             {devCardStats && devCardStats.totalDraws > 0 && (
               <>
