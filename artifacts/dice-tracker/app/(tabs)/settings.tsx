@@ -83,11 +83,17 @@ export default function SettingsScreen() {
       const asset = result.assets[0]!;
       const response = await fetch(asset.uri);
       const json = await response.text();
-      const { imported, error } = await importAllData(json);
+      const { imported, skipped, error } = await importAllData(json);
       if (error) {
         Alert.alert('Import failed', error);
       } else {
-        Alert.alert('Import complete', `${imported} session${imported !== 1 ? 's' : ''} imported successfully.`);
+        const skippedNote = skipped > 0
+          ? `\n\n${skipped} session${skipped !== 1 ? 's were' : ' was'} already on this device and left unchanged.`
+          : '';
+        Alert.alert(
+          'Import complete',
+          `${imported} session${imported !== 1 ? 's' : ''} imported successfully.${skippedNote}`,
+        );
       }
     } catch (err) {
       Alert.alert('Import failed', `Could not read the file: ${String(err)}`);

@@ -103,20 +103,26 @@ export default function CatanExposureQuickScreen() {
     });
   };
 
-  const toggleNumber = (num: number) => {
+  /**
+   * Tap adds one hex bearing this number. Two of the player's three hexes can
+   * legitimately carry the same token — a settlement wedged between two 9s
+   * produces twice on a 9 — so numbers are stored as a multiset, not a set.
+   * Long-press clears every instance of the number (see clearNumber).
+   */
+  const addNumber = (num: number) => {
     haptic();
     updateCurrentSettlement(s => {
-      const existing = s.numbers.indexOf(num);
-      if (existing !== -1) {
-        // Remove it
-        return { ...s, numbers: s.numbers.filter(n => n !== num) };
-      }
       if (s.numbers.length >= 3) {
         haptic(Haptics.ImpactFeedbackStyle.Heavy);
-        return s; // max 3 numbers per settlement (intersects at most 3 hexes)
+        return s; // a settlement intersects at most 3 hexes
       }
       return { ...s, numbers: [...s.numbers, num] };
     });
+  };
+
+  const clearNumber = (num: number) => {
+    haptic(Haptics.ImpactFeedbackStyle.Medium);
+    updateCurrentSettlement(s => ({ ...s, numbers: s.numbers.filter(n => n !== num) }));
   };
 
   const handleAddSettlement = () => {
@@ -248,7 +254,8 @@ export default function CatanExposureQuickScreen() {
               {currentPlayer?.displayName ?? `Player ${currentPlayerIdx + 1}`}
             </Text>
             <Text style={[styles.playerSub, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-              Tap the numbers each settlement is adjacent to (up to 3 per settlement)
+              Tap the numbers each settlement is adjacent to (up to 3 per settlement).
+              Tap twice if it touches two hexes with the same number; long-press to clear one.
             </Text>
           </View>
         </View>
@@ -261,8 +268,10 @@ export default function CatanExposureQuickScreen() {
                 Settlement {idx + 1}
               </Text>
               <View style={styles.numChips}>
-                {s.numbers.map(n => (
-                  <View key={n} style={[styles.numChip, { backgroundColor: colors.primary + '22' }]}>
+                {s.numbers.map((n, i) => (
+                  // Keyed by position, not value — the same number can legitimately
+                  // appear twice when a settlement touches two hexes with one token.
+                  <View key={`${n}-${i}`} style={[styles.numChip, { backgroundColor: colors.primary + '22' }]}>
                     <Text style={[styles.numChipText, { color: colors.primary, fontFamily: 'Inter_700Bold' }]}>{n}</Text>
                     <Text style={[styles.numChipPips, { color: colors.primary, fontFamily: 'Inter_400Regular' }]}>{'·'.repeat(PIPS[n] ?? 1)}</Text>
                   </View>
@@ -287,7 +296,8 @@ export default function CatanExposureQuickScreen() {
           {/* Number grid */}
           <View style={styles.numGrid}>
             {CATAN_NUMBERS.map(num => {
-              const selected = activeSettlement.numbers.includes(num);
+              const count = activeSettlement.numbers.filter(n => n === num).length;
+              const selected = count > 0;
               return (
                 <TouchableOpacity
                   key={num}
@@ -298,9 +308,17 @@ export default function CatanExposureQuickScreen() {
                       borderColor: selected ? colors.primary : colors.border,
                     },
                   ]}
-                  onPress={() => toggleNumber(num)}
+                  onPress={() => addNumber(num)}
+                  onLongPress={() => clearNumber(num)}
                   activeOpacity={0.8}
                 >
+                  {count > 1 && (
+                    <View style={[styles.numBtnCountBadge, { backgroundColor: colors.primaryForeground }]}>
+                      <Text style={[styles.numBtnCountText, { color: colors.primary, fontFamily: 'Inter_700Bold' }]}>
+                        ×{count}
+                      </Text>
+                    </View>
+                  )}
                   <Text style={[styles.numBtnValue, { color: selected ? colors.primaryForeground : colors.foreground, fontFamily: 'Inter_700Bold' }]}>
                     {num}
                   </Text>
@@ -444,9 +462,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 2,
+    position: 'relative',
   },
   numBtnValue: { fontSize: 20 },
   numBtnPips: { fontSize: 10, letterSpacing: 1 },
+  numBtnCountBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    minWidth: 20,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  numBtnCountText: { fontSize: 11 },
 
   addBtn: {
     flexDirection: 'row',

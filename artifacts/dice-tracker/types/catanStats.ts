@@ -48,6 +48,20 @@ export interface CatanPlayerProductionStats {
   initialBuildingCount: number;
   /** City count at end of game (most recent state) */
   finalCityCount: number;
+  /**
+   * Where this player's actual production lands among simulated fair games with
+   * the same placements and robber timeline, 0–100. Low = genuinely unlucky.
+   *
+   * This is the honest measure of luck; productionLuckPct is descriptive only,
+   * because the same percentage means very different things at 40 rolls and 150.
+   * Undefined when the caller did not request simulation (career aggregation and
+   * live in-game views skip it for speed).
+   */
+  productionLuckPercentile?: number;
+  /** Mean production across simulated fair games. */
+  productionSimMean?: number;
+  /** Standard deviation of production across simulated fair games. */
+  productionSimStdDev?: number;
 }
 
 // ─── Verdict dimensions ───────────────────────────────────────────────────────
@@ -79,6 +93,12 @@ export interface CatanVerdictFindings {
   finalOutcome: CatanFinalOutcome;
   headline: string;
   details: string[];
+  /**
+   * Per-player production percentile, when simulation ran. Surfaced so the
+   * results and share screens can print the real number next to the verdict
+   * label rather than only the label.
+   */
+  luckPercentile?: Record<string, number>; // playerId → 0-100
 }
 
 // ─── Full Catan stats ─────────────────────────────────────────────────────────

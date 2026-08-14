@@ -30,6 +30,7 @@ import { useGame } from '@/context/GameContext';
 import { useSettings } from '@/context/SettingsContext';
 import { computeAllStats, formatDuration } from '@/services/stats';
 import { computeCatanGameStats } from '@/services/catanStats';
+import { describePercentile } from '@/services/luckEngine';
 import type { CatanGameStats } from '@/types/catanStats';
 import { selectBestShareCard, CARD_METADATA } from '@/services/shareCard';
 import { RollFrequencyChart } from '@/components/RollFrequencyChart';
@@ -51,15 +52,17 @@ export default function ResultsScreen() {
     (activeSession?.players.length ?? 0) <= 1,
   );
 
+  // simulate: true — this is the verdict screen, so it gets the real
+  // percentile-based statistics rather than the cheap threshold fallback.
   const stats = useMemo(
-    () => (activeSession ? computeAllStats(activeSession, rollEvents) : null),
+    () => (activeSession ? computeAllStats(activeSession, rollEvents, { simulate: true }) : null),
     [activeSession, rollEvents],
   );
 
   const catanStats = useMemo<CatanGameStats | null>(
     () =>
       activeSession?.gameType === 'catan'
-        ? computeCatanGameStats(activeSession, rollEvents, exposureEvents)
+        ? computeCatanGameStats(activeSession, rollEvents, exposureEvents, { simulate: true })
         : null,
     [activeSession, rollEvents, exposureEvents],
   );
@@ -531,13 +534,33 @@ export default function ResultsScreen() {
                 <Text style={[{ flex: 1 }, styles.colHdr, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>PLAYER</Text>
                 <Text style={[{ width: 52, textAlign: 'right' }, styles.colHdr, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>EXP</Text>
                 <Text style={[{ width: 52, textAlign: 'right' }, styles.colHdr, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>GOT</Text>
-                <Text style={[{ width: 44, textAlign: 'right' }, styles.colHdr, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>±%</Text>
+                <Text style={[{ width: 58, textAlign: 'right' }, styles.colHdr, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>LUCK</Text>
               </View>
               {catanStats.playerStats.map((ps, idx) => {
                 const player = activeSession.players.find(p => p.id === ps.playerId);
                 const isLast = idx === catanStats.playerStats.length - 1;
                 const luckPct = Math.round(ps.productionLuckPct);
-                const luckColor = luckPct > 10 ? colors.primary : luckPct < -10 ? colors.destructive : colors.mutedForeground;
+                // Prefer the simulated percentile over the raw ±%: the same
+                // percentage means very different things at 40 rolls and 150,
+                // whereas a percentile is comparable across any game length.
+                const pctile = ps.productionLuckPercentile;
+                const hasPctile = typeof pctile === 'number';
+                const luckLabel = hasPctile
+                  ? `${Math.round(pctile)}%ile`
+                  : luckPct === 0
+                    ? '—'
+                    : `${luckPct > 0 ? '+' : ''}${luckPct}%`;
+                const luckColor = hasPctile
+                  ? pctile > 90
+                    ? colors.primary
+                    : pctile < 10
+                      ? colors.destructive
+                      : colors.mutedForeground
+                  : luckPct > 10
+                    ? colors.primary
+                    : luckPct < -10
+                      ? colors.destructive
+                      : colors.mutedForeground;
                 return (
                   <View
                     key={ps.playerId}
@@ -559,8 +582,8 @@ export default function ResultsScreen() {
                     <Text style={[{ width: 52, textAlign: 'right' }, styles.freqText, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
                       {ps.totalActualProduction.toFixed(1)}
                     </Text>
-                    <Text style={[{ width: 44, textAlign: 'right' }, styles.freqText, { color: luckColor, fontFamily: 'Inter_500Medium' }]}>
-                      {luckPct === 0 ? '—' : `${luckPct > 0 ? '+' : ''}${luckPct}%`}
+                    <Text style={[{ width: 58, textAlign: 'right' }, styles.freqText, { color: luckColor, fontFamily: 'Inter_500Medium' }]}>
+                      {luckLabel}
                     </Text>
                   </View>
                 );
@@ -622,6 +645,18 @@ export default function ResultsScreen() {
                       {detail}
                     </Text>
                   ))}
+                  {/* The actual number behind the label. A percentile is what
+                      players can compare between games and argue about. */}
+                  {catanStats.playerStats
+                    .filter(ps => typeof ps.productionLuckPercentile === 'number')
+                    .map(ps => (
+                      <Text
+                        key={ps.playerId}
+                        style={[styles.verdictNote, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginTop: 4 }]}
+                      >
+                        {ps.displayName}: {describePercentile(ps.productionLuckPercentile!)}
+                      </Text>
+                    ))}
                   <Text style={[styles.verdictNote, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginTop: 8 }]}>
                     This is an independent companion tool and is not affiliated with or endorsed by the publishers or owners of Catan.
                   </Text>

@@ -28,25 +28,66 @@ import type {
 const PLACEMENT_WEAK_THRESHOLD = 0.40;
 const PLACEMENT_STRONG_THRESHOLD = 0.70;
 
-/** Significant production luck deviation threshold (as fraction of expected) */
+/**
+ * Fallback deviation threshold, used only when no simulation was run.
+ *
+ * A flat percentage is a poor test — 15% is about 1.1σ over a 40-roll game but
+ * 1.8σ over a 100-roll one, so it fires most readily on the shortest games,
+ * where the evidence is weakest. It survives purely as a graceful degradation
+ * path for callers that skip the Monte Carlo pass (career aggregation, live
+ * in-game panels). Anything user-facing should pass simulated stats.
+ */
 const LUCK_THRESHOLD = 0.15;
 
-/** Seven frequency thresholds (as fraction of total rolls) */
-const SEVEN_LOW_THRESHOLD = 0.11;  // < 11% → low
-const SEVEN_HIGH_THRESHOLD = 0.22; // > 22% → high
+/** Percentile bands for simulated production luck. */
+const LUCK_PERCENTILE_LOW = 10;
+const LUCK_PERCENTILE_HIGH = 90;
+
+/**
+ * Seven-frequency band, expressed in standard errors rather than fixed rates.
+ *
+ * The old fixed 11%/22% band had the same defect as the luck threshold: it sat
+ * at ~1.15σ over 60 rolls (flagging a quarter of all games) but ~1.8σ over 150.
+ * Scaling by the binomial standard error makes the false-positive rate constant
+ * at roughly 5% per tail regardless of game length.
+ */
+const SEVEN_SIGMA_THRESHOLD = 1.64;
+const SEVEN_PROBABILITY = 6 / 36;
 
 // ─── Dimension classifiers ────────────────────────────────────────────────────
 
 export function classifySevenFrequency(sevenCount: number, totalRolls: number): SevenFrequency {
   if (totalRolls === 0) return 'expected';
-  const rate = sevenCount / totalRolls;
-  if (rate < SEVEN_LOW_THRESHOLD) return 'low';
-  if (rate > SEVEN_HIGH_THRESHOLD) return 'high';
+  const p = SEVEN_PROBABILITY;
+  const standardError = Math.sqrt((p * (1 - p)) / totalRolls);
+  if (standardError === 0) return 'expected';
+  const z = (sevenCount / totalRolls - p) / standardError;
+  if (z < -SEVEN_SIGMA_THRESHOLD) return 'low';
+  if (z > SEVEN_SIGMA_THRESHOLD) return 'high';
   return 'expected';
 }
 
+/**
+ * Table-level dice luck: did the dice favour the numbers players were actually
+ * on, across everyone? Uses the mean of the simulated percentiles when they are
+ * available, because every player saw the same rolls and their outcomes are
+ * strongly correlated — averaging percentiles keeps that shared shock visible
+ * instead of cancelling it out.
+ */
 export function classifyRollLuck(playerStats: CatanPlayerProductionStats[]): CatanRollLuck {
   if (playerStats.length === 0) return 'neutral';
+
+  const percentiles = playerStats
+    .map(p => p.productionLuckPercentile)
+    .filter((p): p is number => typeof p === 'number');
+
+  if (percentiles.length > 0) {
+    const mean = percentiles.reduce((s, p) => s + p, 0) / percentiles.length;
+    if (mean < LUCK_PERCENTILE_LOW) return 'unlucky';
+    if (mean > LUCK_PERCENTILE_HIGH) return 'lucky';
+    return 'neutral';
+  }
+
   const totalActual = playerStats.reduce((s, p) => s + p.totalActualProduction, 0);
   const totalExpected = playerStats.reduce((s, p) => s + p.totalExpectedProduction, 0);
   if (totalExpected <= 0) return 'neutral';
@@ -58,6 +99,14 @@ export function classifyRollLuck(playerStats: CatanPlayerProductionStats[]): Cat
 
 export function classifyExposureLuck(stats: CatanPlayerProductionStats): CatanExposureLuck {
   if (stats.totalExpectedProduction <= 0) return 'average';
+
+  const percentile = stats.productionLuckPercentile;
+  if (typeof percentile === 'number') {
+    if (percentile < LUCK_PERCENTILE_LOW) return 'poor';
+    if (percentile > LUCK_PERCENTILE_HIGH) return 'strong';
+    return 'average';
+  }
+
   const pct = stats.productionLuckPct;
   if (pct < -15) return 'poor';
   if (pct > 15) return 'strong';
@@ -183,6 +232,16 @@ export function classifyCatanVerdict(
 
   const copy = OUTCOME_COPY[finalOutcome];
 
+  // Surface the raw percentiles so the results and share screens can print the
+  // actual number beside the label. "3rd percentile — unluckier than 97% of
+  // simulated games" is both more honest and more shareable than "poor".
+  const luckPercentile: Record<string, number> = {};
+  for (const stats of playerStats) {
+    if (typeof stats.productionLuckPercentile === 'number') {
+      luckPercentile[stats.playerId] = stats.productionLuckPercentile;
+    }
+  }
+
   return {
     sevenFrequency,
     rollLuck,
@@ -191,5 +250,6 @@ export function classifyCatanVerdict(
     finalOutcome,
     headline: copy.headline,
     details: copy.details,
+    ...(Object.keys(luckPercentile).length > 0 ? { luckPercentile } : {}),
   };
 }

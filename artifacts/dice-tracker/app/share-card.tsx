@@ -135,15 +135,17 @@ export default function ShareCardScreen() {
     })();
   }, [id]);
 
+  // simulate: true — the percentile is the most shareable thing on the card
+  // ("3rd percentile" beats "poor"), and it must agree with the results screen.
   const stats = useMemo(
-    () => (session ? computeAllStats(session, rollEvents) : null),
+    () => (session ? computeAllStats(session, rollEvents, { simulate: true }) : null),
     [session, rollEvents],
   );
 
   const catanStats = useMemo<CatanGameStats | null>(
     () =>
       session?.gameType === 'catan' && exposureEvents.length > 0
-        ? computeCatanGameStats(session, rollEvents, exposureEvents)
+        ? computeCatanGameStats(session, rollEvents, exposureEvents, { simulate: true })
         : null,
     [session, rollEvents, exposureEvents],
   );

@@ -83,15 +83,17 @@ export default function SessionDetailScreen() {
     void load();
   }, [id]);
 
+  // simulate: true — a saved game's verdict must match the one shown on the
+  // results screen when it was played, so both take the same statistical path.
   const stats = useMemo(
-    () => (session ? computeAllStats(session, rollEvents) : null),
+    () => (session ? computeAllStats(session, rollEvents, { simulate: true }) : null),
     [session, rollEvents],
   );
 
   const catanStats = useMemo<CatanGameStats | null>(
     () =>
       session?.gameType === 'catan' && exposureEvents.length > 0
-        ? computeCatanGameStats(session, rollEvents, exposureEvents)
+        ? computeCatanGameStats(session, rollEvents, exposureEvents, { simulate: true })
         : null,
     [session, rollEvents, exposureEvents],
   );

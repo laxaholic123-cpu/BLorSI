@@ -16,14 +16,39 @@ import type { VerdictKey } from '@/types/stats';
  * Returns a VerdictKey given the essential statistics.
  * No UI imports; no GameStats type to avoid circular dependencies.
  */
+/**
+ * Minimum rolls before a shape anomaly is worth calling out. Below this the
+ * chi-square percentile is too jumpy to accuse anyone's dice of anything.
+ */
+const RIGGED_MIN_ROLLS = 60;
+
+/**
+ * Percentile of the goodness-of-fit statistic above which the distribution's
+ * shape is called out. Deliberately severe: at 99 this fires on 1% of fair
+ * sessions, so when it does appear it still means something.
+ */
+const RIGGED_FIT_PERCENTILE = 99;
+
 export const classifyVerdict = (
   totalRolls: number,
   meanZScore: number | null,
   isSmallSample: boolean,
   isMultiplayer: boolean,
+  fitPercentile?: number,
 ): VerdictKey => {
   if (isSmallSample || totalRolls < 30) return 'too_early';
   if (meanZScore === null) return 'too_early';
+
+  // Checked before the mean, because a distribution can be badly misshapen
+  // while its average sits exactly on target — which is the case the mean-based
+  // branches below are structurally blind to.
+  if (
+    typeof fitPercentile === 'number' &&
+    totalRolls >= RIGGED_MIN_ROLLS &&
+    fitPercentile >= RIGGED_FIT_PERCENTILE
+  ) {
+    return 'dice_look_rigged';
+  }
 
   const z = meanZScore;
 
@@ -93,6 +118,11 @@ const COPY: Record<VerdictKey, VerdictCopy> = {
     headline: 'The evidence is mixed.',
     explanation:
       "Some values came up more than expected, others less. The dice lawyer calls this 'within normal variation.' The truth remains elusive.",
+  },
+  dice_look_rigged: {
+    headline: 'These dice are behaving strangely.',
+    explanation:
+      'The average is one thing — the shape is another. Some values came up far more often than they should have, and others barely showed up at all. Fewer than 1 in 100 fair sessions look like this. Check the dice.',
   },
 };
 

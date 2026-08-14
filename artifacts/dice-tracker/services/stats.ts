@@ -14,6 +14,7 @@ import type {
   StreakInfo,
 } from '@/types/stats';
 import { classifyVerdict, getVerdictCopy } from '@/services/verdict';
+import { simulateFitPercentile } from '@/services/luckEngine';
 
 // ─── Expected probability tables ─────────────────────────────────────────────
 
@@ -148,6 +149,12 @@ export const getLongestStreak = (values: number[]): StreakInfo | null => {
 /**
  * For each possible value in [min, max], find the longest run of consecutive
  * rolls that did NOT produce that value. Returns the worst offender.
+ *
+ * Only counts droughts that start after the value's first appearance — a value
+ * that has never come up yet is reported by getLeastCommon, not here.
+ * The run still open at the end of the session DOES count: "I haven't rolled an
+ * 8 since turn six" is the whole point of this statistic, and it is always the
+ * drought a player is complaining about when the game ends.
  */
 export const getLongestGap = (
   values: number[],
@@ -169,6 +176,8 @@ export const getLongestGap = (
         currentGap++;
       }
     }
+    // Flush the trailing drought — the value appeared, then never came back.
+    if (seen && currentGap > longestGap) longestGap = currentGap;
     if (seen && longestGap > 0) {
       if (!best || longestGap > best.longestGap) {
         best = { value: v, longestGap };
@@ -265,7 +274,23 @@ export const formatDuration = (seconds: number): string => {
 
 export const SMALL_SAMPLE_THRESHOLD = 30;
 
-export const computeAllStats = (session: GameSession, events: RollEvent[]): GameStats => {
+/** Controls the optional Monte Carlo goodness-of-fit pass. */
+export interface StatsOptions {
+  /**
+   * Run the goodness-of-fit simulation and populate fitPercentile. Off by
+   * default — it costs ~10k simulated sessions, which is right for a results
+   * screen but wasteful for live in-game recomputation on every roll.
+   */
+  simulate?: boolean;
+  iterations?: number;
+  seed?: number;
+}
+
+export const computeAllStats = (
+  session: GameSession,
+  events: RollEvent[],
+  options: StatsOptions = {},
+): GameStats => {
   const activeEvents = events.filter(e => !e.deletedAt);
   const values = activeEvents.map(e => e.value);
   const { diceMode: mode, minimumRoll: min, maximumRoll: max, players } = session;
@@ -301,11 +326,24 @@ export const computeAllStats = (session: GameSession, events: RollEvent[]): Game
   const isSmallSample = totalRolls < SMALL_SAMPLE_THRESHOLD;
   const durationSeconds = getDurationSeconds(session);
 
+  // Goodness of fit — catches a distribution whose shape is wrong even when its
+  // average is spot on. Opt-in because it simulates 10k sessions.
+  let fitPercentile: number | undefined;
+  if (options.simulate && totalRolls > 0) {
+    const observed = frequencies.map(f => f.count);
+    const probList = frequencies.map(f => f.probability);
+    fitPercentile = simulateFitPercentile(observed, probList, totalRolls, {
+      iterations: options.iterations,
+      seed: options.seed,
+    }).percentile;
+  }
+
   const verdict = classifyVerdict(
     totalRolls,
     meanZScore,
     isSmallSample,
     players.length > 1,
+    fitPercentile,
   );
   const { headline: verdictHeadline, explanation: verdictExplanation } =
     getVerdictCopy(verdict);
@@ -330,6 +368,7 @@ export const computeAllStats = (session: GameSession, events: RollEvent[]): Game
     durationSeconds,
     expectedMean,
     meanZScore,
+    ...(fitPercentile !== undefined ? { fitPercentile } : {}),
     verdict,
     verdictHeadline,
     verdictExplanation,

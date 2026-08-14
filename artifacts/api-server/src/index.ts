@@ -1,13 +1,10 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 
-const rawPort = process.env["PORT"];
-
-if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
-}
+// Replit always injected PORT, so the server used to refuse to start without
+// it. Off Replit that is just friction — default to 3000 and let the
+// environment override.
+const rawPort = process.env["PORT"] ?? "3000";
 
 const port = Number(rawPort);
 

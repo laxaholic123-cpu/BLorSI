@@ -11,6 +11,7 @@ import {
   clearPrefillSession,
   importAllData,
   loadPrefillSession,
+  loadRollEvents,
   loadSession,
   normalizeSession,
   saveSession,
@@ -150,13 +151,39 @@ describe('importAllData', () => {
     expect(result.imported).toBe(1);
   });
 
-  it('is idempotent — importing the same session twice replaces it, not duplicates', async () => {
+  it('leaves an already-present session alone rather than overwriting it', async () => {
+    // Import is additive. Restoring a stale backup must never roll back games
+    // played since it was taken, and the session ID is the only thing linking
+    // the two copies — so the copy already on the device wins.
     const session = makeSession();
     const payload = JSON.stringify({ sessions: [session] });
 
-    await importAllData(payload);
+    const first = await importAllData(payload);
+    expect(first).toEqual({ imported: 1, skipped: 0 });
+
+    const second = await importAllData(payload);
+    expect(second).toEqual({ imported: 0, skipped: 1 });
+  });
+
+  it('drops malformed roll events instead of trusting the backup file', async () => {
+    const session = makeSession();
+    const payload = JSON.stringify({
+      sessions: [session],
+      rollsBySession: {
+        [session.id]: [
+          { id: 'r1', sessionId: session.id, playerId: 'p1', value: 8 },
+          { id: 'r2', value: 'not-a-number' },
+          null,
+          'garbage',
+        ],
+      },
+    });
+
     const result = await importAllData(payload);
-    expect(result.imported).toBe(1); // Second import still reports 1 session processed
+    expect(result.imported).toBe(1);
+    const rolls = await loadRollEvents(session.id);
+    expect(rolls).toHaveLength(1);
+    expect(rolls[0]!.id).toBe('r1');
   });
 });
 

@@ -17,12 +17,45 @@ import { Router } from "express";
 import OpenAI from "openai";
 import { normalizeHexes } from "../utils/normalizeHexes.js";
 import { normalizePieces } from "../utils/normalizePieces.js";
+import { rateLimit } from "../middlewares/rateLimit.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
+
+/**
+ * Vision model to call.
+ *
+ * Previously hardcoded to a model only reachable through Replit's AI gateway,
+ * which made the whole feature undeployable anywhere else. Both the model and
+ * the base URL are configuration now, so the server can point at Replit's
+ * gateway, the OpenAI API directly, or any compatible proxy.
+ */
+const MODEL = process.env.BOARD_SCAN_MODEL ?? "gpt-4o";
+
+/**
+ * How long to wait on the vision model before giving up.
+ *
+ * Without this the request hangs until the client's own timeout, which is what
+ * left players stranded on the "Reading the board…" spinner with no way out.
+ */
+const REQUEST_TIMEOUT_MS = Number(process.env.BOARD_SCAN_TIMEOUT_MS ?? 45_000);
 
 const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY ?? "dummy",
+  timeout: REQUEST_TIMEOUT_MS,
+  maxRetries: 1,
+});
+
+/**
+ * Every request here costs real money at the vision provider, so the endpoint is
+ * throttled per client. Generous enough that a player correcting a bad scan
+ * several times in a row never notices; tight enough that a scripted caller
+ * cannot run up a bill.
+ */
+const scanRateLimit = rateLimit({
+  windowMs: Number(process.env.BOARD_SCAN_RATE_WINDOW_MS ?? 60_000),
+  max: Number(process.env.BOARD_SCAN_RATE_MAX ?? 10),
 });
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -75,7 +108,8 @@ Example response format:
 
 // ─── Route ────────────────────────────────────────────────────────────────────
 
-router.post("/analyze", async (req, res, next) => {
+router.post("/analyze", scanRateLimit, async (req, res, next) => {
+  const startedAt = Date.now();
   try {
     const { imageBase64, mimeType = "image/jpeg" } = req.body as {
       imageBase64?: unknown;
@@ -107,7 +141,7 @@ router.post("/analyze", async (req, res, next) => {
     // ── OpenAI call ─────────────────────────────────────────────────────────
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-5.6-luna",
+      model: MODEL,
       max_completion_tokens: 2048,
       messages: [
         {
@@ -134,7 +168,10 @@ router.post("/analyze", async (req, res, next) => {
       const cleaned = raw.replace(/```json\n?|```/g, "").trim();
       parsed = JSON.parse(cleaned);
     } catch {
-      res.status(422).json({ error: "AI returned invalid JSON", raw });
+      // The raw model output goes to the log, not the response — it is
+      // unbounded, attacker-influenceable text and the client has no use for it.
+      logger.warn({ model: MODEL, rawPreview: raw.slice(0, 500) }, "Board scan returned invalid JSON");
+      res.status(422).json({ error: "The board scan could not be read. Try another photo." });
       return;
     }
 
@@ -153,8 +190,30 @@ router.post("/analyze", async (req, res, next) => {
 
     const hexes = normalizeHexes(rawHexes);
     const pieces = normalizePieces(rawPieces);
+
+    // Usage and latency per scan, so cost is something you can watch on a
+    // dashboard rather than discover on an invoice.
+    logger.info(
+      {
+        model: MODEL,
+        durationMs: Date.now() - startedAt,
+        promptTokens: completion.usage?.prompt_tokens,
+        completionTokens: completion.usage?.completion_tokens,
+        totalTokens: completion.usage?.total_tokens,
+        piecesDetected: pieces.length,
+      },
+      "Board scan complete",
+    );
+
     res.json({ hexes, pieces });
   } catch (err) {
+    // A timeout or upstream outage is an expected failure mode here, not a bug.
+    // Translate it into something the client can show instead of a bare 500.
+    if (err instanceof OpenAI.APIConnectionTimeoutError) {
+      logger.warn({ model: MODEL, durationMs: Date.now() - startedAt }, "Board scan timed out");
+      res.status(504).json({ error: "The board scan took too long. Try again, or enter the board by hand." });
+      return;
+    }
     next(err);
   }
 });

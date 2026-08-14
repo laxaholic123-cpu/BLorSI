@@ -6,6 +6,20 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 
+// req.ip must reflect the real client, not the proxy, or the board-scan rate
+// limiter would see every request as coming from a single address.
+if (process.env.TRUST_PROXY) {
+  app.set("trust proxy", process.env.TRUST_PROXY);
+}
+
+// Fail loudly at boot rather than on the first player's scan attempt.
+if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+  logger.warn(
+    "AI_INTEGRATIONS_OPENAI_API_KEY is not set — POST /api/board-scan/analyze will fail. " +
+      "Set it, along with AI_INTEGRATIONS_OPENAI_BASE_URL and BOARD_SCAN_MODEL if not using the OpenAI default.",
+  );
+}
+
 app.use(
   pinoHttp({
     logger,
@@ -25,10 +39,17 @@ app.use(
     },
   }),
 );
-app.use(cors());
+// The native app sends no Origin header, so restricting origins costs it
+// nothing — it only stops arbitrary websites from spending your AI budget from
+// a visitor's browser. Unset means allow all, which is the right default for
+// local development and for the Expo web build served from another port.
+const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",").map(o => o.trim()).filter(Boolean);
+app.use(cors(allowedOrigins?.length ? { origin: allowedOrigins } : undefined));
+
 // 20 MB limit to accommodate base64-encoded board photos
 app.use(express.json({ limit: "20mb" }));
-app.use(express.urlencoded({ extended: true, limit: "20mb" }));
+// No route consumes form encoding, and accepting 20 MB of it is free surface area.
+app.use(express.urlencoded({ extended: true, limit: "100kb" }));
 
 app.use("/api", router);
 

@@ -346,14 +346,24 @@ describe('classifySevenFrequency', () => {
     expect(classifySevenFrequency(6, 36)).toBe('expected');
   });
 
-  it('low when fewer than 11% sevens', () => {
-    // 3 sevens in 36 rolls = 8.3%
-    expect(classifySevenFrequency(3, 36)).toBe('low');
+  it('stays quiet at a rate that is only ~1.3σ in a short game', () => {
+    // 9 sevens in 36 rolls is 25% — eye-catching, but with a standard error of
+    // 6.2pp it is 1.34σ, which fair dice produce about one game in ten. The
+    // previous fixed 22% band called this "high" and therefore fired on a
+    // quarter of all short games.
+    expect(classifySevenFrequency(9, 36)).toBe('expected');
+    expect(classifySevenFrequency(3, 36)).toBe('expected');
   });
 
-  it('high when more than 22% sevens', () => {
-    // 9 sevens in 36 rolls = 25%
-    expect(classifySevenFrequency(9, 36)).toBe('high');
+  it('flags the SAME rate once there are enough rolls to mean something', () => {
+    // 25% sevens sustained over 180 rolls is 2.9σ — now genuinely unusual.
+    expect(classifySevenFrequency(45, 180)).toBe('high');
+    // 8.3% sevens over 180 rolls is likewise a real drought.
+    expect(classifySevenFrequency(15, 180)).toBe('low');
+  });
+
+  it('still reports expected for an ordinary long game', () => {
+    expect(classifySevenFrequency(30, 180)).toBe('expected');
   });
 
   it('returns expected for empty game', () => {
@@ -519,8 +529,9 @@ describe('classifyCatanVerdict', () => {
   });
 
   it('sevenFrequency reflects actual seven count', () => {
-    const findings = classifyCatanVerdict([], 3, 36, false);
-    expect(findings.sevenFrequency).toBe('low'); // 3/36 = 8.3%
+    // 15/180 = 8.3% sevens, sustained long enough to clear the noise floor.
+    const findings = classifyCatanVerdict([], 15, 180, false);
+    expect(findings.sevenFrequency).toBe('low');
   });
 });
 

@@ -447,9 +447,16 @@ describe('computeCareerStats — headToHead', () => {
       makeSession('s5', [PLAYER_A, PLAYER_C]),
     ];
 
+    // Producing numbers only — 7 moves the robber and yields nothing, so an
+    // exposure on 7 gives a player zero expected production and drops them out
+    // of the head-to-head pairing entirely.
+    const PRODUCING_NUMBERS = [6, 8, 9, 10];
+
     const makeData = (sid: string, players: typeof sessions[0]['players']) => {
       const rolls = [makeRoll(`${sid}r1`, sid, players[0]!.id, 6, 1)];
-      const exposures = players.map((p, i) => makeExposure(`${sid}e${i}`, sid, p.id, 6 + i));
+      const exposures = players.map((p, i) =>
+        makeExposure(`${sid}e${i}`, sid, p.id, PRODUCING_NUMBERS[i % PRODUCING_NUMBERS.length]!),
+      );
       return { rolls, exposures };
     };
 

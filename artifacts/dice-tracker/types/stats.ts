@@ -15,7 +15,13 @@ export type VerdictKey =
   | 'skill_issue'
   | 'bad_luck_and_skill_issue'
   | 'cleared_of_wrongdoing'
-  | 'mixed_evidence';
+  | 'mixed_evidence'
+  /**
+   * The distribution's SHAPE is wrong, regardless of its average. A D20 that
+   * alternates 1 and 20 forever averages exactly 10.5 — the mean z-score sees
+   * nothing, the goodness-of-fit test sees everything.
+   */
+  | 'dice_look_rigged';
 
 // ─── Frequency table ─────────────────────────────────────────────────────────
 
@@ -96,6 +102,13 @@ export interface GameStats {
   expectedMean: number;
   /** z-score of actual mean vs theoretical; null when n < 2 */
   meanZScore: number | null;
+  /**
+   * Percentile of the observed chi-square goodness-of-fit statistic among
+   * simulated fair sessions of the same length, 0–100. HIGH means the shape of
+   * the distribution is unusual — something the mean alone cannot detect.
+   * Undefined when the caller skipped the simulation pass.
+   */
+  fitPercentile?: number;
   verdict: VerdictKey;
   verdictHeadline: string;
   verdictExplanation: string;

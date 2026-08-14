@@ -133,7 +133,9 @@ export const saveSession = async (session: GameSession): Promise<void> => {
   // NOTE: Intentionally re-throws — callers that depend on persistence correctness
   // (updateSession in GameContext) must be able to detect and handle write failures.
   await AsyncStorage.setItem(KEYS.SESSION(session.id), JSON.stringify(session));
-  // Maintain an ordered index of all session IDs (best-effort, non-fatal)
+  // Maintain an ordered index of all session IDs (best-effort, non-fatal).
+  // If this write fails the session is still recoverable — loadAllSessions()
+  // rebuilds the index by scanning blosi:session:* keys.
   try {
     const raw = await AsyncStorage.getItem(KEYS.SESSION_IDS);
     const ids: string[] = raw ? (JSON.parse(raw) as string[]) : [];
@@ -143,6 +145,21 @@ export const saveSession = async (session: GameSession): Promise<void> => {
     }
   } catch {
     // Index maintenance is non-fatal — the session record itself was saved above
+  }
+};
+
+/**
+ * Session IDs present on disk, discovered by scanning keys rather than trusting
+ * the index. Used to heal an index that lost entries to a failed write — without
+ * this, a single failed index write hides a session from history permanently.
+ */
+const scanSessionIdsFromKeys = async (): Promise<string[]> => {
+  try {
+    const allKeys = await AsyncStorage.getAllKeys();
+    const prefix = 'blosi:session:';
+    return allKeys.filter(k => k.startsWith(prefix)).map(k => k.slice(prefix.length));
+  } catch {
+    return [];
   }
 };
 
@@ -166,11 +183,34 @@ export const loadSession = async (id: string): Promise<GameSession | null> => {
 export const loadAllSessions = async (): Promise<GameSession[]> => {
   try {
     const raw = await AsyncStorage.getItem(KEYS.SESSION_IDS);
-    const ids: string[] = raw ? (JSON.parse(raw) as string[]) : [];
+    const indexed: string[] = raw ? (JSON.parse(raw) as string[]) : [];
+
+    // Heal the index: any session on disk that the index lost (failed index
+    // write, interrupted delete) is appended rather than being lost forever.
+    const onDisk = await scanSessionIdsFromKeys();
+    const known = new Set(indexed);
+    const orphans = onDisk.filter(id => !known.has(id));
+    const ids = [...indexed, ...orphans];
+    if (orphans.length > 0) {
+      try {
+        await AsyncStorage.setItem(KEYS.SESSION_IDS, JSON.stringify(ids));
+      } catch {
+        // Healing is best-effort; the orphans are still returned below
+      }
+    }
+    if (ids.length === 0) return [];
+
+    // One multiGet instead of a getItem per session — history with a few
+    // hundred games was doing a few hundred serial round-trips.
+    const pairs = await AsyncStorage.multiGet(ids.map(id => KEYS.SESSION(id)));
     const sessions: GameSession[] = [];
-    for (const id of ids) {
-      const session = await loadSession(id);
-      if (session) sessions.push(session);
+    for (const [, json] of pairs) {
+      if (!json) continue;
+      try {
+        sessions.push(normalizeSession(JSON.parse(json) as GameSession));
+      } catch {
+        // Skip a corrupted record rather than losing the whole history
+      }
     }
     return sessions;
   } catch {
@@ -234,56 +274,99 @@ export const loadExposureEvents = async (
 
 // ─── Export / import ──────────────────────────────────────────────────────────
 
+/**
+ * Serialise every session, roll and exposure event to a portable JSON backup.
+ *
+ * Unlike the rest of this module, this function DOES throw. A backup is the one
+ * operation where failing quietly is worse than failing loudly: returning '{}'
+ * handed the user a valid-looking file containing none of their history, which
+ * they would only discover after wiping the device it came from.
+ */
 export const exportAllData = async (): Promise<string> => {
-  try {
-    const settings = await loadSettings();
-    const sessions = await loadAllSessions();
-    const rollsBySession: Record<string, RollEvent[]> = {};
-    const exposuresBySession: Record<string, CatanPlayerExposureEvent[]> = {};
-    for (const session of sessions) {
-      rollsBySession[session.id] = await loadRollEvents(session.id);
-      if (session.gameType === 'catan') {
-        exposuresBySession[session.id] = await loadExposureEvents(session.id);
-      }
+  const settings = await loadSettings();
+  const sessions = await loadAllSessions();
+  const rollsBySession: Record<string, RollEvent[]> = {};
+  const exposuresBySession: Record<string, CatanPlayerExposureEvent[]> = {};
+  for (const session of sessions) {
+    rollsBySession[session.id] = await loadRollEvents(session.id);
+    if (session.gameType === 'catan') {
+      exposuresBySession[session.id] = await loadExposureEvents(session.id);
     }
-    return JSON.stringify(
-      { schemaVersion: SCHEMA_VERSION, exportedAt: new Date().toISOString(), settings, sessions, rollsBySession, exposuresBySession },
-      null,
-      2,
-    );
-  } catch {
-    return '{}';
   }
+  return JSON.stringify(
+    { schemaVersion: SCHEMA_VERSION, exportedAt: new Date().toISOString(), settings, sessions, rollsBySession, exposuresBySession },
+    null,
+    2,
+  );
 };
 
 // ─── Import ───────────────────────────────────────────────────────────────────
 
-export const importAllData = async (json: string): Promise<{ imported: number; error?: string }> => {
+/** Shape check for a roll event coming from an untrusted backup file. */
+const isPlausibleRollEvent = (e: unknown): e is RollEvent =>
+  typeof e === 'object' &&
+  e !== null &&
+  typeof (e as RollEvent).id === 'string' &&
+  typeof (e as RollEvent).value === 'number' &&
+  Number.isFinite((e as RollEvent).value);
+
+/** Shape check for an exposure event coming from an untrusted backup file. */
+const isPlausibleExposureEvent = (e: unknown): e is CatanPlayerExposureEvent =>
+  typeof e === 'object' &&
+  e !== null &&
+  typeof (e as CatanPlayerExposureEvent).id === 'string' &&
+  typeof (e as CatanPlayerExposureEvent).playerId === 'string' &&
+  Array.isArray((e as CatanPlayerExposureEvent).affectedNumbers);
+
+/**
+ * Merge a backup into local storage.
+ *
+ * Import is additive: a session already present on this device is left alone
+ * rather than overwritten. Restoring a stale backup should never roll back
+ * games played since it was taken, and the session ID is the only thing linking
+ * the two — so when in doubt, the copy on the device wins.
+ */
+export const importAllData = async (
+  json: string,
+): Promise<{ imported: number; skipped: number; error?: string }> => {
   try {
     const data = JSON.parse(json) as {
       sessions?: GameSession[];
-      rollsBySession?: Record<string, RollEvent[]>;
-      exposuresBySession?: Record<string, CatanPlayerExposureEvent[]>;
+      rollsBySession?: Record<string, unknown>;
+      exposuresBySession?: Record<string, unknown>;
     };
     if (!data.sessions || !Array.isArray(data.sessions)) {
-      return { imported: 0, error: 'Invalid backup format — no sessions found.' };
+      return { imported: 0, skipped: 0, error: 'Invalid backup format — no sessions found.' };
     }
+
     let imported = 0;
+    let skipped = 0;
     for (const rawSession of data.sessions) {
-      if (!rawSession.id) continue;
+      if (!rawSession || typeof rawSession.id !== 'string' || !rawSession.id) {
+        skipped++;
+        continue;
+      }
+      if (await AsyncStorage.getItem(KEYS.SESSION(rawSession.id))) {
+        skipped++;
+        continue;
+      }
+
       const session = normalizeSession(rawSession);
       await saveSession(session);
-      if (data.rollsBySession?.[session.id]) {
-        await saveRollEvents(session.id, data.rollsBySession[session.id]!);
+
+      const rawRolls = data.rollsBySession?.[session.id];
+      if (Array.isArray(rawRolls)) {
+        await saveRollEvents(session.id, rawRolls.filter(isPlausibleRollEvent));
       }
-      if (data.exposuresBySession?.[session.id]) {
-        await saveExposureEvents(session.id, data.exposuresBySession[session.id]!);
+      const rawExposures = data.exposuresBySession?.[session.id];
+      if (Array.isArray(rawExposures)) {
+        await saveExposureEvents(session.id, rawExposures.filter(isPlausibleExposureEvent));
       }
       imported++;
     }
-    return { imported };
+    return { imported, skipped };
   } catch (err) {
-    return { imported: 0, error: `Parse error: ${String(err)}` };
+    return { imported: 0, skipped: 0, error: `Parse error: ${String(err)}` };
   }
 };
 
