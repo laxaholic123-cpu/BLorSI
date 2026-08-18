@@ -65,5 +65,21 @@ may be more or less done than it looks.
 1. **Device verification.** Five commits of UI change, none run on a phone: dev card entry, port selector, quick-exposure tap behaviour, board-review corrections, results percentile column, home screen backup link. All typecheck-clean and logic-tested; none exercised where this project's bugs historically live (Android SVG touch dispatch).
 2. **Crash reporting.** Still none. Every bug report is "it crashed sometimes", which is a bad position to be in right after reworking the storage layer.
 3. **Board scan provider decision.** Model and base URL are configuration now, but nothing works until a key and a reachable model are chosen. `EXPO_PUBLIC_DOMAIN` also needs repointing off the Replit domain.
-4. **Local board scanner.** Constraint solver — the hard, reusable half — is built and already improving the AI path. The CV half is blocked on sample photos.
-5. **Store-release prerequisites**, if that's the goal: privacy policy (a photo leaves the device), `ios.bundleIdentifier`, icon and splash review. `android.package` is now set to `com.laxaholic123.skillcheck` — trivial to change now, impossible after release.
+4. **`expo-av` is deprecated.** Superseded by `expo-audio` / `expo-video` in SDK 54.
+   It still works and did not trip `expo install --check`, and it is only used for
+   the roll/undo/done sounds in `services/sound.ts` — so this is not urgent. But it
+   will block an SDK 55 upgrade, and SDK upgrades are exactly when a deprecated
+   native module turns into a startup crash. Worth doing on a quiet day rather
+   than under upgrade pressure.
+
+5. **Always use `expo install`, never `pnpm add`, for anything with native code.**
+   Not a task, a rule — learned the hard way. Four packages (`expo-document-picker`,
+   `expo-media-library`, `expo-sharing`, `react-native-view-shot`) had been added
+   with plain `pnpm add`, so they resolved to `latest` from an SDK that does not
+   exist for this project. The result was a development build that died during
+   native module registration, before any JS ran. `expo install` picks the
+   SDK-compatible version; `pnpm add` does not know the SDK exists.
+   Run `pnpm exec expo install --check` after adding any dependency.
+
+6. **Local board scanner.** Constraint solver — the hard, reusable half — is built and already improving the AI path. The CV half is blocked on sample photos.
+7. **Store-release prerequisites**, if that's the goal: privacy policy (a photo leaves the device), `ios.bundleIdentifier`, icon and splash review. `android.package` is now set to `com.laxaholic123.skillcheck` — trivial to change now, impossible after release.
