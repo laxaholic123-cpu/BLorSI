@@ -16,6 +16,7 @@ import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { useGame } from '@/context/GameContext';
 import { useSettings } from '@/context/SettingsContext';
+import { useRollFlash } from '@/hooks/useRollFlash';
 import { DiceGrid } from '@/components/DiceGrid';
 import {
   getNextPlayerIndex,
@@ -32,7 +33,7 @@ export default function ActiveGameScreen() {
   const { activeSession, rollEvents, setRollEvents, persistRollEvents, updateSession, loadActiveGame, endSession } = useGame();
   const { settings } = useSettings();
 
-  const [lastPressedValue, setLastPressedValue] = useState<number | null>(null);
+  const { value: lastPressedValue, flash: flashRoll, clear: clearRollFlash } = useRollFlash();
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState('');
   const [showEndConfirm, setShowEndConfirm] = useState(false);
@@ -86,7 +87,7 @@ export default function ActiveGameScreen() {
     if (!activeSession || !currentPlayer) return;
     haptic();
     playRollSound(settings.soundEnabled);
-    setLastPressedValue(value);
+    flashRoll(value);
 
     const newEvents = recordRoll(
       { session: activeSession, playerId: currentPlayer.id, value, source: 'touchscreen' },
@@ -98,7 +99,7 @@ export default function ActiveGameScreen() {
       await persistRollEvents(activeSession.id, newEvents);
     } catch {
       setRollEvents(rollEvents);
-      setLastPressedValue(null);
+      clearRollFlash();
       return;
     }
 
@@ -142,7 +143,7 @@ export default function ActiveGameScreen() {
       }
     }
 
-    setLastPressedValue(null);
+    clearRollFlash();
   };
 
   const handlePrevPlayer = async () => {

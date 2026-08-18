@@ -26,7 +26,6 @@ const colors = {
 
 describe('classifyRollTemperature', () => {
   it('stays silent below the minimum sample', () => {
-    // Three 8s in ten rolls is a ratio of ~2.2 and means nothing.
     expect(classifyRollTemperature(3, 1.39, 10)).toBe('unknown');
   });
 
@@ -34,37 +33,62 @@ describe('classifyRollTemperature', () => {
     expect(classifyRollTemperature(25, 25, 180)).toBe('neutral');
   });
 
-  it('grades the hot side', () => {
-    expect(classifyRollTemperature(30, 25, 180)).toBe('warm'); // ratio 1.2
-    expect(classifyRollTemperature(40, 25, 180)).toBe('hot');  // ratio 1.6
-  });
-
-  it('grades the cold side', () => {
-    expect(classifyRollTemperature(20, 25, 180)).toBe('cool'); // ratio 0.8
-    expect(classifyRollTemperature(10, 25, 180)).toBe('cold'); // ratio 0.4
-  });
-
-  it('treats a number that never came up as cold, not unknown', () => {
-    expect(classifyRollTemperature(0, 25, 180)).toBe('cold');
-  });
-
   it('returns unknown when nothing was expected', () => {
     expect(classifyRollTemperature(0, 0, 180)).toBe('unknown');
   });
 
-  it('leaves an ordinary game mostly neutral', () => {
-    // Counts within ±15% of expectation should not light up. If the thresholds
-    // are ever loosened, this is what should fail — a chart where everything is
-    // coloured tells the player nothing.
-    const expected = 25;
-    for (const count of [22, 23, 24, 25, 26, 27, 28]) {
-      expect(classifyRollTemperature(count, expected, 180)).toBe('neutral');
-    }
+  it('scales with sample size — the same ratio means different things', () => {
+    // 40% above expectation. In a short game that is ordinary variance; over a
+    // long one it is a real signal. A fixed percentage band cannot tell those
+    // apart, which is exactly the bug this replaced.
+    const short = classifyRollTemperature(8, 5.7, 41); // z ~ 1.04
+    const long = classifyRollTemperature(39, 27.8, 200); // z ~ 2.26
+    expect(short).toBe('neutral');
+    expect(long).toBe('hot');
   });
 
-  it('does not colour anything at exactly one under the sample floor', () => {
+  it('keeps a real 41-roll game mostly neutral', () => {
+    // Counts from an actual game on device. Before standardising, nine of these
+    // eleven numbers were coloured, which tells a player nothing.
+    const total = 41;
+    const p: Record<number, number> = {
+      2: 1 / 36, 3: 2 / 36, 4: 3 / 36, 5: 4 / 36, 6: 5 / 36, 7: 6 / 36,
+      8: 5 / 36, 9: 4 / 36, 10: 3 / 36, 11: 2 / 36, 12: 1 / 36,
+    };
+    const counts: Record<number, number> = {
+      2: 3, 3: 5, 4: 3, 5: 5, 6: 3, 7: 4, 8: 3, 9: 3, 10: 1, 11: 8, 12: 3,
+    };
+
+    const temps = Object.keys(counts).map(k => {
+      const n = Number(k);
+      return classifyRollTemperature(counts[n]!, p[n]! * total, total);
+    });
+    const coloured = temps.filter(t => t !== 'neutral' && t !== 'unknown');
+
+    // Fewer than half lit up, and the 11 (eight rolls against 2.3 expected)
+    // is the one that stands out strongly.
+    expect(coloured.length).toBeLessThanOrEqual(5);
+    expect(classifyRollTemperature(8, p[11]! * total, total)).toBe('hot');
+    // The 6, 7, 8 cluster is well within normal variance at this sample size.
+    expect(classifyRollTemperature(3, p[6]! * total, total)).toBe('neutral');
+    expect(classifyRollTemperature(4, p[7]! * total, total)).toBe('neutral');
+    expect(classifyRollTemperature(3, p[8]! * total, total)).toBe('neutral');
+  });
+
+  it('grades both directions once the deviation is real', () => {
+    // expected 25 of 180, sd = sqrt(25 * (1 - 25/180)) ~ 4.64
+    expect(classifyRollTemperature(35, 25, 180)).toBe('hot');   // z ~ 2.2
+    expect(classifyRollTemperature(31, 25, 180)).toBe('warm');  // z ~ 1.3
+    expect(classifyRollTemperature(19, 25, 180)).toBe('cool');  // z ~ -1.3
+    expect(classifyRollTemperature(15, 25, 180)).toBe('cold');  // z ~ -2.2
+  });
+
+  it('treats a long drought as cold', () => {
+    expect(classifyRollTemperature(0, 25, 180)).toBe('cold');
+  });
+
+  it('does not colour anything under the sample floor', () => {
     expect(classifyRollTemperature(50, 5, HEAT_MIN_SAMPLE - 1)).toBe('unknown');
-    expect(classifyRollTemperature(50, 5, HEAT_MIN_SAMPLE)).toBe('hot');
   });
 });
 

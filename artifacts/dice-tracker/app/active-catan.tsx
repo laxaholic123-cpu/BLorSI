@@ -30,6 +30,7 @@ import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { useGame } from '@/context/GameContext';
 import { useSettings } from '@/context/SettingsContext';
+import { useRollFlash } from '@/hooks/useRollFlash';
 import {
   getNextPlayerIndex,
   getPrevPlayerIndex,
@@ -79,7 +80,7 @@ export default function ActiveCatanScreen() {
   } = useGame();
   const { settings } = useSettings();
 
-  const [lastPressedValue, setLastPressedValue] = useState<number | null>(null);
+  const { value: lastPressedValue, flash: flashRoll, clear: clearRollFlash } = useRollFlash();
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState('');
   const [robberPromptState, setRobberPromptState] = useState<RobberPromptState>('idle');
@@ -171,18 +172,13 @@ export default function ActiveCatanScreen() {
 
   const isSmallSample = totalRolls < CATAN_SMALL_SAMPLE_THRESHOLD;
 
-  // Clear grid highlight whenever the active player changes (auto-advance or manual Prev/Next)
-  useEffect(() => {
-    setLastPressedValue(null);
-  }, [activeSession?.currentPlayerIndex]);
-
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
   const handleRoll = async (value: number) => {
     if (!activeSession || !currentPlayer) return;
     haptic();
     playRollSound(settings.soundEnabled);
-    setLastPressedValue(value);
+    flashRoll(value);
 
     const newEvents = recordRoll(
       { session: activeSession, playerId: currentPlayer.id, value, source: 'touchscreen' },
@@ -194,7 +190,7 @@ export default function ActiveCatanScreen() {
       await persistRollEvents(activeSession.id, newEvents);
     } catch {
       setRollEvents(rollEvents);
-      setLastPressedValue(null);
+      clearRollFlash();
       return;
     }
 
@@ -247,13 +243,13 @@ export default function ActiveCatanScreen() {
         }
       }
     }
-    setLastPressedValue(null);
+    clearRollFlash();
   };
 
   const handlePrevPlayer = async () => {
     if (!activeSession || !isMultiPlayer) return;
     haptic();
-    setLastPressedValue(null);
+    clearRollFlash();
     try {
       await updateSession({ ...activeSession, currentPlayerIndex: getPrevPlayerIndex(activeSession.currentPlayerIndex, activeSession.players.length) });
     } catch {
@@ -265,7 +261,7 @@ export default function ActiveCatanScreen() {
   const handleNextPlayer = async () => {
     if (!activeSession || !isMultiPlayer) return;
     haptic();
-    setLastPressedValue(null);
+    clearRollFlash();
     try {
       await updateSession({ ...activeSession, currentPlayerIndex: getNextPlayerIndex(activeSession.currentPlayerIndex, activeSession.players.length) });
     } catch {

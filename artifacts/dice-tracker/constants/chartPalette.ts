@@ -52,23 +52,34 @@ export type RollTemperature = 'hot' | 'warm' | 'neutral' | 'cool' | 'cold' | 'un
  * Below this many rolls, nothing is called hot or cold.
  *
  * Early in a game every number looks extreme — three 8s in the first ten rolls
- * is a ratio of 2.2 and means nothing. Staying neutral until there is something
- * to see is the same reasoning behind the verdict layer's small-sample guard.
+ * is a ratio of 2.2 and means nothing.
  */
 export const HEAT_MIN_SAMPLE = 20;
 
 /**
- * Ratio bands. A ratio is count / expected, so 1.0 is exactly on prediction.
+ * How many standard deviations from expectation before a number is coloured.
  *
- * These are descriptive colouring, not a significance test — the verdict layer
- * owns actual claims about luck. They are set wide enough that an ordinary game
- * shows mostly neutral chips, so the ones that do light up are worth a glance.
+ * Standardised, NOT a fixed percentage. A count is binomial, so its standard
+ * deviation is sqrt(expected × (1 − p)) — which means the same percentage
+ * deviation is ordinary in a short game and remarkable in a long one. At 41
+ * rolls the expected count for 6 is 5.7 with an SD of 2.2, so a fixed ±20% band
+ * sits at half a standard deviation and lights up almost every number; over 200
+ * rolls that same band would be nearly three SDs and would light up none.
+ *
+ * Colouring on z instead means the chart stays roughly as busy at 40 rolls as it
+ * does at 400, and the chips that light up carry the same weight either way.
+ * This is the same reasoning as the verdict layer's seven-frequency band — a
+ * fixed threshold is not a threshold, it is a function of how long you played.
  */
-const HOT_STRONG = 1.5;
-const HOT_MILD = 1.2;
-const COLD_MILD = 0.8;
-const COLD_STRONG = 0.5;
+const Z_STRONG = 2.0;
+const Z_MILD = 1.25;
 
+/**
+ * Classify a roll count against its expectation.
+ *
+ * `expected` is p × totalRolls, so the underlying probability is recovered as
+ * expected / totalRolls — no extra parameter needed.
+ */
 export function classifyRollTemperature(
   count: number,
   expected: number,
@@ -77,11 +88,15 @@ export function classifyRollTemperature(
   if (totalRolls < HEAT_MIN_SAMPLE) return 'unknown';
   if (expected <= 0) return 'unknown';
 
-  const ratio = count / expected;
-  if (ratio >= HOT_STRONG) return 'hot';
-  if (ratio >= HOT_MILD) return 'warm';
-  if (ratio <= COLD_STRONG) return 'cold';
-  if (ratio <= COLD_MILD) return 'cool';
+  const p = Math.min(1, expected / totalRolls);
+  const variance = expected * (1 - p);
+  if (variance <= 0) return 'unknown';
+
+  const z = (count - expected) / Math.sqrt(variance);
+  if (z >= Z_STRONG) return 'hot';
+  if (z >= Z_MILD) return 'warm';
+  if (z <= -Z_STRONG) return 'cold';
+  if (z <= -Z_MILD) return 'cool';
   return 'neutral';
 }
 
