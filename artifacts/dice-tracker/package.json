@@ -5,7 +5,8 @@
   "main": "expo-router/entry",
   "scripts": {
     "dev": "expo start",
-    "dev:tunnel": "expo start --tunnel",
+    "dev:device": "expo start --dev-client --host lan",
+    "dev:tunnel": "expo start --dev-client --tunnel",
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
