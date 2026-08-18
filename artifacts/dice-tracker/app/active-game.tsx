@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Alert,
   Modal,
   Platform,
   StyleSheet,
@@ -182,6 +183,7 @@ export default function ActiveGameScreen() {
     await confirmEndGame(activeSession, {
       updateSession,
       navigate: (path) => router.replace(path as any),
+      onPersistError: (message) => Alert.alert('Game not saved as finished', message),
     });
   };
 

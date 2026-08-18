@@ -299,8 +299,20 @@ export default function CatanBoardScanScreen() {
     setCorrectionIdx(index);
   };
 
+  /**
+   * A productive hex without a number token cannot exist on a real board — only
+   * the desert has no token. Saving one produced a hex that silently contributed
+   * nothing to production, which looks identical to bad luck in the results.
+   */
+  const correctionIncomplete =
+    correctionResource !== null && correctionResource !== 'desert' && correctionNumber === null;
+
   const confirmCorrection = () => {
     if (correctionIdx === null) return;
+    if (correctionIncomplete) {
+      haptic(Haptics.ImpactFeedbackStyle.Heavy);
+      return;
+    }
     haptic();
     setHexes(prev => {
       const next = [...prev];
@@ -854,9 +866,19 @@ export default function CatanBoardScanScreen() {
           </>
         )}
 
+        {correctionIncomplete && (
+          <Text style={[s.correctionHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+            Pick a number token — only the desert goes without one.
+          </Text>
+        )}
+
         <TouchableOpacity
-          style={[s.confirmBtn, { backgroundColor: colors.primary }]}
+          style={[
+            s.confirmBtn,
+            { backgroundColor: colors.primary, opacity: correctionIncomplete ? 0.4 : 1 },
+          ]}
           onPress={confirmCorrection}
+          disabled={correctionIncomplete}
         >
           <Text style={[s.confirmBtnText, { color: colors.primaryForeground, fontFamily: 'Inter_700Bold' }]}>
             Done
@@ -1094,6 +1116,7 @@ const s = StyleSheet.create({
   correctionTitle: { fontSize: 17 },
   correctionLabel: { fontSize: 11, letterSpacing: 0.8 },
   correctionResourceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  correctionHint: { fontSize: 12, marginTop: 10, textAlign: 'center' },
   resourceBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
   resourceBtnText: { fontSize: 13 },
   correctionNumRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

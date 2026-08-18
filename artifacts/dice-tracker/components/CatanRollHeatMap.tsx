@@ -7,20 +7,28 @@
  * Each chip shows:
  *   • The number (bold)
  *   • A tiny roll count
- *   • Background tinted green (hot) / red (cold) / neutral based on
- *     actual vs expected frequency
+ *   • Background tinted hot (teal) / cold (slate) / neutral based on
+ *     actual vs expected frequency, using the shared chart palette so this
+ *     agrees with RollFrequencyChart
  *   • An amber border ring when that number is in any player's settlement
  *     position (so players can see at a glance if their spots are hitting)
  *
- * The 7 is always shown in the standard destructive red.
- * When fewer than 5 rolls have been recorded the chips are all neutral
- * (not enough data to infer hot/cold).
+ * The 7 is always shown in red — it moves the robber and produces nothing, so it
+ * is not on the hot/cold scale at all.
+ * Below HEAT_MIN_SAMPLE rolls every chip stays neutral: early in a game the
+ * ratios swing wildly and mean nothing.
  */
 
 import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { useColors } from '@/hooks/useColors';
 import { CATAN_PROBS } from '@/services/catanStats';
+import {
+  SETTLEMENT_RING_COLOR,
+  classifyRollTemperature,
+  sevenChipColors,
+  temperatureChipColors,
+} from '@/constants/chartPalette';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,13 +45,12 @@ export interface CatanRollHeatMapProps {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const ALL_NUMBERS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-const MIN_SAMPLE = 5; // below this, show neutral chips
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Returns background and text colors for a chip based on its hot/cold status.
- * For 7 always returns the destructive palette.
+ * Background and text colours for a chip. Thresholds and palette both come from
+ * the shared module, so this cannot drift away from the frequency chart.
  */
 function chipColors(
   n: number,
@@ -51,28 +58,11 @@ function chipColors(
   totalRolls: number,
   colors: ReturnType<typeof useColors>,
 ): { bg: string; text: string } {
-  if (n === 7) {
-    return {
-      bg: count > 0 ? '#EF444430' : colors.muted,
-      text: '#EF4444',
-    };
-  }
-
-  if (totalRolls < MIN_SAMPLE) {
-    return { bg: colors.muted, text: colors.mutedForeground };
-  }
+  if (n === 7) return sevenChipColors(count, colors);
 
   const expected = (CATAN_PROBS[n] ?? 0) * totalRolls;
-  if (expected === 0) return { bg: colors.muted, text: colors.mutedForeground };
-
-  const ratio = count / expected;
-
-  if (ratio >= 1.5) return { bg: '#22C55E38', text: '#22C55E' };
-  if (ratio >= 1.15) return { bg: '#22C55E22', text: '#4ADE80' };
-  if (ratio <= 0) return { bg: colors.muted, text: colors.mutedForeground };
-  if (ratio <= 0.5) return { bg: '#EF444428', text: '#EF4444' };
-  if (ratio <= 0.8) return { bg: '#EF444415', text: '#F87171' };
-  return { bg: colors.muted, text: colors.mutedForeground };
+  const temperature = classifyRollTemperature(count, expected, totalRolls);
+  return temperatureChipColors(temperature, colors);
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -102,7 +92,7 @@ export function CatanRollHeatMap({
             style={[
               s.chip,
               { backgroundColor: bg },
-              isSettlement && { borderColor: '#F59E0B', borderWidth: 1.5 },
+              isSettlement && { borderColor: SETTLEMENT_RING_COLOR, borderWidth: 1.5 },
               !isSettlement && { borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth },
             ]}
           >

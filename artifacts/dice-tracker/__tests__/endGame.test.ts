@@ -134,3 +134,48 @@ describe('confirmEndGame — no active session guard', () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 });
+
+describe('confirmEndGame — persistence failure is reported, not swallowed', () => {
+  it('still navigates when the write fails', async () => {
+    const navigate = jest.fn();
+    await confirmEndGame(makeSession(), {
+      updateSession: jest.fn().mockRejectedValue(new Error('disk full')),
+      navigate,
+    });
+    expect(navigate).toHaveBeenCalledWith('/results');
+  });
+
+  it('tells the caller the game was not marked finished', async () => {
+    // The session keeps its "active" status, so the next launch offers to
+    // resume a game the player considers over. Silence made that inexplicable.
+    const onPersistError = jest.fn();
+    await confirmEndGame(makeSession(), {
+      updateSession: jest.fn().mockRejectedValue(new Error('disk full')),
+      navigate: jest.fn(),
+      onPersistError,
+    });
+    expect(onPersistError).toHaveBeenCalledTimes(1);
+    expect(onPersistError.mock.calls[0]![0]).toMatch(/active game/i);
+  });
+
+  it('stays quiet when the write succeeds', async () => {
+    const onPersistError = jest.fn();
+    await confirmEndGame(makeSession(), {
+      updateSession: jest.fn().mockResolvedValue(undefined),
+      navigate: jest.fn(),
+      onPersistError,
+    });
+    expect(onPersistError).not.toHaveBeenCalled();
+  });
+
+  it('works without the optional callback', async () => {
+    const navigate = jest.fn();
+    await expect(
+      confirmEndGame(makeSession(), {
+        updateSession: jest.fn().mockRejectedValue(new Error('disk full')),
+        navigate,
+      }),
+    ).resolves.toBeUndefined();
+    expect(navigate).toHaveBeenCalled();
+  });
+});

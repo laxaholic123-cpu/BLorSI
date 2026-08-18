@@ -1,11 +1,17 @@
 /**
  * RollFrequencyChart — standalone bar chart for roll-frequency distribution.
  *
- * Renders each die value as a horizontal bar, colour-coded to match the
- * share-card palette:
- *   - Teal  (#1ABC9C) → rolled more than expected (hot)
- *   - Slate (#5C7A9C) → rolled less than expected (cold)
- *   - Muted           → on target
+ * Renders each die value as a horizontal bar, colour-coded by how its actual
+ * count compares to its expected count:
+ *   - Teal  → rolled more than expected (hot)
+ *   - Slate → rolled less than expected (cold)
+ *   - Muted → on target, or too few rolls to say
+ *
+ * Colours and hot/cold thresholds both come from the shared chart palette, so
+ * this agrees with CatanRollHeatMap. They used to disagree twice over: opposite
+ * palettes (teal/slate here, green/red there) and different definitions of hot
+ * (this chart called half a roll above expected "hot", which on eleven outcomes
+ * coloured nearly everything).
  *
  * An expected-count tick mark is drawn on the bar track so players can
  * visually compare actual vs expected at a glance.
@@ -16,9 +22,12 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useColors } from '@/hooks/useColors';
 import type { FrequencyEntry } from '@/types/stats';
 
-// Chart palette — matches share-card design tokens
-const HOT_COLOR   = '#1ABC9C';
-const COLD_COLOR  = '#5C7A9C';
+import {
+  HOT_COLOR,
+  COLD_COLOR,
+  classifyRollTemperature,
+  temperatureAccent,
+} from '@/constants/chartPalette';
 
 interface Props {
   frequencies: FrequencyEntry[];
@@ -64,9 +73,10 @@ export function RollFrequencyChart({ frequencies, totalRolls }: Props) {
 
       {/* Bars */}
       {frequencies.map(f => {
-        const isHot  = f.deviation > 0.5;
-        const isCold = f.deviation < -0.5;
-        const barColor = isHot ? HOT_COLOR : isCold ? COLD_COLOR : colors.mutedForeground + 'AA';
+        const temperature = classifyRollTemperature(f.count, f.expectedCount, totalRolls);
+        const accent = temperatureAccent(temperature, colors);
+        const isNeutral = temperature === 'neutral' || temperature === 'unknown';
+        const barColor = isNeutral ? colors.mutedForeground + 'AA' : accent;
 
         const barPct      = f.count        / scale;
         const expectedPct = f.expectedCount / scale;
@@ -75,7 +85,7 @@ export function RollFrequencyChart({ frequencies, totalRolls }: Props) {
         const devLabel = f.deviationPct === 0
           ? '—'
           : `${devSign}${f.deviationPct.toFixed(0)}%`;
-        const devColor = isHot ? HOT_COLOR : isCold ? COLD_COLOR : colors.mutedForeground;
+        const devColor = accent;
 
         return (
           <View key={f.value} style={styles.row}>

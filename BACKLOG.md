@@ -19,7 +19,9 @@ may be more or less done than it looks.
 | 24 | Unit tests for rollInput | Covered by `activeGameHandlers.test.ts`. |
 | 26 / 38 | Typecheck gate in CI | `.github/workflows/ci.yml` gates typecheck, both test suites, and the api-server build. |
 | 44 | Resource tally so players can catch AI miscounts | Superseded by something better: the constraint solver *repairs* the miscount rather than displaying a tally, and lists what it changed. |
-| 55 | Regressions in production luck / heat-map colouring | Production luck now has real coverage (`catanProductionWeights`, `luckEngine`, `verdictSimulation`). Heat-map colouring still uncovered — see #65. |
+| 55 | Regressions in production luck / heat-map colouring | Both covered now: production luck by `catanProductionWeights` / `luckEngine` / `verdictSimulation`, heat-map colouring by `chartPalette.test.ts`. |
+| 65 | Heat-map colour consistency | Fixed by extracting `constants/chartPalette.ts`. Both charts now share one palette AND one hot/cold classifier, so they cannot drift again. Also fixed a second bug found on the way: the frequency chart called a number "hot" at half a roll above expected, which on eleven outcomes coloured nearly everything. |
+| 45 | Correction panel saving a productive hex with no number | Done is now disabled, with a hint, unless the hex is desert or has a token. |
 | 56 | Regressions in career stat aggregation | `careerStats.test.ts` covers it. One fixture was wrong (a settlement on number 7) and has been fixed. |
 
 ## Addressed by the storage rework — verify and close
@@ -29,14 +31,13 @@ may be more or less done than it looks.
 | 33 | Robber-tracking data loss when storage fails on a 7 | Robber block writes go through the same re-throwing path as rolls; callers surface failure. Worth a deliberate test with storage forced to fail. |
 | 34 | Roll data consistency if a save fails mid-game | `persistRollEvents` re-throws and `active-catan` rolls back the in-memory state on failure. |
 | 35 | Player rename silently dropped when storage unavailable | Same re-throwing path via `updateSession`. |
-| 61 | Stuck on results if `endSession` fails silently | Handled: `confirmEndGame` navigates to `/results` whether or not the write succeeds, so nobody gets trapped. **Residual issue worth its own ticket:** on failure the session is never marked `completed`, so it silently resumes as active on next launch and the player is told nothing. Trapping was the bug; the silence is still there. |
+| 61 | Stuck on results if `endSession` fails silently | Fully closed. Navigation always happened, so nobody was trapped; the residual silence is now fixed too — `confirmEndGame` takes an `onPersistError` callback and both game screens surface it, so an unsaved game is explained rather than reappearing as active with no warning. |
 
 ## Still open, in the order I'd take them
 
 **High — these change what a user sees**
 
 - **#15 Light theme.** Largest untouched user-facing item. Mostly mechanical now that everything reads from `useColors`.
-- **#65 Heat-map colour consistency.** Confirmed still wrong: `CatanRollHeatMap` uses `#EF4444` red / green, while `RollFrequencyChart` uses the teal/blue palette. Two charts, two visual languages, same data.
 - **#57 / #63 Number performance as a bar chart on the verdict card.** `RollFrequencyChart` is on results but **not** on `share-card.tsx` — the share card is the growth loop and has no chart.
 - **#58 Share career stats and head-to-head.** `shareCard.ts` has no career path at all.
 - **#59 / #62 Share card correctness on device.** Untouched, and now genuinely blocked on a device pass.
@@ -44,7 +45,6 @@ may be more or less done than it looks.
 **Medium — correctness and flow**
 
 - **#13 / #54 Robber blocks on the game screen.** #13 looks done (`activeRobberBlocks` is computed and rendered). #54 (lift a block without leaving the screen) is **not** — `robberBlockEnded` only exists in `catan-development.tsx`.
-- **#45 Hex correction panel allowing a non-desert hex with no number.** The panel nulls the number for desert, but I found no guard preventing a *productive* hex from being saved without one. The constraint solver now repairs this after a scan, but manual correction can still create it.
 - **#47 Skip the board re-scan when only fixing a settlement.**
 - **#12 Skip re-running exposure setup on resume mid-session.**
 - **#39 Duplicating an old custom-mode game.** `normalizeSession` maps the legacy `custom` mode, so this may already be fixed — verify.
