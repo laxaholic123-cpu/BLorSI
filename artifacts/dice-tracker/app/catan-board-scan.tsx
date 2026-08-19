@@ -107,14 +107,35 @@ export default function CatanBoardScanScreen() {
   const { settings } = useSettings();
 
   // ── Edit-mode: editPlayerId is set when launched from an active game ────────
-  const { editPlayerId } = useLocalSearchParams<{ editPlayerId?: string }>();
+  // ── scanned: a board already read on-device by the capture screen ──────────
+  const { editPlayerId, scanned } = useLocalSearchParams<{
+    editPlayerId?: string;
+    scanned?: string;
+  }>();
   const isEditMode = Boolean(editPlayerId);
 
+  /**
+   * A board handed over from the local capture screen, if there is one.
+   *
+   * Parsed once at mount. Arriving with a board means the reading is already
+   * done, so this screen opens straight into review rather than asking the
+   * player to scan something they have just scanned.
+   */
+  const handedOver = React.useMemo<CatanHexDef[] | null>(() => {
+    if (!scanned) return null;
+    try {
+      const parsed = JSON.parse(scanned) as CatanHexDef[];
+      return Array.isArray(parsed) && parsed.length === 19 ? parsed : null;
+    } catch {
+      return null;
+    }
+  }, [scanned]);
+
   // ── Phase ──────────────────────────────────────────────────────────────────
-  const [phase, setPhase] = useState<ScanPhase>('entry');
+  const [phase, setPhase] = useState<ScanPhase>(handedOver ? 'review' : 'entry');
 
   // ── Board hexes ────────────────────────────────────────────────────────────
-  const [hexes, setHexes] = useState<CatanHexDef[]>(makeEmptyLayout);
+  const [hexes, setHexes] = useState<CatanHexDef[]>(() => handedOver ?? makeEmptyLayout());
   /** Repairs the constraint solver made to the scan, shown in review. */
   const [boardCorrections, setBoardCorrections] = useState<BoardChange[]>([]);
   const [analysisError, setAnalysisError] = useState<string | null>(null);

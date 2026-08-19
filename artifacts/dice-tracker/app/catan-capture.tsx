@@ -278,6 +278,14 @@ export default function CatanCaptureScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+          <TouchableOpacity
+            style={s.linkBtn}
+            onPress={() => router.replace('/catan-board-scan' as never)}
+          >
+            <Text style={[s.link, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium', textAlign: 'center' }]}>
+              Try the AI scanner instead
+            </Text>
+          </TouchableOpacity>
         </ScrollView>
       </View>
     );
@@ -347,6 +355,14 @@ export default function CatanCaptureScreen() {
             <View style={s.shutterInner} />
           )}
         </TouchableOpacity>
+
+        {/* The AI reader and manual entry, for when this one cannot manage.
+            Both stay one tap away rather than being a dead end. */}
+        <TouchableOpacity onPress={() => router.replace('/catan-board-scan' as never)}>
+          <Text style={[s.altLink, { fontFamily: 'Inter_500Medium' }]}>
+            Use the AI scanner or enter the board by hand
+          </Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -386,6 +402,7 @@ const s = StyleSheet.create({
   rowBtns: { flexDirection: 'row', gap: 10, marginTop: 10 },
   secondaryBtn: { flex: 1, borderWidth: 1.5, borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
   secondaryText: { fontSize: 15 },
+  altLink: { color: 'rgba(255,255,255,0.85)', fontSize: 13, textAlign: 'center', paddingVertical: 6 },
   linkBtn: { paddingVertical: 10 },
   link: { fontSize: 13 },
 });
