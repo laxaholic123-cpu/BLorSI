@@ -96,7 +96,16 @@ may be more or less done than it looks.
    camera guide the player aligns the board to, which costs zero taps and fixes
    the homography before a pixel is read. Fallback: four corner taps on a still.
 
-   **Remaining:** the capture step, and an end-to-end accuracy run with correct
-   geometry — still unmeasured, and the number that decides whether local
-   scanning ships as primary or stays behind the AI.
+   **Capture built:** `app/catan-live-scan.tsx` reads continuously while the
+   player holds the phone over the board. The guide hexagon IS the coordinate
+   system — aligning to it supplies the geometry the reader cannot infer. Tiles
+   fill in green as they become certain, and guidance names a region to point at
+   for the rest. Every frame passes `shouldMergeFrame` first, because merging
+   sums costs and a misaligned frame would accumulate confident nonsense several
+   times a second.
+
+   **Remaining:** an end-to-end accuracy run on real board photos, and a device
+   pass on the capture loop. Reading a synthetic board recovers all 19 tiles
+   exactly; real photos are the number that decides whether this ships as primary
+   or stays behind the AI.
 7. **Store-release prerequisites**, if that's the goal: privacy policy (a photo leaves the device), `ios.bundleIdentifier`, icon and splash review. `android.package` is now set to `com.laxaholic123.skillcheck` — trivial to change now, impossible after release.

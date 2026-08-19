@@ -199,7 +199,9 @@ export default function CatanGameSetupScreen() {
       if (dest === 'detailed') {
         router.navigate('/catan-exposure-detailed' as any);
       } else if (dest === 'scan') {
-        router.navigate('/catan-board-scan' as any);
+        // Live on-device reading. The AI board-scan screen remains reachable
+        // from there as a fallback when the local reader cannot finish.
+        router.navigate('/catan-live-scan' as any);
       } else {
         router.navigate('/catan-exposure-quick' as any);
       }
@@ -331,7 +333,7 @@ export default function CatanGameSetupScreen() {
                 Scan Board 📷
               </Text>
               <Text style={[styles.trackDesc, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-                Photograph the board — AI reads the hexes, then each player taps their settlements.
+                Hold your phone over the board — it reads the tiles on the device as you go. No photo leaves your phone.
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#10B981" />
