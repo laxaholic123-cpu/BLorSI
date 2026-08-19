@@ -9,7 +9,9 @@ A local-first Expo mobile app built in a pnpm monorepo. All game data lives on-d
 **Chosen engine:** `@react-native-async-storage/async-storage`
 
 **Why AsyncStorage over expo-sqlite:**
-- No native build step — works in Expo Go without ejecting
+- Simple JSON persistence with no native build step of its own
+  (NOTE: the app as a whole no longer runs in Expo Go — react-native-keyboard-controller,
+  Skia and expo-camera all require a development build.)
 - JSON serialization matches the event-log data model (no complex relational queries needed)
 - Simple migration path: versioned JSON with a `schemaVersion` field
 - expo-sqlite adds value when querying across many rows; tabletop game sessions are small (hundreds of events max)
@@ -47,7 +49,7 @@ All reads/writes are wrapped in try/catch. A storage failure is never fatal to t
 | Roll recording | `services/rollInput.ts` | Single entry point for all roll sources |
 | Catan statistics | `services/catanStats.ts` | Exposure-weighted analysis; pure functions |
 | Catan verdict | `services/catanVerdict.ts` | Catan-specific copy layer |
-| Sound | `services/sound.ts` | Optional expo-av audio; cached, fire-and-forget, gated on settings |
+| Sound | `services/sound.ts` | Optional expo-audio playback; players built once, fire-and-forget, gated on settings |
 | Share cards | `app/share-card.tsx` | Card rendering + image capture via react-native-view-shot |
 
 ## Navigation

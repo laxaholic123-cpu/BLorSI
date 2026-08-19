@@ -22,7 +22,7 @@ A polished, fully-offline mobile dice tracker for physical tabletop games. Recor
 - [TypeScript](https://www.typescriptlang.org/) strict mode
 - [Expo Router](https://expo.github.io/router/) file-based routing
 - [AsyncStorage](https://react-native-async-storage.github.io/async-storage/) local persistence
-- [expo-av](https://docs.expo.dev/versions/latest/sdk/av/) optional sound feedback
+- [expo-audio](https://docs.expo.dev/versions/latest/sdk/audio/) optional sound feedback
 - [expo-haptics](https://docs.expo.dev/versions/latest/sdk/haptics/) tactile feedback
 - [react-native-view-shot](https://github.com/gre/react-native-view-shot) share-card image capture
 - [expo-sharing](https://docs.expo.dev/versions/latest/sdk/sharing/) native share sheet
@@ -33,7 +33,7 @@ A polished, fully-offline mobile dice tracker for physical tabletop games. Recor
 
 - Node.js 20+
 - pnpm 9+
-- Expo Go app on your device (for Expo Go testing without a build)
+- A development build on your device (Expo Go will NOT work — see below)
 
 ## Installation
 
@@ -49,11 +49,39 @@ pnpm install
 pnpm --filter @workspace/dice-tracker run dev
 ```
 
-## Testing on a Device (Expo Go)
+## Testing on a Device
 
-1. Install [Expo Go](https://expo.dev/go) on your iOS or Android device
-2. Run `pnpm --filter @workspace/dice-tracker run dev`
-3. Scan the QR code that appears in the terminal with your camera (iOS) or Expo Go (Android)
+**Expo Go will not work.** `react-native-keyboard-controller`, `@shopify/react-native-skia`
+and `expo-camera` are all outside it, so the app needs a development build — your
+own APK with this project's native modules compiled in. You build it once; after
+that JS changes reload instantly over Wi-Fi.
+
+1. Build it in the cloud (no Android toolchain needed):
+
+   ```
+   cd artifacts/dice-tracker
+   eas build --profile development --platform android
+   ```
+
+   On Windows use `eas.cmd` — see CLAUDE.md for why.
+
+2. Install the APK it produces on your device.
+
+3. Start Metro and scan the QR with **that app**, not Expo Go:
+
+   ```
+   pnpm --filter @workspace/dice-tracker run dev:device
+   ```
+
+   Phone and computer must be on the same network. `dev:tunnel` routes around
+   networks that block device-to-device traffic.
+
+A rebuild is only needed when NATIVE code changes — a new dependency with native
+code, an SDK upgrade, or edits to `app.json` plugins or permissions. Ordinary
+JavaScript changes reload without one.
+
+For playing an actual game, build `--profile preview` instead: that produces a
+standalone APK with the JS bundled in, so no computer is needed at all.
 
 ## Testing on Android Emulator
 
@@ -105,7 +133,7 @@ artifacts/dice-tracker/
 │   ├── catanStats.ts            # Catan-specific statistics (pure functions)
 │   ├── catanVerdict.ts          # Catan verdict copy layer
 │   ├── rollInput.ts             # Single entry point for all roll recording
-│   ├── sound.ts                 # Optional audio feedback (expo-av)
+│   ├── sound.ts                 # Optional audio feedback (expo-audio)
 │   ├── stats.ts                 # General statistics (pure functions)
 │   ├── storage.ts               # AsyncStorage wrapper, export/import, prefill
 │   └── verdict.ts               # General verdict copy layer
@@ -129,9 +157,9 @@ cd artifacts/dice-tracker && npx jest --no-coverage
 ## Known Limitations
 
 - **Sound**: WAV assets are bundled (`assets/sounds/`). Replace them with your own files to change the sounds.
-- **Jest version**: A peer-dependency warning appears when running tests (`jest@30` vs Expo's `~29.7.0`). Tests pass — tracked as a future fix.
+- **Jest version**: `expo install --check` reports `jest@30` against Expo's `~29.7.0`. This is DELIBERATE, not a pending fix — that recommendation targets `jest-expo`, which this project does not use. See CLAUDE.md.
 - **Web**: Share card image capture (`react-native-view-shot`) does not work on web; falls back to text-only sharing.
-- **Expo Go**: `expo-media-library` (Save to Photos) requires a development build for full permissions on iOS.
+- **Glare**: the on-device board reader degrades under strong glare, and no global image filter helps (measured). Correct affected tiles in the review screen.
 
 ## Statistical Methodology
 
@@ -173,14 +201,21 @@ See [CHANGELOG.md](./CHANGELOG.md) for the phase-by-phase history.
 
 ## Claude Code Migration Checklist
 
-To continue development locally with Claude Code after exporting from Replit:
+To pick the project up on a new machine:
 
 1. `git clone https://github.com/laxaholic123-cpu/BLorSI.git && cd BLorSI`
 2. `pnpm install`
-3. `pnpm --filter @workspace/dice-tracker run dev`
-4. Scan the QR code with Expo Go (or press `a` for Android emulator, `i` for iOS simulator)
-5. No environment variables required — the app is fully local
-6. For future cloud sync: create `.env.local` from `.env.example`
+3. `pnpm run typecheck && pnpm --filter @workspace/dice-tracker exec jest --no-coverage`
+   — a green baseline before changing anything
+4. Build a development build and install it (see **Testing on a Device** above)
+5. `pnpm --filter @workspace/dice-tracker run dev:device`
+
+No environment variables are needed to play — the app is fully local. The AI
+board scan is the one exception; copy `.env.example` to `.env.local` and see the
+api-server's own `.env.example` for its key.
+
+**Read `CLAUDE.md` at the repo root first.** It covers the environment quirks,
+the decisions that look wrong until explained, and what is genuinely unverified.
 
 ## Recommended Next Steps
 

@@ -9,7 +9,8 @@ A record of non-obvious decisions made during development. Future contributors s
 **Decision:** Use `@react-native-async-storage/async-storage` with JSON serialization.
 
 **Why:**
-- Works in Expo Go without a native build — critical for fast iteration
+- Simple JSON persistence, no native build step of its own
+  (SUPERSEDED IN PART: the app now requires a development build regardless — see D-LATE below)
 - Tabletop game sessions are small data sets (hundreds of events max); SQL query performance is not a concern
 - JSON serialization maps naturally to the event-log data model
 - Simpler migration path: schema version + spread merge
@@ -66,7 +67,7 @@ A record of non-obvious decisions made during development. Future contributors s
 
 **Why:**
 - Matches product spec requirements exactly
-- Simplifies deployment (Expo Go-compatible, no server to maintain)
+- Simplifies deployment (no server to maintain)
 - AsyncStorage is sufficient for structured per-device session data
 
 **Revisit when:** the user explicitly requests cloud sync, friend groups, or social sharing.
@@ -115,7 +116,7 @@ A record of non-obvious decisions made during development. Future contributors s
 **Decision:** Audio assets are 22 kHz mono 16-bit PCM WAV files generated at build time from a Node.js script.
 
 **Why:**
-- WAV is universally supported on iOS and Android via expo-av without transcoding
+- WAV is universally supported on iOS and Android via expo-audio without transcoding
 - No codec licensing concerns
 - Files are small (2–8 KB) at 22 kHz and short duration (55–180 ms)
 - Generated programmatically so they can be reproduced or customized without external tools

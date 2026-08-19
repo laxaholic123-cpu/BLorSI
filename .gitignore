@@ -47,3 +47,12 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Secrets — never commit these.
+# api-server/.env holds a real API key. It was committed once by an over-broad
+# `git add -A` and only caught by GitHub push protection; these rules exist so
+# that cannot recur. .env.example files are the documented, safe versions.
+.env
+.env.local
+.env.*.local
+!.env.example
