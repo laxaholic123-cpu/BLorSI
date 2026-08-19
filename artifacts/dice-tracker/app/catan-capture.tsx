@@ -49,7 +49,7 @@ import Svg, { Polygon, Circle } from 'react-native-svg';
 
 import { useColors } from '@/hooks/useColors';
 import { loadPixelBuffer } from '@/services/vision/pixelSource';
-import { downscale } from '@/services/vision/pixelBuffer';
+import { downscale, screenToImage } from '@/services/vision/pixelBuffer';
 import { readFrame } from '@/services/vision/readFrame';
 import {
   CONFIDENCE_THRESHOLD,
@@ -128,10 +128,11 @@ export default function CatanCaptureScreen() {
       if (!raw) throw new Error('could not decode');
       const buffer = downscale(raw, Math.max(1, Math.round(raw.width / TARGET_WIDTH)));
 
-      const corners = [0, 2, 18, 16].map(i => {
-        const s = toScreen(HEX_CENTERS[i]!);
-        return { x: (s.x / screenW) * buffer.width, y: (s.y / screenH) * buffer.height };
-      }) as [Point, Point, Point, Point];
+      // The preview crops the photo — the aspect ratios differ — so this is not
+      // a plain scale. See screenToImage.
+      const corners = [0, 2, 18, 16].map(i =>
+        screenToImage(toScreen(HEX_CENTERS[i]!), screenW, screenH, buffer.width, buffer.height),
+      ) as [Point, Point, Point, Point];
 
       const reading = readFrame(buffer, corners);
       if (reading.evidence.length === 0) {

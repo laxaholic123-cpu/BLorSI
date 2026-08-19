@@ -15,7 +15,7 @@ import {
 } from '@/services/vision/readFrame';
 import { HEX_CENTERS, terrainSamplePoints } from '@/services/vision/boardGeometry';
 import { applyHomography, type Point } from '@/services/vision/homography';
-import type { PixelBuffer } from '@/services/vision/pixelBuffer';
+import { screenToImage, type PixelBuffer } from '@/services/vision/pixelBuffer';
 import { TERRAIN_REFERENCES } from '@/services/vision/terrainPalette';
 import { reconcileBoardFromEvidence, validateBoardComposition } from '@/services/boardConstraints';
 
@@ -376,5 +376,87 @@ describe('classifyTokenPresence — blank tiles found by comparison, not by a nu
     sparse[0] = 0.5; sparse[1] = 0.1;
     const p = classifyTokenPresence(sparse);
     expect(p.filter(v => v === false)).toHaveLength(0);
+  });
+});
+
+describe('screenToImage — preview crop, not a plain scale', () => {
+  // A phone screen is tall and narrow; the sensor is not. The preview fills the
+  // screen and crops the overflow, so mapping by simple ratio puts every sample
+  // in the wrong place — and nothing errors, the board just reads as nonsense.
+  const SCREEN_W = 1080;
+  const SCREEN_H = 2400;
+
+  it('is the identity when the aspect ratios already match', () => {
+    const p = screenToImage({ x: 540, y: 1200 }, SCREEN_W, SCREEN_H, 1080, 2400);
+    expect(p.x).toBeCloseTo(540);
+    expect(p.y).toBeCloseTo(1200);
+  });
+
+  it('maps the centre to the centre whatever the crop', () => {
+    for (const [w, h] of [[4032, 3024], [4000, 2250], [3024, 4032], [1080, 2400]]) {
+      const p = screenToImage({ x: SCREEN_W / 2, y: SCREEN_H / 2 }, SCREEN_W, SCREEN_H, w!, h!);
+      expect(p.x).toBeCloseTo(w! / 2, 3);
+      expect(p.y).toBeCloseTo(h! / 2, 3);
+    }
+  });
+
+  it('crops the sides when the photo is wider than the screen', () => {
+    // 4:3 sensor, 9:20 screen — the photo is far wider, so its full height shows
+    // and the sides are trimmed.
+    const img = { w: 4032, h: 3024 };
+    const topLeft = screenToImage({ x: 0, y: 0 }, SCREEN_W, SCREEN_H, img.w, img.h);
+    expect(topLeft.y).toBeCloseTo(0, 3);
+    expect(topLeft.x).toBeGreaterThan(0);
+
+    const bottomRight = screenToImage({ x: SCREEN_W, y: SCREEN_H }, SCREEN_W, SCREEN_H, img.w, img.h);
+    expect(bottomRight.y).toBeCloseTo(img.h, 3);
+    expect(bottomRight.x).toBeLessThan(img.w);
+
+    // The crop is symmetric.
+    expect(topLeft.x).toBeCloseTo(img.w - bottomRight.x, 3);
+  });
+
+  it('crops top and bottom when the photo is taller than the screen', () => {
+    // Worth being precise: a 3:4 PORTRAIT photo is 0.75 wide-to-tall, while a
+    // 9:20 screen is 0.45 — so even a portrait photo is RELATIVELY wider and
+    // still crops at the sides. Getting top-and-bottom cropping needs an image
+    // narrower than the screen, which is unusual but must not break.
+    const img = { w: 1000, h: 2600 };
+    const topLeft = screenToImage({ x: 0, y: 0 }, SCREEN_W, SCREEN_H, img.w, img.h);
+    expect(topLeft.x).toBeCloseTo(0, 3);
+    expect(topLeft.y).toBeGreaterThan(0);
+  });
+
+  it('crops the sides even for a PORTRAIT photo on a tall screen', () => {
+    // The case a phone actually produces, and the one a naive mapping ruins.
+    const img = { w: 3024, h: 4032 };
+    const topLeft = screenToImage({ x: 0, y: 0 }, SCREEN_W, SCREEN_H, img.w, img.h);
+    expect(topLeft.y).toBeCloseTo(0, 3);
+    expect(topLeft.x).toBeGreaterThan(100);
+  });
+
+  it('never maps outside the image', () => {
+    for (const [w, h] of [[4032, 3024], [3024, 4032], [4000, 2250]]) {
+      for (const pt of [{ x: 0, y: 0 }, { x: SCREEN_W, y: SCREEN_H }, { x: SCREEN_W / 3, y: SCREEN_H / 4 }]) {
+        const p = screenToImage(pt, SCREEN_W, SCREEN_H, w!, h!);
+        expect(p.x).toBeGreaterThanOrEqual(-1e-6);
+        expect(p.y).toBeGreaterThanOrEqual(-1e-6);
+        expect(p.x).toBeLessThanOrEqual(w! + 1e-6);
+        expect(p.y).toBeLessThanOrEqual(h! + 1e-6);
+      }
+    }
+  });
+
+  it('differs materially from a naive scale — which is the whole point', () => {
+    // If these agreed there would be no bug to fix. On a 4:3 sensor the naive
+    // mapping is out by hundreds of pixels near the edges.
+    const img = { w: 4032, h: 3024 };
+    const correct = screenToImage({ x: 0, y: 0 }, SCREEN_W, SCREEN_H, img.w, img.h);
+    const naive = { x: 0, y: 0 };
+    expect(Math.abs(correct.x - naive.x)).toBeGreaterThan(100);
+  });
+
+  it('degrades safely on nonsense dimensions', () => {
+    expect(screenToImage({ x: 5, y: 5 }, 0, 0, 100, 100)).toEqual({ x: 0, y: 0 });
   });
 });

@@ -95,3 +95,56 @@ export function cropGray(
   }
   return { data: out, width: w, height: h };
 }
+
+// ─── Screen space to image space ──────────────────────────────────────────────
+
+/**
+ * Map a point on the camera preview to the same point in the captured photo.
+ *
+ * THIS IS NOT A SIMPLE SCALE, and assuming it was is a bug worth spelling out.
+ *
+ * The preview fills the screen — roughly 9:20 on a modern phone — while the
+ * sensor shoots 4:3 or 16:9. The preview therefore shows a CROP of what the
+ * photo contains: the aspect ratios do not match, so a naive
+ * `(screenX / screenWidth) * imageWidth` puts every sample in the wrong place.
+ * The board would be captured perfectly and read as nonsense, which is a
+ * miserable failure to diagnose from a phone because nothing errors.
+ *
+ * The preview covers rather than contains — it fills the view and crops the
+ * overflow — so exactly one axis is fully visible and the other is trimmed
+ * equally at both ends.
+ */
+export function screenToImage(
+  point: { x: number; y: number },
+  screenWidth: number,
+  screenHeight: number,
+  imageWidth: number,
+  imageHeight: number,
+): { x: number; y: number } {
+  if (screenWidth <= 0 || screenHeight <= 0 || imageWidth <= 0 || imageHeight <= 0) {
+    return { x: 0, y: 0 };
+  }
+
+  const screenAspect = screenWidth / screenHeight;
+  const imageAspect = imageWidth / imageHeight;
+
+  let visibleWidth: number;
+  let visibleHeight: number;
+  if (imageAspect > screenAspect) {
+    // Photo is wider than the screen: full height shown, sides cropped.
+    visibleHeight = imageHeight;
+    visibleWidth = imageHeight * screenAspect;
+  } else {
+    // Photo is taller: full width shown, top and bottom cropped.
+    visibleWidth = imageWidth;
+    visibleHeight = imageWidth / screenAspect;
+  }
+
+  const offsetX = (imageWidth - visibleWidth) / 2;
+  const offsetY = (imageHeight - visibleHeight) / 2;
+
+  return {
+    x: offsetX + (point.x / screenWidth) * visibleWidth,
+    y: offsetY + (point.y / screenHeight) * visibleHeight,
+  };
+}

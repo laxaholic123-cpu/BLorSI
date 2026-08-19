@@ -17,7 +17,7 @@ import { Skia } from '@shopify/react-native-skia';
 import type { PixelBuffer } from '@/services/vision/pixelBuffer';
 
 export type { PixelBuffer } from '@/services/vision/pixelBuffer';
-export { downscale, readPixel, cropGray } from '@/services/vision/pixelBuffer';
+export { downscale, readPixel, cropGray, screenToImage } from '@/services/vision/pixelBuffer';
 
 /**
  * Decode a local image file into a pixel buffer.
@@ -28,8 +28,8 @@ export { downscale, readPixel, cropGray } from '@/services/vision/pixelBuffer';
  */
 export async function loadPixelBuffer(uri: string): Promise<PixelBuffer | null> {
   try {
-    const data = await Skia.Data.fromURI(uri);
-    const image = Skia.Image.MakeImageFromEncoded(data);
+    const encoded = await Skia.Data.fromURI(uri);
+    const image = Skia.Image.MakeImageFromEncoded(encoded);
     if (!image) return null;
 
     const width = image.width();
@@ -37,7 +37,25 @@ export async function loadPixelBuffer(uri: string): Promise<PixelBuffer | null> 
     const pixels = image.readPixels();
     if (!pixels) return null;
 
-    return { data: new Uint8Array(pixels.buffer ?? pixels), width, height };
+    // readPixels returns Float32Array OR Uint8Array depending on the image's
+    // colour type. Treating a Float32Array as bytes reinterprets its raw float
+    // bytes and produces pure noise — an especially nasty failure, because
+    // nothing throws and the board simply reads as nonsense.
+    const expected = width * height * 4;
+    let bytes: Uint8Array;
+    if (pixels instanceof Uint8Array) {
+      if (pixels.length < expected) return null;
+      bytes = pixels;
+    } else {
+      if (pixels.length < expected) return null;
+      // Float pixels are 0..1; bring them into byte range.
+      bytes = new Uint8Array(expected);
+      for (let i = 0; i < expected; i++) {
+        bytes[i] = Math.max(0, Math.min(255, Math.round(pixels[i]! * 255)));
+      }
+    }
+
+    return { data: bytes, width, height };
   } catch {
     return null;
   }
