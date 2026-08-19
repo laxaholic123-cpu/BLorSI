@@ -305,3 +305,166 @@ export function describeChange(change: BoardChange): string {
   const to = change.to === null ? 'blank' : String(change.to);
   return `Hex ${change.hexIndex}: ${change.field} ${from} → ${to}`;
 }
+
+// ─── Evidence-based reconciliation ────────────────────────────────────────────
+
+/**
+ * Per-hex evidence from a scanner, richer than a single guess.
+ *
+ * `resourceCost[terrain]` and `tokenCost[number]` are costs — LOWER means more
+ * likely. A colour classifier supplies perceptual distances; a token reader
+ * supplies its own confidence. Anything the scanner has no opinion about should
+ * be left at an equal cost across the board.
+ */
+export interface HexEvidence {
+  index: number;
+  resourceCost: Partial<Record<ResourceType, number>>;
+  tokenCost: Partial<Record<number, number>>;
+  /**
+   * Whether a number token was found sitting on this hex.
+   *
+   * This is the single most useful cross-signal on the board. The desert is the
+   * only tile without a token, so its absence is strong evidence of desert and
+   * its presence is proof of NOT-desert — evidence that arrives completely
+   * independently of colour, which matters because the desert's pale tan is the
+   * hardest terrain to separate by colour alone. Leave undefined if unknown.
+   */
+  hasToken?: boolean;
+}
+
+/** How hard the token cross-signal pushes. Large enough to overrule colour. */
+const TOKEN_PRESENCE_WEIGHT = 8;
+
+/** Cost used for a class the scanner expressed no opinion about. */
+const NEUTRAL_COST = 1;
+
+function costFor<K extends string | number>(
+  costs: Partial<Record<K, number>>,
+  key: K,
+): number {
+  const value = costs[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : NEUTRAL_COST;
+}
+
+/**
+ * Resolve a whole board from per-hex evidence.
+ *
+ * WHY THIS BEATS CLASSIFYING TILES ONE AT A TIME
+ * ----------------------------------------------
+ * Every tile is assigned in a single global optimisation against the contents of
+ * the box, so confident readings actively rescue unconfident ones. If eleven
+ * tiles are read cleanly and a twelfth is lost under glare, the solver does not
+ * need to recognise the twelfth at all — the other eighteen have consumed
+ * everything except one tile and one token, and the leftovers can only go in one
+ * place. That is the propagation that makes a lossy scan still produce a correct
+ * board, and it gets stronger with every tile that reads cleanly.
+ *
+ * Costs are combined additively, so independent signals accumulate: a hex that
+ * looks tan AND has no token becomes overwhelmingly the desert, while one that
+ * looks tan but carries a token is pushed elsewhere however tan it looked.
+ */
+export function reconcileBoardFromEvidence(
+  evidence: ReadonlyArray<HexEvidence>,
+): ReconcileResult {
+  if (evidence.length !== BOARD_HEX_COUNT) {
+    return { hexes: [], changes: [] };
+  }
+
+  // ── Resources ───────────────────────────────────────────────────────────
+  const resourceSlots = expandSlots(
+    RESOURCE_CLASSES.map(r => [r, BOARD_RESOURCE_COUNTS[r]!] as [ResourceType, number]),
+  );
+
+  const resourceCost = evidence.map(hex =>
+    resourceSlots.map(slot => {
+      let cost = costFor(hex.resourceCost, slot);
+      if (hex.hasToken !== undefined) {
+        if (slot === 'desert') {
+          // A token on the tile rules the desert out; its absence argues for it.
+          cost += hex.hasToken ? TOKEN_PRESENCE_WEIGHT : -TOKEN_PRESENCE_WEIGHT;
+        } else if (!hex.hasToken) {
+          // Nothing else can sit tokenless.
+          cost += TOKEN_PRESENCE_WEIGHT;
+        }
+      }
+      return cost;
+    }),
+  );
+
+  const resourceAssignment = hungarian(resourceCost);
+  const resolved: CatanHexDef[] = evidence.map((hex, i) => ({
+    index: hex.index,
+    resource: resourceSlots[resourceAssignment[i]!]!,
+    number: null,
+    confidence: 'low' as const,
+  }));
+
+  // ── Tokens ──────────────────────────────────────────────────────────────
+  const numberedIndices: number[] = [];
+  resolved.forEach((hex, i) => {
+    if (hex.resource !== 'desert') numberedIndices.push(i);
+  });
+
+  const tokenSlots = expandSlots(
+    TOKEN_CLASSES.map(t => [t, BOARD_TOKEN_COUNTS[t]!] as [number, number]),
+  );
+  const tokenCost = numberedIndices.map(i =>
+    tokenSlots.map(slot => costFor(evidence[i]!.tokenCost, slot)),
+  );
+  const tokenAssignment = hungarian(tokenCost);
+
+  numberedIndices.forEach((hexPos, row) => {
+    resolved[hexPos]!.number = tokenSlots[tokenAssignment[row]!]!;
+  });
+
+  // Confidence reflects whether the solver agreed with the scanner's own best
+  // guess. Where it overruled the evidence, a human should take a look.
+  const hexes = resolved.map((hex, i) => {
+    const ev = evidence[i]!;
+    const bestResource = cheapestKey(ev.resourceCost);
+    const bestToken = cheapestKey(ev.tokenCost);
+    const resourceAgreed = bestResource === null || bestResource === hex.resource;
+    const tokenAgreed =
+      hex.resource === 'desert' || bestToken === null || Number(bestToken) === hex.number;
+    return { ...hex, confidence: resourceAgreed && tokenAgreed ? ('high' as const) : ('low' as const) };
+  });
+
+  const changes: BoardChange[] = [];
+  evidence.forEach((ev, i) => {
+    const bestResource = cheapestKey(ev.resourceCost);
+    if (bestResource !== null && bestResource !== hexes[i]!.resource) {
+      changes.push({
+        hexIndex: ev.index,
+        field: 'resource',
+        from: bestResource as ResourceType,
+        to: hexes[i]!.resource,
+      });
+    }
+    const bestToken = cheapestKey(ev.tokenCost);
+    if (bestToken !== null && Number(bestToken) !== hexes[i]!.number) {
+      changes.push({
+        hexIndex: ev.index,
+        field: 'number',
+        from: Number(bestToken),
+        to: hexes[i]!.number,
+      });
+    }
+  });
+
+  return { hexes, changes };
+}
+
+/** Key with the lowest cost, or null when nothing was supplied. */
+function cheapestKey<K extends string | number>(
+  costs: Partial<Record<K, number>>,
+): K | null {
+  let best: K | null = null;
+  let bestCost = Infinity;
+  for (const [key, value] of Object.entries(costs) as [K, number][]) {
+    if (typeof value === 'number' && value < bestCost) {
+      bestCost = value;
+      best = key;
+    }
+  }
+  return best;
+}
