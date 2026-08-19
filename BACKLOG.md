@@ -85,7 +85,18 @@ may be more or less done than it looks.
    - `reconcileBoardFromEvidence` combines colour and the has-a-token cross-signal
      in one global assignment, so confident tiles rescue uncertain ones.
    - `services/vision/pixelSource.ts` bridges to react-native-skia for pixel access.
-   **Remaining:** the capture UI (photo → four corner taps → review), and an
-   end-to-end accuracy run against the reference photos. That number decides
-   whether this ships as the primary path or stays behind the AI.
+   **Measured, and it settled a design question:** fully automatic board
+   detection was prototyped (`tools/detect_probe.py`) and does NOT work — mean
+   tile-count error 22.7 of 19 across the reference set, no better than chance.
+   The decisive reason is not the algorithm: **ten of twelve reference photos are
+   close-ups with the board partly out of frame**, so there is nothing to detect.
+   That is what people actually photograph.
+
+   So the geometry must be supplied rather than inferred. Preferred: a live
+   camera guide the player aligns the board to, which costs zero taps and fixes
+   the homography before a pixel is read. Fallback: four corner taps on a still.
+
+   **Remaining:** the capture step, and an end-to-end accuracy run with correct
+   geometry — still unmeasured, and the number that decides whether local
+   scanning ships as primary or stays behind the AI.
 7. **Store-release prerequisites**, if that's the goal: privacy policy (a photo leaves the device), `ios.bundleIdentifier`, icon and splash review. `android.package` is now set to `com.laxaholic123.skillcheck` — trivial to change now, impossible after release.
