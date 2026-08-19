@@ -34,9 +34,9 @@ import {
 } from '@/services/vision/binaryOps';
 import { decodeToken } from '@/services/vision/tokenDecode';
 import {
+  classifyBoardRelative,
   medianLab,
   rgbToLab,
-  terrainCosts,
   type Lab,
 } from '@/services/vision/terrainPalette';
 import { shouldMergeFrame, type FrameAssessment } from '@/services/vision/frameQuality';
@@ -225,7 +225,118 @@ function readToken(
 }
 
 /**
+ * Lightness of a hex's token face — the printed cream, ignoring the ink.
+ *
+ * Every token face is the same colour, so wherever one reads bright, that part
+ * of the board is brightly lit. Eighteen of them, spread across the board, are a
+ * ready-made map of the illumination.
+ */
+function tokenFaceLightness(
+  buffer: PixelBuffer,
+  h: Matrix3,
+  hexIndex: number,
+): number | null {
+  const centre = HEX_CENTERS[hexIndex];
+  if (!centre) return null;
+  const values: number[] = [];
+  for (let r = 0; r < TOKEN_RADIUS; r += 0.05) {
+    const steps = Math.max(8, Math.round(r * 60));
+    for (let k = 0; k < steps; k++) {
+      const theta = (2 * Math.PI * k) / steps;
+      const mapped = applyHomography(h, {
+        x: centre.x + r * Math.cos(theta),
+        y: centre.y + r * Math.sin(theta),
+      });
+      if (!mapped) continue;
+      if (mapped.x < 0 || mapped.y < 0 || mapped.x >= buffer.width || mapped.y >= buffer.height) continue;
+      const { r: pr, g: pg, b: pb } = readPixel(buffer, mapped.x, mapped.y);
+      values.push(rgbToLab(pr, pg, pb).L);
+    }
+  }
+  if (values.length < 12) return null;
+  // The face is the BRIGHT part of the disc; the ink is what we are excluding.
+  values.sort((a, b) => a - b);
+  const upper = values.slice(Math.floor(values.length * 0.75));
+  return upper.reduce((sum, v) => sum + v, 0) / upper.length;
+}
+
+/**
+ * Fit a plane to the token-face lightnesses and use it to flatten the light.
+ *
+ * A plane rather than anything cleverer because the dominant real-world case is
+ * a single light source to one side, which falls off smoothly across a flat
+ * board. Measured on a reference board the faces spanned 61 to 87 L — a quarter
+ * of the whole scale — which is more than enough to turn a lit forest into a
+ * mountain and a shadowed mountain into a forest. Correcting it fixed exactly
+ * that pair.
+ *
+ * Returns a per-hex gain, or null when too few tokens were found to fit.
+ */
+export function illuminationGains(
+  faceLightness: readonly (number | null)[],
+): number[] | null {
+  const pts: { x: number; y: number; L: number }[] = [];
+  faceLightness.forEach((L, i) => {
+    const c = HEX_CENTERS[i];
+    if (L !== null && c) pts.push({ x: c.x, y: c.y, L });
+  });
+  if (pts.length < 6) return null;
+
+  // Least squares for L = ax + by + c, by normal equations.
+  let sxx = 0, sxy = 0, sx = 0, syy = 0, sy = 0, n = 0, sxL = 0, syL = 0, sL = 0;
+  for (const p of pts) {
+    sxx += p.x * p.x; sxy += p.x * p.y; sx += p.x;
+    syy += p.y * p.y; sy += p.y; n += 1;
+    sxL += p.x * p.L; syL += p.y * p.L; sL += p.L;
+  }
+  const M = [[sxx, sxy, sx], [sxy, syy, sy], [sx, sy, n]];
+  const v = [sxL, syL, sL];
+  const det =
+    M[0]![0]! * (M[1]![1]! * M[2]![2]! - M[1]![2]! * M[2]![1]!) -
+    M[0]![1]! * (M[1]![0]! * M[2]![2]! - M[1]![2]! * M[2]![0]!) +
+    M[0]![2]! * (M[1]![0]! * M[2]![1]! - M[1]![1]! * M[2]![0]!);
+  if (Math.abs(det) < 1e-9) return null;
+
+  const solve3 = (col: number): number => {
+    const A = M.map(row => [...row]);
+    for (let i = 0; i < 3; i++) A[i]![col] = v[i]!;
+    return (
+      A[0]![0]! * (A[1]![1]! * A[2]![2]! - A[1]![2]! * A[2]![1]!) -
+      A[0]![1]! * (A[1]![0]! * A[2]![2]! - A[1]![2]! * A[2]![0]!) +
+      A[0]![2]! * (A[1]![0]! * A[2]![1]! - A[1]![1]! * A[2]![0]!)
+    ) / det;
+  };
+  const a = solve3(0), b = solve3(1), c = solve3(2);
+
+  const local = HEX_CENTERS.map(p => a * p.x + b * p.y + c);
+  const mean = local.reduce((s, L) => s + L, 0) / local.length;
+  // Clamp: a wild fit should not be allowed to invent lightness.
+  return local.map(L => Math.min(1.6, Math.max(0.625, mean / Math.max(L, 1e-6))));
+}
+
+/** Luminance spread across a hex's face — high for rock and forest, low for sand. */
+function tileRoughness(buffer: PixelBuffer, h: Matrix3, hexIndex: number): number | null {
+  const values: number[] = [];
+  for (const p of terrainSamplePoints(hexIndex, 36)) {
+    const mapped = applyHomography(h, p);
+    if (!mapped) continue;
+    if (mapped.x < 0 || mapped.y < 0 || mapped.x >= buffer.width || mapped.y >= buffer.height) continue;
+    const { r, g, b } = readPixel(buffer, mapped.x, mapped.y);
+    values.push((0.2126 * r + 0.7152 * g + 0.0722 * b) / 255);
+  }
+  if (values.length < 12) return null;
+  values.sort((x, y) => x - y);
+  const at = (q: number) => values[Math.min(values.length - 1, Math.floor(q * values.length))]!;
+  return at(0.8) - at(0.2);
+}
+
+/**
  * Read a whole frame.
+ *
+ * Deliberately board-at-a-time rather than tile-at-a-time. The illumination fit
+ * and the relative classification both need every tile before either can say
+ * anything about one, and that is exactly what makes the result independent of
+ * exposure and colour cast.
  *
  * Returns evidence only when the frame passes the merge gate — a rejected frame
  * still reports its samples and the reason, so the UI can tell the player what
@@ -250,17 +361,36 @@ export function readFrame(
   if (!assessment.usable) return { evidence: [], samples, assessment };
 
   const scale = pixelScale(h);
-  const wanted = options.decodeTokensFor
-    ? new Set(options.decodeTokensFor)
-    : null;
+  const inkRanges = HEX_CENTERS.map((_, i) => detectInkRange(buffer, h, i));
+  const hasToken = inkRanges.map(r => (r === null ? undefined : r >= INK_RANGE_THRESHOLD));
 
-  const evidence: HexEvidence[] = samples.map((sample, index) => {
-    const resourceCost = sample ? terrainCosts(sample) : {};
+  // Flatten the light using the token faces, before anything is classified.
+  const faces = HEX_CENTERS.map((_, i) =>
+    hasToken[i] ? tokenFaceLightness(buffer, h, i) : null,
+  );
+  const gains = illuminationGains(faces);
+
+  const observations = samples.map((colour, i) => ({
+    colour:
+      colour && gains
+        ? { L: colour.L * gains[i]!, a: colour.a, b: colour.b }
+        : colour,
+    roughness: colour ? tileRoughness(buffer, h, i) : null,
+  }));
+
+  const resourceCosts = classifyBoardRelative(observations);
+
+  const wanted = options.decodeTokensFor ? new Set(options.decodeTokensFor) : null;
+  const evidence: HexEvidence[] = observations.map((_, index) => {
+    const base = {
+      index,
+      resourceCost: resourceCosts[index] ?? {},
+      hasToken: hasToken[index],
+    };
     if (!wanted || wanted.has(index)) {
-      const token = readToken(buffer, h, index, scale);
-      return { index, resourceCost, tokenCost: token.costs, hasToken: token.hasToken };
+      return { ...base, tokenCost: readToken(buffer, h, index, scale).costs };
     }
-    return { index, resourceCost, tokenCost: {} };
+    return { ...base, tokenCost: {} };
   });
 
   return { evidence, samples, assessment };

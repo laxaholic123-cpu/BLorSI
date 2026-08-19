@@ -59,7 +59,33 @@ function blankBuffer(fill: [number, number, number] = [10, 10, 10]): PixelBuffer
   return { data, width: W, height: H };
 }
 
-function paint(buffer: PixelBuffer, cx: number, cy: number, r: number, rgb: [number, number, number]) {
+/**
+ * Surface roughness per terrain, matching TERRAIN_ROUGHNESS.
+ *
+ * A synthetic board painted in flat colour has NO texture, which starves the
+ * reader of a channel it now depends on — and a flat desert is
+ * indistinguishable from a flat forest by roughness. Real board art is
+ * textured, so the fixture has to be too, or it tests something the app will
+ * never see.
+ */
+const ROUGHNESS: Record<string, number> = {
+  lumber: 40, brick: 34, ore: 24, grain: 14, wool: 12, desert: 2,
+};
+
+/** Deterministic jitter, so a failing test always fails the same way. */
+function noiseAt(x: number, y: number): number {
+  const n = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+  return (n - Math.floor(n)) * 2 - 1;
+}
+
+function paint(
+  buffer: PixelBuffer,
+  cx: number,
+  cy: number,
+  r: number,
+  rgb: [number, number, number],
+  roughness = 0,
+) {
   const minX = Math.max(0, Math.floor(cx - r));
   const maxX = Math.min(W - 1, Math.ceil(cx + r));
   const minY = Math.max(0, Math.floor(cy - r));
@@ -68,9 +94,10 @@ function paint(buffer: PixelBuffer, cx: number, cy: number, r: number, rgb: [num
     for (let x = minX; x <= maxX; x++) {
       if (Math.hypot(x - cx, y - cy) > r) continue;
       const i = (y * W + x) * 4;
-      buffer.data[i] = rgb[0];
-      buffer.data[i + 1] = rgb[1];
-      buffer.data[i + 2] = rgb[2];
+      const j = roughness ? noiseAt(x, y) * roughness : 0;
+      buffer.data[i] = Math.max(0, Math.min(255, rgb[0] + j));
+      buffer.data[i + 1] = Math.max(0, Math.min(255, rgb[1] + j));
+      buffer.data[i + 2] = Math.max(0, Math.min(255, rgb[2] + j));
       buffer.data[i + 3] = 255;
     }
   }
@@ -82,10 +109,10 @@ function paintBoard(layout: string[]): PixelBuffer {
   const h = boardTransform(CORNERS)!;
   layout.forEach((terrain, i) => {
     const rgb = TERRAIN_RGB[terrain]!;
-    for (const p of terrainSamplePoints(i)) {
+    for (const p of terrainSamplePoints(i, 36)) {
       const mapped = applyHomography(h, p);
       if (!mapped) continue;
-      paint(buffer, mapped.x, mapped.y, 6, rgb);
+      paint(buffer, mapped.x, mapped.y, 9, rgb, ROUGHNESS[terrain] ?? 0);
     }
   });
   return buffer;
@@ -178,14 +205,14 @@ describe('readFrame', () => {
     expect(reading.assessment.usable).toBe(false);
   });
 
-  it('skips token decoding for hexes the caller did not ask about', () => {
-    // The live loop only pays for tokens on tiles that still need them.
+  it('skips the expensive DECODE, but always checks token presence', () => {
+    // Presence is one cheap pass and it is what identifies the desert, so it is
+    // never skipped. Decoding the number is the costly part, and the live loop
+    // only pays for it on tiles that still need it.
     const buffer = paintBoard(LEGAL_LAYOUT);
     const reading = readFrame(buffer, CORNERS, { decodeTokensFor: [0, 1] });
-    expect(reading.evidence[5]!.hasToken).toBeUndefined();
     expect(reading.evidence[5]!.tokenCost).toEqual({});
-    // The ones it was asked about were looked at, even if nothing was found.
-    expect(reading.evidence[0]!.hasToken).toBeDefined();
+    expect(reading.evidence.every(e => e.hasToken !== undefined)).toBe(true);
   });
 
   it('still samples colour for every hex when tokens are skipped', () => {
