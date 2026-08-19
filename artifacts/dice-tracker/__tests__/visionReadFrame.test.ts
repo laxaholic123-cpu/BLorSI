@@ -7,8 +7,9 @@
  */
 
 import {
-  INK_RANGE_THRESHOLD,
+  INK_RANGE_REFERENCE,
   boardTransform,
+  classifyTokenPresence,
   detectInkRange,
   readFrame,
 } from '@/services/vision/readFrame';
@@ -250,13 +251,13 @@ describe('detectInkRange — finding tokens by their ink', () => {
   it('reads a wide range where there is ink', () => {
     const buffer = paintBoard(LEGAL_LAYOUT);
     paintTokenWithInk(buffer, 5);
-    expect(detectInkRange(buffer, h, 5)!).toBeGreaterThan(INK_RANGE_THRESHOLD);
+    expect(detectInkRange(buffer, h, 5)!).toBeGreaterThan(INK_RANGE_REFERENCE);
   });
 
   it('reads a narrow range on a blank tile', () => {
     const buffer = paintBoard(LEGAL_LAYOUT);
     paintBlankToken(buffer, 9, [190, 177, 130]);
-    expect(detectInkRange(buffer, h, 9)!).toBeLessThan(INK_RANGE_THRESHOLD);
+    expect(detectInkRange(buffer, h, 9)!).toBeLessThan(INK_RANGE_REFERENCE);
   });
 
   it('is not fooled by a PALE blank tile — the desert', () => {
@@ -264,13 +265,13 @@ describe('detectInkRange — finding tokens by their ink', () => {
     // the desert a token, because the desert is bright and desaturated.
     const buffer = paintBoard(LEGAL_LAYOUT);
     paintBlankToken(buffer, 9, [214, 205, 172]);
-    expect(detectInkRange(buffer, h, 9)!).toBeLessThan(INK_RANGE_THRESHOLD);
+    expect(detectInkRange(buffer, h, 9)!).toBeLessThan(INK_RANGE_REFERENCE);
   });
 
   it('is not fooled by a DARK blank tile either', () => {
     const buffer = paintBoard(LEGAL_LAYOUT);
     paintBlankToken(buffer, 9, [60, 64, 44]);
-    expect(detectInkRange(buffer, h, 9)!).toBeLessThan(INK_RANGE_THRESHOLD);
+    expect(detectInkRange(buffer, h, 9)!).toBeLessThan(INK_RANGE_REFERENCE);
   });
 
   it('measures spread, not level, so exposure does not matter', () => {
@@ -290,8 +291,8 @@ describe('detectInkRange — finding tokens by their ink', () => {
     paint(dim, centreD.x - gD, centreD.y, gD, [16, 15, 14]);
     paint(dim, centreD.x + gD, centreD.y, gD, [16, 15, 14]);
 
-    expect(detectInkRange(bright, h, 5)!).toBeGreaterThan(INK_RANGE_THRESHOLD);
-    expect(detectInkRange(dim, h, 5)!).toBeGreaterThan(INK_RANGE_THRESHOLD);
+    expect(detectInkRange(bright, h, 5)!).toBeGreaterThan(INK_RANGE_REFERENCE);
+    expect(detectInkRange(dim, h, 5)!).toBeGreaterThan(INK_RANGE_REFERENCE);
   });
 
   it('returns null for a hex outside the frame', () => {
@@ -312,5 +313,68 @@ describe('detectInkRange — finding tokens by their ink', () => {
     expect(reading.evidence[9]!.hasToken).toBe(false);
     const withTokens = reading.evidence.filter(e => e.hasToken === true);
     expect(withTokens).toHaveLength(18);
+  });
+});
+
+
+describe('classifyTokenPresence — blank tiles found by comparison, not by a number', () => {
+  /** 18 inked tiles and one blank, at whatever overall scale. */
+  const board = (blankAt: number, scale: number) =>
+    Array.from({ length: 19 }, (_, i) => (i === blankAt ? 0.11 : 0.45) * scale);
+
+  it('finds the single blank tile under good light', () => {
+    const p = classifyTokenPresence(board(9, 1));
+    expect(p[9]).toBe(false);
+    expect(p.filter(v => v === false)).toHaveLength(1);
+  });
+
+  it('still finds it when the whole image loses contrast', () => {
+    // A fixed 0.20 cut called every tile blank here. Every range shrinks
+    // together, so an absolute threshold on a relative quantity collapses.
+    const p = classifyTokenPresence(board(9, 0.3));
+    expect(p[9]).toBe(false);
+    expect(p.filter(v => v === false)).toHaveLength(1);
+  });
+
+  it('still finds it when the image is unusually bright', () => {
+    const p = classifyTokenPresence(board(4, 2.2));
+    expect(p[4]).toBe(false);
+    expect(p.filter(v => v === false)).toHaveLength(1);
+  });
+
+  it('reports no blank when there is no cliff to find', () => {
+    // Every tile inked — the desert is out of frame. Inventing one would be
+    // worse than reporting none.
+    const p = classifyTokenPresence(new Array(19).fill(0.45));
+    expect(p.every(v => v === true)).toBe(true);
+  });
+
+  it('does not mistake an ordinary dim tile for a blank one', () => {
+    const ranges = new Array(19).fill(0.45);
+    ranges[3] = 0.36; // inked, just less contrasty
+    const p = classifyTokenPresence(ranges);
+    expect(p.filter(v => v === false)).toHaveLength(0);
+  });
+
+  it('never calls a whole board blank', () => {
+    // The failure the fixed threshold actually produced: 19 of 19 blank.
+    for (const scale of [0.1, 0.2, 0.5, 1, 3]) {
+      const p = classifyTokenPresence(board(9, scale));
+      expect(p.filter(v => v === false).length).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it('leaves unsampled hexes undefined rather than guessing', () => {
+    const ranges: (number | null)[] = board(9, 1);
+    ranges[0] = null;
+    const p = classifyTokenPresence(ranges);
+    expect(p[0]).toBeUndefined();
+  });
+
+  it('declines when too few tiles were measured to compare', () => {
+    const sparse: (number | null)[] = new Array(19).fill(null);
+    sparse[0] = 0.5; sparse[1] = 0.1;
+    const p = classifyTokenPresence(sparse);
+    expect(p.filter(v => v === false)).toHaveLength(0);
   });
 });

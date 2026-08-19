@@ -108,13 +108,15 @@ export interface TokenObservation {
 }
 
 /**
- * Luminance range below which a tile is considered BLANK — no token.
+ * Reference ink range separating a blank tile from an inked one under GOOD
+ * light. Measured on a reference board: the desert reads 0.11, the next-lowest
+ * tile 0.22, everything else 0.32 or more.
  *
- * Measured on a reference board: the desert reads 0.11, the next-lowest tile
- * reads 0.22, and everything else 0.32 or more. A 2x margin on a single
- * measurement, so the threshold sits comfortably between.
+ * Kept as documentation and as a sanity bound — the live decision is made by
+ * classifyTokenPresence, which compares tiles to each other instead, because a
+ * fixed cut on a relative quantity collapses in dim light.
  */
-export const INK_RANGE_THRESHOLD = 0.2;
+export const INK_RANGE_REFERENCE = 0.2;
 
 /**
  * Does this hex carry a number token?
@@ -171,7 +173,65 @@ export function detectInkRange(
 }
 
 /**
+ * Decide which tiles are BLANK, by looking at the board rather than at a number.
+ *
+ * The obvious approach is a fixed threshold on ink range, and it works until the
+ * light changes. Measured against a dim capture, a fixed 0.20 called all
+ * NINETEEN tiles blank: every range shrinks together when the whole image loses
+ * dynamic range, so an absolute cut on a relative quantity collapses. That is
+ * the same mistake the colour classifier used to make.
+ *
+ * Instead, sort the tiles by how much ink they carry and look for the largest
+ * proportional JUMP near the bottom. A real board has one blank tile and
+ * eighteen inked ones, so there is a genuine cliff between them — and where the
+ * cliff sits does not depend on exposure at all, only on the contrast between a
+ * printed token and a bare tile, which survives almost anything.
+ *
+ * Measured across low contrast, underexposure, severe underexposure and sensor
+ * noise, this found exactly one blank tile every time, where the fixed
+ * threshold found two, eight, nineteen and one.
+ *
+ * Returns hasToken per hex; null entries (unsampled) come back undefined.
+ */
+export function classifyTokenPresence(
+  inkRanges: readonly (number | null)[],
+): (boolean | undefined)[] {
+  const measured: { index: number; range: number }[] = [];
+  inkRanges.forEach((r, index) => {
+    if (r !== null && Number.isFinite(r)) measured.push({ index, range: r });
+  });
+
+  const result: (boolean | undefined)[] = inkRanges.map(r => (r === null ? undefined : true));
+  if (measured.length < 6) return result;
+
+  measured.sort((a, b) => a.range - b.range);
+
+  // Only the bottom few can be blank — a board has one desert, not eight. A
+  // wider window would let an ordinary dark tile look like a cliff edge.
+  const window = Math.min(3, measured.length - 1);
+  let bestJump = 1;
+  let splitAt = -1;
+  for (let i = 0; i < window; i++) {
+    const lower = Math.max(measured[i]!.range, 1e-6);
+    const jump = measured[i + 1]!.range / lower;
+    if (jump > bestJump) {
+      bestJump = jump;
+      splitAt = i;
+    }
+  }
+
+  // No cliff means no blank tile in view — the desert may simply be out of
+  // frame, and inventing one would be worse than reporting none.
+  const MIN_JUMP = 1.45;
+  if (splitAt < 0 || bestJump < MIN_JUMP) return result;
+
+  for (let i = 0; i <= splitAt; i++) result[measured[i]!.index] = false;
+  return result;
+}
+
+/**
  * Look at a hex's token: is one there, and which number is it?
+
  *
  * Presence is answered first and separately, because it survives conditions that
  * defeat the decode — and it is the signal that identifies the desert, which is
@@ -183,11 +243,6 @@ function readToken(
   hexIndex: number,
   scale: number,
 ): TokenObservation {
-  const inkRange = detectInkRange(buffer, h, hexIndex);
-  if (inkRange === null) return { hasToken: false, costs: {} };
-  const hasToken = inkRange >= INK_RANGE_THRESHOLD;
-  if (!hasToken) return { hasToken: false, costs: {} };
-
   const centre = applyHomography(h, HEX_CENTERS[hexIndex]!);
   if (!centre || scale <= 0) return { hasToken: true, costs: {} };
 
@@ -362,7 +417,7 @@ export function readFrame(
 
   const scale = pixelScale(h);
   const inkRanges = HEX_CENTERS.map((_, i) => detectInkRange(buffer, h, i));
-  const hasToken = inkRanges.map(r => (r === null ? undefined : r >= INK_RANGE_THRESHOLD));
+  const hasToken = classifyTokenPresence(inkRanges);
 
   // Flatten the light using the token faces, before anything is classified.
   const faces = HEX_CENTERS.map((_, i) =>
