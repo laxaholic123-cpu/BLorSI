@@ -108,11 +108,74 @@ export interface TokenObservation {
 }
 
 /**
- * Look at a hex's token circle: is there a token, and which one?
+ * Luminance range below which a tile is considered BLANK — no token.
  *
- * The has-a-token answer matters even when the number is unreadable — it is the
- * signal that separates the desert from everything else, and it survives blur
- * that would defeat the decode.
+ * Measured on a reference board: the desert reads 0.11, the next-lowest tile
+ * reads 0.22, and everything else 0.32 or more. A 2x margin on a single
+ * measurement, so the threshold sits comfortably between.
+ */
+export const INK_RANGE_THRESHOLD = 0.2;
+
+/**
+ * Does this hex carry a number token?
+ *
+ * Looks for INK, not for the token's shape or its pale face.
+ *
+ * An earlier version tested "is the centre bright and desaturated" and failed
+ * badly — because the desert IS bright and desaturated, so the test could not
+ * distinguish the one tile it existed to find. Detecting the printed circle by
+ * shape would work but needs real circle-finding.
+ *
+ * Printed digits and pips are what actually separate them: every token has dark
+ * ink on a pale face, giving a wide spread of luminance, while a blank tile —
+ * however pale, textured or glared — has no concentrated dark marks and stays
+ * comparatively flat. Measuring the SPREAD rather than the level also makes this
+ * immune to exposure: a token in shadow and a token under glare both show a
+ * large range, and shifting both ends by the same amount changes nothing.
+ */
+export function detectInkRange(
+  buffer: PixelBuffer,
+  h: Matrix3,
+  hexIndex: number,
+): number | null {
+  const centre = HEX_CENTERS[hexIndex];
+  if (!centre) return null;
+
+  const values: number[] = [];
+  // Dense enough that the digits cannot be missed between spokes. Sampling
+  // sparsely near the centre reads only the token's blank face and reports a
+  // range of zero on a tile that plainly has ink on it.
+  for (let r = 0; r < TOKEN_RADIUS; r += 0.025) {
+    const steps = Math.max(8, Math.round(r * 90));
+    for (let k = 0; k < steps; k++) {
+      const theta = (2 * Math.PI * k) / steps;
+      const mapped = applyHomography(h, {
+        x: centre.x + r * Math.cos(theta),
+        y: centre.y + r * Math.sin(theta),
+      });
+      if (!mapped) continue;
+      if (mapped.x < 0 || mapped.y < 0 || mapped.x >= buffer.width || mapped.y >= buffer.height) {
+        continue;
+      }
+      const { r: pr, g: pg, b: pb } = readPixel(buffer, mapped.x, mapped.y);
+      values.push((0.2126 * pr + 0.7152 * pg + 0.0722 * pb) / 255);
+    }
+  }
+  if (values.length < 20) return null;
+
+  // Percentiles rather than min/max, so one specular pixel or one dark speck
+  // cannot manufacture a range on a blank tile.
+  values.sort((a, b) => a - b);
+  const at = (q: number) => values[Math.min(values.length - 1, Math.floor(q * values.length))]!;
+  return at(0.9) - at(0.1);
+}
+
+/**
+ * Look at a hex's token: is one there, and which number is it?
+ *
+ * Presence is answered first and separately, because it survives conditions that
+ * defeat the decode — and it is the signal that identifies the desert, which is
+ * the tile colour alone is worst at.
  */
 function readToken(
   buffer: PixelBuffer,
@@ -120,48 +183,39 @@ function readToken(
   hexIndex: number,
   scale: number,
 ): TokenObservation {
+  const inkRange = detectInkRange(buffer, h, hexIndex);
+  if (inkRange === null) return { hasToken: false, costs: {} };
+  const hasToken = inkRange >= INK_RANGE_THRESHOLD;
+  if (!hasToken) return { hasToken: false, costs: {} };
+
   const centre = applyHomography(h, HEX_CENTERS[hexIndex]!);
-  if (!centre || scale <= 0) return { hasToken: false, costs: {} };
+  if (!centre || scale <= 0) return { hasToken: true, costs: {} };
 
   const radius = TOKEN_RADIUS * scale;
   const size = Math.round(radius * 2);
-  if (size < 12) return { hasToken: false, costs: {} }; // too small to read
+  if (size < 12) return { hasToken: true, costs: {} };
 
   const left = centre.x - radius;
   const top = centre.y - radius;
   if (left < 0 || top < 0 || left + size > buffer.width || top + size > buffer.height) {
-    return { hasToken: false, costs: {} };
+    return { hasToken: true, costs: {} };
   }
 
-  const gray = cropGray(buffer, left, top, size, size);
-  const mask = threshold(gray);
-
-  // Ink on a token is a small fraction of the crop. A crop that is mostly dark
-  // is terrain, not a token — no token means the tile is a desert candidate.
-  const inkFraction = mask.data.filter(Boolean).length / mask.data.length;
-  if (inkFraction < 0.02 || inkFraction > 0.45) {
-    return { hasToken: false, costs: {} };
-  }
-
+  const mask = threshold(cropGray(buffer, left, top, size, size));
   const minBlob = Math.max(2, Math.round(size * size * 0.0008));
   const components = filterNoise(connectedComponents(mask, true), minBlob);
-  if (components.length === 0) return { hasToken: false, costs: {} };
+  if (components.length === 0) return { hasToken: true, costs: {} };
 
   const { glyphs, pips } = splitGlyphsAndPips(components);
   if (glyphs.length === 0) return { hasToken: true, costs: {} };
 
-  const holeCount = countHoles(mask);
   const reading = decodeToken({
     pipCount: pips.length,
     glyphCount: glyphs.length,
-    holeCount,
+    holeCount: countHoles(mask),
   });
-
   if (reading.value === null) return { hasToken: true, costs: {} };
 
-  // A confident decode is cheap for its own value and expensive for the rest;
-  // a shaky one barely commits, which lets a later frame or the constraint
-  // solver override it without a fight.
   const commit = reading.confidence === 'high' ? 2 : 8;
   const costs: Partial<Record<number, number>> = {};
   for (const n of [2, 3, 4, 5, 6, 8, 9, 10, 11, 12]) {

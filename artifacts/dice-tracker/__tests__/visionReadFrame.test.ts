@@ -6,7 +6,12 @@
  * the frame gate — runs here with no camera and no device.
  */
 
-import { boardTransform, readFrame } from '@/services/vision/readFrame';
+import {
+  INK_RANGE_THRESHOLD,
+  boardTransform,
+  detectInkRange,
+  readFrame,
+} from '@/services/vision/readFrame';
 import { HEX_CENTERS, terrainSamplePoints } from '@/services/vision/boardGeometry';
 import { applyHomography, type Point } from '@/services/vision/homography';
 import type { PixelBuffer } from '@/services/vision/pixelBuffer';
@@ -188,5 +193,97 @@ describe('readFrame', () => {
     reading.evidence.forEach(ev => {
       expect(Object.keys(ev.resourceCost).length).toBeGreaterThan(0);
     });
+  });
+});
+
+describe('detectInkRange — finding tokens by their ink', () => {
+  const h = boardTransform(CORNERS)!;
+
+  // The token area sampled is TOKEN_RADIUS (0.42) canonical units, which at
+  // SCALE px per unit is ~37px. Paint wider than that, or samples spill onto the
+  // background and manufacture a range on a tile that is meant to be blank.
+  const TOKEN_PX = Math.ceil(0.42 * SCALE) + 4;
+
+  /** Paint a hex's whole token area a flat colour: a blank tile. */
+  function paintBlankToken(buffer: PixelBuffer, hexIndex: number, rgb: [number, number, number]) {
+    const centre = applyHomography(h, HEX_CENTERS[hexIndex]!)!;
+    paint(buffer, centre.x, centre.y, TOKEN_PX, rgb);
+  }
+
+  /** Paint a pale disc with dark marks on it: a token. */
+  function paintTokenWithInk(buffer: PixelBuffer, hexIndex: number) {
+    const centre = applyHomography(h, HEX_CENTERS[hexIndex]!)!;
+    paint(buffer, centre.x, centre.y, TOKEN_PX, [232, 224, 198]);
+    // Digits occupy much of a real token's face, not a couple of dots.
+    const g = Math.round(TOKEN_PX * 0.42);
+    paint(buffer, centre.x - g, centre.y - 4, g, [20, 18, 16]);
+    paint(buffer, centre.x + g, centre.y - 4, g, [20, 18, 16]);
+  }
+
+  it('reads a wide range where there is ink', () => {
+    const buffer = paintBoard(LEGAL_LAYOUT);
+    paintTokenWithInk(buffer, 5);
+    expect(detectInkRange(buffer, h, 5)!).toBeGreaterThan(INK_RANGE_THRESHOLD);
+  });
+
+  it('reads a narrow range on a blank tile', () => {
+    const buffer = paintBoard(LEGAL_LAYOUT);
+    paintBlankToken(buffer, 9, [190, 177, 130]);
+    expect(detectInkRange(buffer, h, 9)!).toBeLessThan(INK_RANGE_THRESHOLD);
+  });
+
+  it('is not fooled by a PALE blank tile — the desert', () => {
+    // The failure this replaced: a "bright and desaturated centre" test calls
+    // the desert a token, because the desert is bright and desaturated.
+    const buffer = paintBoard(LEGAL_LAYOUT);
+    paintBlankToken(buffer, 9, [214, 205, 172]);
+    expect(detectInkRange(buffer, h, 9)!).toBeLessThan(INK_RANGE_THRESHOLD);
+  });
+
+  it('is not fooled by a DARK blank tile either', () => {
+    const buffer = paintBoard(LEGAL_LAYOUT);
+    paintBlankToken(buffer, 9, [60, 64, 44]);
+    expect(detectInkRange(buffer, h, 9)!).toBeLessThan(INK_RANGE_THRESHOLD);
+  });
+
+  it('measures spread, not level, so exposure does not matter', () => {
+    // A token in shadow and the same token under glare both show ink. Shifting
+    // both ends of the range together changes nothing.
+    const bright = paintBoard(LEGAL_LAYOUT);
+    const centreB = applyHomography(h, HEX_CENTERS[5]!)!;
+    const gB = Math.round(TOKEN_PX * 0.42);
+    paint(bright, centreB.x, centreB.y, TOKEN_PX, [252, 250, 240]);
+    paint(bright, centreB.x - gB, centreB.y, gB, [90, 88, 84]);
+    paint(bright, centreB.x + gB, centreB.y, gB, [90, 88, 84]);
+
+    const dim = paintBoard(LEGAL_LAYOUT);
+    const centreD = applyHomography(h, HEX_CENTERS[5]!)!;
+    const gD = Math.round(TOKEN_PX * 0.42);
+    paint(dim, centreD.x, centreD.y, TOKEN_PX, [150, 146, 132]);
+    paint(dim, centreD.x - gD, centreD.y, gD, [16, 15, 14]);
+    paint(dim, centreD.x + gD, centreD.y, gD, [16, 15, 14]);
+
+    expect(detectInkRange(bright, h, 5)!).toBeGreaterThan(INK_RANGE_THRESHOLD);
+    expect(detectInkRange(dim, h, 5)!).toBeGreaterThan(INK_RANGE_THRESHOLD);
+  });
+
+  it('returns null for a hex outside the frame', () => {
+    const far: [Point, Point, Point, Point] = [
+      { x: 5000, y: 5000 }, { x: 5100, y: 5000 }, { x: 5100, y: 5100 }, { x: 5000, y: 5100 },
+    ];
+    const other = boardTransform(far)!;
+    expect(detectInkRange(paintBoard(LEGAL_LAYOUT), other, 0)).toBeNull();
+  });
+
+  it('marks the blank tile as the one without a token', () => {
+    const buffer = paintBoard(LEGAL_LAYOUT);
+    for (let i = 0; i < 19; i++) {
+      if (i === 9) paintBlankToken(buffer, i, [214, 205, 172]);
+      else paintTokenWithInk(buffer, i);
+    }
+    const reading = readFrame(buffer, CORNERS);
+    expect(reading.evidence[9]!.hasToken).toBe(false);
+    const withTokens = reading.evidence.filter(e => e.hasToken === true);
+    expect(withTokens).toHaveLength(18);
   });
 });
