@@ -16,6 +16,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { GameProvider } from '@/context/GameContext';
 import { SettingsProvider } from '@/context/SettingsContext';
 import { ensureSchemaVersion } from '@/services/storage';
+import { initCrashReporting } from '@/services/crashReporting';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -99,6 +100,9 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
+    // Start crash reporting before anything else can fail. No-op unless
+    // EXPO_PUBLIC_SENTRY_DSN is set, so local builds report nothing.
+    initCrashReporting();
     // Run schema migration on every launch (no-op when schema is current)
     void ensureSchemaVersion();
   }, []);

@@ -47,8 +47,9 @@ autoInstallPeers: false
 # `onlyBuiltDependencies`; pnpm 11 renamed it to `allowBuilds`. The old key was
 # silently ignored, which is why installs kept failing with ERR_PNPM_IGNORED_BUILDS.)
 allowBuilds:
-  esbuild: true        # writes its platform binary shim during postinstall
-  unrs-resolver: true  # napi native resolver used by the TS tooling chain
+  '@sentry/cli': true  # downloads Sentry's CLI binary, needed for source-map upload
+  esbuild: true # writes its platform binary shim during postinstall
+  unrs-resolver: true # napi native resolver used by the TS tooling chain
 
 overrides:
   # NOTE: Replit's generated config excluded every non-linux-x64 native binary

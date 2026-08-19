@@ -63,14 +63,12 @@ may be more or less done than it looks.
 ## Not in the original 31, but now on the critical path
 
 1. **Device verification.** Five commits of UI change, none run on a phone: dev card entry, port selector, quick-exposure tap behaviour, board-review corrections, results percentile column, home screen backup link. All typecheck-clean and logic-tested; none exercised where this project's bugs historically live (Android SVG touch dispatch).
-2. **Crash reporting.** Still none. Every bug report is "it crashed sometimes", which is a bad position to be in right after reworking the storage layer.
+2. ~~**Crash reporting.**~~ Done — `services/crashReporting.ts`, wired into the root layout. Inert without `EXPO_PUBLIC_SENTRY_DSN`, so it collects nothing until a DSN is set. Still worth reporting the storage failures that are deliberately swallowed: those are invisible by design, which is exactly why they need a voice.
 3. **Board scan provider decision.** Model and base URL are configuration now, but nothing works until a key and a reachable model are chosen. `EXPO_PUBLIC_DOMAIN` also needs repointing off the Replit domain.
-4. **`expo-av` is deprecated.** Superseded by `expo-audio` / `expo-video` in SDK 54.
-   It still works and did not trip `expo install --check`, and it is only used for
-   the roll/undo/done sounds in `services/sound.ts` — so this is not urgent. But it
-   will block an SDK 55 upgrade, and SDK upgrades are exactly when a deprecated
-   native module turns into a startup crash. Worth doing on a quiet day rather
-   than under upgrade pressure.
+4. ~~**`expo-av` is deprecated.**~~ Done — migrated to `expo-audio`. The new player
+   is synchronous to create and control, so the old async cache-and-await dance is
+   gone. Done on a quiet day rather than under SDK 55 upgrade pressure, which was
+   the point.
 
 5. **Always use `expo install`, never `pnpm add`, for anything with native code.**
    Not a task, a rule — learned the hard way. Four packages (`expo-document-picker`,
@@ -81,5 +79,13 @@ may be more or less done than it looks.
    SDK-compatible version; `pnpm add` does not know the SDK exists.
    Run `pnpm exec expo install --check` after adding any dependency.
 
-6. **Local board scanner.** Constraint solver — the hard, reusable half — is built and already improving the AI path. The CV half is blocked on sample photos.
+6. **Local board scanner.** Substantially built:
+   - Homography, canonical board geometry, OCR-free token decoding, binary
+     primitives, and terrain colours calibrated from a twelve-photo reference set.
+   - `reconcileBoardFromEvidence` combines colour and the has-a-token cross-signal
+     in one global assignment, so confident tiles rescue uncertain ones.
+   - `services/vision/pixelSource.ts` bridges to react-native-skia for pixel access.
+   **Remaining:** the capture UI (photo → four corner taps → review), and an
+   end-to-end accuracy run against the reference photos. That number decides
+   whether this ships as the primary path or stays behind the AI.
 7. **Store-release prerequisites**, if that's the goal: privacy policy (a photo leaves the device), `ios.bundleIdentifier`, icon and splash review. `android.package` is now set to `com.laxaholic123.skillcheck` — trivial to change now, impossible after release.
