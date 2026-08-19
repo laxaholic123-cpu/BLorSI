@@ -79,33 +79,30 @@ may be more or less done than it looks.
    SDK-compatible version; `pnpm add` does not know the SDK exists.
    Run `pnpm exec expo install --check` after adding any dependency.
 
-6. **Local board scanner.** Substantially built:
-   - Homography, canonical board geometry, OCR-free token decoding, binary
-     primitives, and terrain colours calibrated from a twelve-photo reference set.
-   - `reconcileBoardFromEvidence` combines colour and the has-a-token cross-signal
-     in one global assignment, so confident tiles rescue uncertain ones.
-   - `services/vision/pixelSource.ts` bridges to react-native-skia for pixel access.
-   **Measured, and it settled a design question:** fully automatic board
-   detection was prototyped (`tools/detect_probe.py`) and does NOT work — mean
-   tile-count error 22.7 of 19 across the reference set, no better than chance.
-   The decisive reason is not the algorithm: **ten of twelve reference photos are
-   close-ups with the board partly out of frame**, so there is nothing to detect.
-   That is what people actually photograph.
+6. **Local board scanner.** Reads the board on-device, no network, no AI.
 
-   So the geometry must be supplied rather than inferred. Preferred: a live
-   camera guide the player aligns the board to, which costs zero taps and fixes
-   the homography before a pixel is read. Fallback: four corner taps on a still.
+   **Recognition: 19/19 tiles** on a reference board, from three ideas that were
+   each measured rather than assumed — rank tiles against each other instead of
+   against fixed colours (invariant to lighting), texture as a second channel
+   (forest is the roughest surface, sand the smoothest), and the 18 token faces
+   as a built-in light meter (they spanned a quarter of the lightness scale on
+   one board, enough to turn a lit forest into a mountain). Ablation: texture
+   alone 17/19, texture plus the light map 19/19. A coarse texture prior with no
+   tuned values scores the same, which is the evidence it is not fitted.
 
-   **Capture built:** `app/catan-live-scan.tsx` reads continuously while the
-   player holds the phone over the board. The guide hexagon IS the coordinate
-   system — aligning to it supplies the geometry the reader cannot infer. Tiles
-   fill in green as they become certain, and guidance names a region to point at
-   for the rest. Every frame passes `shouldMergeFrame` first, because merging
-   sums costs and a misaligned frame would accumulate confident nonsense several
-   times a second.
+   Token presence is found by looking for INK rather than for the token's pale
+   face — the desert is not merely pale, it is blank. That separates it by a 2x
+   margin and is what anchors the whole board.
 
-   **Remaining:** an end-to-end accuracy run on real board photos, and a device
-   pass on the capture loop. Reading a synthetic board recovers all 19 tiles
-   exactly; real photos are the number that decides whether this ships as primary
-   or stays behind the AI.
+   **Geometry is supplied by the capture guide, not inferred.** Three distinct
+   attempts at automatic detection all failed and are recorded in `tools/` so
+   none is retried: radial profile of a segmented land mask, per-hex colour
+   blobs, and optimisation-based registration. Aiming the camera answers the
+   question by construction.
+
+   **Remaining:** validation on real device captures. Every measurement so far
+   used one board with hand-marked corners; a perfect score on a single sample is
+   exactly when to be suspicious. The capture screen exists so those photos can
+   finally be taken.
+
 7. **Store-release prerequisites**, if that's the goal: privacy policy (a photo leaves the device), `ios.bundleIdentifier`, icon and splash review. `android.package` is now set to `com.laxaholic123.skillcheck` — trivial to change now, impossible after release.

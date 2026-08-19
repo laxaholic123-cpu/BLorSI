@@ -201,7 +201,7 @@ export default function CatanGameSetupScreen() {
       } else if (dest === 'scan') {
         // Live on-device reading. The AI board-scan screen remains reachable
         // from there as a fallback when the local reader cannot finish.
-        router.navigate('/catan-live-scan' as any);
+        router.navigate('/catan-capture' as any);
       } else {
         router.navigate('/catan-exposure-quick' as any);
       }

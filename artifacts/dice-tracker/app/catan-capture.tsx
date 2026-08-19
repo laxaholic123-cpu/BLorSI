@@ -1,0 +1,391 @@
+/**
+ * Board capture — line the board up in the guide, take one shot.
+ *
+ * WHY ONE SHOT RATHER THAN CONTINUOUS SCANNING
+ * --------------------------------------------
+ * This screen used to read continuously while the player held the phone over the
+ * board. Two things were wrong with that, and they were connected.
+ *
+ * It was physically awkward: holding a whole board aligned to a fixed on-screen
+ * shape, steady, for an extended period. And it did not converge — because hands
+ * drift, so consecutive frames sampled slightly different physical spots and
+ * disagreed with each other. Merging sums costs, so disagreement pulled
+ * confidence DOWN, and confirmed tiles could un-confirm. A tile count that goes
+ * backwards is not a tuning problem; it means the input was unreliable.
+ *
+ * The recogniser has since become strong enough to read a board correctly from a
+ * single well-aligned frame, which removes the reason to take many. So: aim,
+ * shoot once, read at full quality with no realtime budget, and show the result.
+ * A moment of holding instead of a minute of it.
+ *
+ * The guide is still the coordinate system — aligning the board to it is what
+ * supplies the geometry. Three separate attempts at inferring geometry
+ * automatically all failed (see tools/), and none of them is needed: aiming the
+ * camera answers the question by construction.
+ *
+ * Shooting again is still offered, but as a deliberate act rather than a loop.
+ * A second aimed shot is honest evidence and merges safely; thirty drifting
+ * frames a second were not.
+ *
+ * This tool is not affiliated with or endorsed by the publishers or owners of Catan.
+ */
+
+import React, { useCallback, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import Svg, { Polygon, Circle } from 'react-native-svg';
+
+import { useColors } from '@/hooks/useColors';
+import { loadPixelBuffer } from '@/services/vision/pixelSource';
+import { downscale } from '@/services/vision/pixelBuffer';
+import { readFrame } from '@/services/vision/readFrame';
+import {
+  CONFIDENCE_THRESHOLD,
+  emptyEvidence,
+  evidenceConfidence,
+  guidanceForEvidence,
+  mergeEvidence,
+} from '@/services/vision/evidenceMerge';
+import { reconcileBoardFromEvidence } from '@/services/boardConstraints';
+import { HEX_CENTERS, hexOutline } from '@/services/vision/boardGeometry';
+import type { HexEvidence } from '@/services/boardConstraints';
+import type { Point } from '@/services/vision/homography';
+import type { CatanHexDef } from '@/types/models';
+
+/**
+ * Working width for the read.
+ *
+ * Far larger than the live loop could afford. With one shot there is no frame
+ * budget, so the token crops keep enough pixels for the digits to survive
+ * thresholding — which is what the number decode depends on.
+ */
+const TARGET_WIDTH = 1400;
+
+/** Guide occupies this fraction of the shorter screen edge. */
+const GUIDE_FILL = 0.88;
+
+/** Canonical board half-extent, including the outer hexes' sample rings. */
+const CANONICAL_EXTENT = 4.4;
+
+type Phase = 'aiming' | 'reading' | 'review';
+
+const RESOURCE_LABEL: Record<string, string> = {
+  grain: 'Grain', wool: 'Wool', lumber: 'Lumber',
+  brick: 'Brick', ore: 'Ore', desert: 'Desert', any: '—',
+};
+
+export default function CatanCaptureScreen() {
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+  const { width: screenW, height: screenH } = useWindowDimensions();
+  const [permission, requestPermission] = useCameraPermissions();
+
+  const cameraRef = useRef<CameraView | null>(null);
+  const [phase, setPhase] = useState<Phase>('aiming');
+  const [evidence, setEvidence] = useState<HexEvidence[]>(emptyEvidence);
+  const [board, setBoard] = useState<CatanHexDef[]>([]);
+  const [shots, setShots] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  const guidance = guidanceForEvidence(evidence);
+  const confidences = evidence.map(evidenceConfidence);
+
+  const guideRadius = (Math.min(screenW, screenH) * GUIDE_FILL) / 2;
+  const toScreen = useCallback(
+    (p: Point): Point => ({
+      x: screenW / 2 + (p.x / CANONICAL_EXTENT) * guideRadius,
+      y: screenH / 2 + (p.y / CANONICAL_EXTENT) * guideRadius,
+    }),
+    [screenW, screenH, guideRadius],
+  );
+
+  const capture = useCallback(async () => {
+    if (!cameraRef.current) return;
+    setPhase('reading');
+    setError(null);
+    try {
+      // Full quality — there is no frame budget with a single shot, and the
+      // number decode needs the detail.
+      const shot = await cameraRef.current.takePictureAsync({
+        quality: 0.95,
+        shutterSound: false,
+      });
+      if (!shot?.uri) throw new Error('no image');
+
+      const raw = await loadPixelBuffer(shot.uri);
+      if (!raw) throw new Error('could not decode');
+      const buffer = downscale(raw, Math.max(1, Math.round(raw.width / TARGET_WIDTH)));
+
+      const corners = [0, 2, 18, 16].map(i => {
+        const s = toScreen(HEX_CENTERS[i]!);
+        return { x: (s.x / screenW) * buffer.width, y: (s.y / screenH) * buffer.height };
+      }) as [Point, Point, Point, Point];
+
+      const reading = readFrame(buffer, corners);
+      if (reading.evidence.length === 0) {
+        setError(reading.assessment.reason);
+        setPhase('aiming');
+        return;
+      }
+
+      // A second aimed shot is deliberate evidence, so merging is safe here in a
+      // way it was not for a drifting loop.
+      const merged = mergeEvidence(evidence, reading.evidence);
+      setEvidence(merged);
+      setBoard(reconcileBoardFromEvidence(merged).hexes);
+      setShots(n => n + 1);
+      setPhase('review');
+    } catch {
+      setError('Could not read that shot. Try again.');
+      setPhase('aiming');
+    }
+  }, [evidence, screenW, screenH, toScreen]);
+
+  const useBoard = () => {
+    router.push({
+      pathname: '/catan-board-scan',
+      params: { scanned: JSON.stringify(board) },
+    } as never);
+  };
+
+  const startOver = () => {
+    setEvidence(emptyEvidence());
+    setBoard([]);
+    setShots(0);
+    setPhase('aiming');
+  };
+
+  // ── Permission ─────────────────────────────────────────────────────────────
+  if (!permission) {
+    return (
+      <View style={[s.container, s.centred, { backgroundColor: colors.background }]}>
+        <ActivityIndicator color={colors.primary} />
+      </View>
+    );
+  }
+
+  if (!permission.granted) {
+    return (
+      <View style={[s.container, s.centred, { backgroundColor: colors.background, padding: 24 }]}>
+        <Ionicons name="camera-outline" size={44} color={colors.mutedForeground} />
+        <Text style={[s.title, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+          Camera access needed
+        </Text>
+        <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+          The board is read entirely on this device. Nothing is uploaded and no photo is kept.
+        </Text>
+        <TouchableOpacity
+          style={[s.primaryBtn, { backgroundColor: colors.primary }]}
+          onPress={() => void requestPermission()}
+        >
+          <Text style={[s.primaryBtnText, { color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold' }]}>
+            Allow camera
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={s.linkBtn} onPress={() => router.back()}>
+          <Text style={[s.link, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+            Enter the board by hand instead
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // ── Review ─────────────────────────────────────────────────────────────────
+  if (phase === 'review') {
+    const unsure = confidences.filter(c => c < CONFIDENCE_THRESHOLD).length;
+    return (
+      <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top + (Platform.OS === 'web' ? 60 : 8) }]}>
+        <View style={[s.header, { borderBottomColor: colors.border }]}>
+          <TouchableOpacity onPress={() => router.back()} hitSlop={10}>
+            <Ionicons name="close" size={24} color={colors.foreground} />
+          </TouchableOpacity>
+          <Text style={[s.headerTitle, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+            What it read
+          </Text>
+          <View style={{ width: 24 }} />
+        </View>
+
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24 }}>
+          <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'left' }]}>
+            {unsure === 0
+              ? `Read all 19 tiles from ${shots} shot${shots === 1 ? '' : 's'}. Check it over — you can correct anything on the next screen.`
+              : `${unsure} tile${unsure === 1 ? '' : 's'} came out uncertain. Another shot from a different angle usually settles them, or you can correct them on the next screen.`}
+          </Text>
+
+          <View style={[s.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            {board.map((hex, i) => {
+              const sure = confidences[i]! >= CONFIDENCE_THRESHOLD;
+              return (
+                <View
+                  key={hex.index}
+                  style={[
+                    s.row,
+                    { borderBottomColor: colors.border, borderBottomWidth: i === board.length - 1 ? 0 : StyleSheet.hairlineWidth },
+                  ]}
+                >
+                  <Text style={[s.rowIndex, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                    {hex.index + 1}
+                  </Text>
+                  <Text style={[s.rowMain, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
+                    {RESOURCE_LABEL[hex.resource ?? 'any']}
+                  </Text>
+                  <Text style={[s.rowNum, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+                    {hex.number ?? '—'}
+                  </Text>
+                  <Ionicons
+                    name={sure ? 'checkmark-circle' : 'help-circle-outline'}
+                    size={18}
+                    color={sure ? '#1ABC9C' : '#F59E0B'}
+                  />
+                </View>
+              );
+            })}
+          </View>
+
+          <TouchableOpacity style={[s.primaryBtn, { backgroundColor: colors.primary }]} onPress={useBoard}>
+            <Text style={[s.primaryBtnText, { color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold' }]}>
+              Use this board
+            </Text>
+          </TouchableOpacity>
+          <View style={s.rowBtns}>
+            <TouchableOpacity
+              style={[s.secondaryBtn, { borderColor: colors.border }]}
+              onPress={() => setPhase('aiming')}
+            >
+              <Text style={[s.secondaryText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
+                Shoot again
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.secondaryBtn, { borderColor: colors.border }]}
+              onPress={startOver}
+            >
+              <Text style={[s.secondaryText, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+                Start over
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // ── Aiming / reading ───────────────────────────────────────────────────────
+  const readyCount = confidences.filter(c => c >= CONFIDENCE_THRESHOLD).length;
+
+  return (
+    <View style={[s.container, { backgroundColor: '#000' }]}>
+      <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
+
+      <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
+        {HEX_CENTERS.map((_, i) => {
+          const pts = hexOutline(i).map(toScreen).map(p => `${p.x},${p.y}`).join(' ');
+          const done = shots > 0 && confidences[i]! >= CONFIDENCE_THRESHOLD;
+          return (
+            <Polygon
+              key={i}
+              points={pts}
+              fill={done ? 'rgba(26,188,156,0.22)' : 'rgba(0,0,0,0.10)'}
+              stroke={done ? '#1ABC9C' : 'rgba(255,255,255,0.7)'}
+              strokeWidth={done ? 2.5 : 2}
+            />
+          );
+        })}
+        {[0, 2, 18, 16].map(i => {
+          const p = toScreen(HEX_CENTERS[i]!);
+          return <Circle key={`c${i}`} cx={p.x} cy={p.y} r={5} fill="#F59E0B" />;
+        })}
+      </Svg>
+
+      <View style={[s.topBar, { paddingTop: insets.top + (Platform.OS === 'web' ? 60 : 8) }]}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={{ padding: 6 }}>
+          <Ionicons name="close" size={26} color="#FFF" />
+        </TouchableOpacity>
+        {shots > 0 && (
+          <View style={s.pill}>
+            <Text style={[s.pillText, { fontFamily: 'Inter_600SemiBold' }]}>{readyCount}/19</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={[s.bottomBar, { paddingBottom: insets.bottom + 24 }]}>
+        <View style={s.statusPill}>
+          <Text style={[s.statusText, { fontFamily: 'Inter_500Medium' }]} numberOfLines={2}>
+            {error
+              ? error
+              : phase === 'reading'
+                ? 'Reading the board…'
+                : shots > 0
+                  ? guidance.message
+                  : 'Line the whole board up inside the guide, then tap the button'}
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          style={[s.shutter, { opacity: phase === 'reading' ? 0.5 : 1 }]}
+          onPress={() => void capture()}
+          disabled={phase === 'reading'}
+          accessibilityRole="button"
+          accessibilityLabel="Capture the board"
+        >
+          {phase === 'reading' ? (
+            <ActivityIndicator color="#000" />
+          ) : (
+            <View style={s.shutterInner} />
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+const s = StyleSheet.create({
+  container: { flex: 1 },
+  centred: { alignItems: 'center', justifyContent: 'center', gap: 12 },
+  title: { fontSize: 18, marginTop: 8 },
+  body: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  headerTitle: { fontSize: 17 },
+  card: { borderWidth: 1, borderRadius: 12, marginTop: 14, marginBottom: 16 },
+  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, gap: 10 },
+  rowIndex: { fontSize: 12, width: 22 },
+  rowMain: { fontSize: 15, flex: 1 },
+  rowNum: { fontSize: 15, width: 28, textAlign: 'right' },
+  topBar: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16,
+  },
+  pill: { backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 },
+  pillText: { color: '#FFF', fontSize: 13 },
+  bottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, alignItems: 'center', paddingHorizontal: 20, gap: 16 },
+  statusPill: { backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 14, paddingVertical: 12, borderRadius: 14, alignSelf: 'stretch' },
+  statusText: { color: '#FFF', fontSize: 14, textAlign: 'center' },
+  shutter: {
+    width: 72, height: 72, borderRadius: 36, backgroundColor: '#FFF',
+    alignItems: 'center', justifyContent: 'center', borderWidth: 4, borderColor: 'rgba(255,255,255,0.45)',
+  },
+  shutterInner: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#FFF' },
+  primaryBtn: { borderRadius: 12, paddingVertical: 15, alignItems: 'center' },
+  primaryBtnText: { fontSize: 16 },
+  rowBtns: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  secondaryBtn: { flex: 1, borderWidth: 1.5, borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
+  secondaryText: { fontSize: 15 },
+  linkBtn: { paddingVertical: 10 },
+  link: { fontSize: 13 },
+});
