@@ -48,6 +48,11 @@ function RootLayoutNav() {
         name="catan-board-scan"
         options={{ headerShown: false }}
       />
+      {/* Catan board generator — no capture needed, the board is known */}
+      <Stack.Screen
+        name="catan-board-generator"
+        options={{ headerShown: false }}
+      />
       {/* Catan exposure setup screens */}
       <Stack.Screen
         name="catan-exposure-quick"

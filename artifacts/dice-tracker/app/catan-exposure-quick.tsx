@@ -12,7 +12,7 @@
  * GameContext before navigating to the active Catan screen.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Platform,
@@ -31,7 +31,13 @@ import { useGame } from '@/context/GameContext';
 import { useSettings } from '@/context/SettingsContext';
 import { generateId } from '@/types/models';
 import type { CatanPlayerExposureEvent, PortType } from '@/types/models';
-import { describePort } from '@/services/catanBoard';
+import {
+  describePort,
+  hexesForIntersectionId,
+  portForIntersection,
+} from '@/services/catanBoard';
+import { CatanHexGrid } from '@/components/CatanHexGrid';
+import { loadActiveBoard, type ActiveBoard } from '@/services/storage';
 
 // Settlement numbers (2D6, no 7)
 const CATAN_NUMBERS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12];
@@ -56,6 +62,15 @@ interface Settlement {
   numbers: number[]; // up to 3 hex numbers for this settlement
   /** Port this settlement sits on, if any. Trade only — never production. */
   port?: PortType;
+  /**
+   * Placed by tapping the board, so `locationId` is a real corner id.
+   *
+   * Load-bearing for one edge case: a corner touching only the desert yields
+   * NO numbers, but it is still a settlement someone owns. Without this flag it
+   * would be invisible on the board, impossible to remove, and every further
+   * tap would append another copy.
+   */
+  fromBoard?: boolean;
 }
 
 interface PlayerSetup {
@@ -79,6 +94,69 @@ export default function CatanExposureQuickScreen() {
   );
   const [currentPlayerIdx, setCurrentPlayerIdx] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
+
+  /**
+   * The board this game is on, when it is known exactly (generated boards only).
+   * Null for scanned and hand-entered games, which fall back to tapping numbers.
+   */
+  const [board, setBoard] = useState<ActiveBoard | null>(null);
+  const [inputMode, setInputMode] = useState<'board' | 'numbers'>('numbers');
+
+  useEffect(() => {
+    let cancelled = false;
+    loadActiveBoard().then(loaded => {
+      if (cancelled || !loaded) return;
+      setBoard(loaded);
+      // Prefer picking off the board when we have one: it removes the
+      // transcription step entirely, so exposure becomes exact rather than
+      // self-reported. The number pad stays one tap away for anyone whose
+      // physical board drifted from the generated one.
+      setInputMode('board');
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // ─── Board mode ───────────────────────────────────────────────────────────
+  //
+  // These memos sit ABOVE the `!activeSession` early return on purpose. Placing
+  // hooks after a conditional return means the screen calls a different number
+  // of them depending on whether the session has hydrated yet — React throws
+  // "Rendered more hooks than during the previous render" and the whole screen
+  // is replaced by the error boundary. That happens on any cold start where
+  // GameContext resolves a tick after mount, which is exactly the path a player
+  // takes when reopening the app mid-setup.
+
+  /**
+   * Which corner belongs to which player, for marking the grid.
+   *
+   * Built across every player, not just the current one — a corner someone
+   * already took is not available, and showing it is what stops a double
+   * placement rather than an error message after the fact.
+   */
+  const intersectionOwners = useMemo(() => {
+    const owners: Record<string, { playerIdx: number; color: string }> = {};
+    const roster = activeSession?.players ?? [];
+    playerSetups.forEach((setup, pi) => {
+      for (const settlement of setup.settlements) {
+        // Board-placed settlements count even with no numbers — see `fromBoard`.
+        // Number-pad ones are skipped while still empty, because the in-progress
+        // one is not a placement yet.
+        if (!settlement.fromBoard && settlement.numbers.length === 0) continue;
+        owners[settlement.locationId] = {
+          playerIdx: pi,
+          color: roster[pi]?.color ?? colors.primary,
+        };
+      }
+    });
+    return owners;
+  }, [playerSetups, activeSession, colors.primary]);
+
+  const intersectionMarks = useMemo(() => {
+    const marks: Record<string, string> = {};
+    for (const [id, owner] of Object.entries(intersectionOwners)) marks[id] = owner.color;
+    return marks;
+  }, [intersectionOwners]);
+
 
   const haptic = (style = Haptics.ImpactFeedbackStyle.Light) => {
     if (settings.hapticsEnabled) void Haptics.impactAsync(style);
@@ -173,6 +251,92 @@ export default function CatanExposureQuickScreen() {
     });
   };
 
+  // ─── Board mode ───────────────────────────────────────────────────────────
+
+  const boardMode = inputMode === 'board' && board !== null;
+
+  /**
+   * Turn a tapped corner into a settlement.
+   *
+   * Everything is derived from the board: the numbers come from the hexes that
+   * actually meet there, and the port from the harbour serving that corner. The
+   * desert contributes nothing because its `number` is null. Duplicates are
+   * kept — a corner wedged between two 9s really does produce twice on a 9,
+   * which is the same multiset rule the number pad follows.
+   */
+  const handleIntersectionPress = (intersectionId: string) => {
+    if (!board) return;
+
+    // The alert is a side effect, so it reads the memo. Harmless if slightly
+    // stale: the authoritative check lives inside the updater below, and the
+    // worst case here is a missing message, never a wrong settlement.
+    const owner = intersectionOwners[intersectionId];
+    if (owner && owner.playerIdx !== currentPlayerIdx) {
+      haptic(Haptics.ImpactFeedbackStyle.Heavy);
+      Alert.alert(
+        'Corner taken',
+        `${players[owner.playerIdx]?.displayName ?? 'Another player'} already has a settlement there.`,
+      );
+      return;
+    }
+    haptic(owner ? Haptics.ImpactFeedbackStyle.Medium : Haptics.ImpactFeedbackStyle.Light);
+
+    const numbers = hexesForIntersectionId(intersectionId)
+      .map(h => board.hexes[h]?.number ?? null)
+      .filter((n): n is number => n !== null);
+    const port = portForIntersection(intersectionId, board.ports);
+
+    /**
+     * Place-or-remove decided INSIDE the updater, against current state.
+     *
+     * Reading ownership from the memo and then setting state is a read-then-
+     * write race: two taps landing in one render cycle both see "unoccupied"
+     * and both append, leaving two settlements on a corner that shows one
+     * mark. The player's exposure is then double-counted with nothing on
+     * screen to show it — the same silent-wrong shape as the geometry bugs.
+     * Deciding inside the updater makes the second tap see the first.
+     */
+    setPlayerSetups(prev => {
+      const next = [...prev];
+      const setup = next[currentPlayerIdx] ?? { settlements: [] };
+      const isOccupier = (x: { locationId: string; fromBoard?: boolean; numbers: number[] }) =>
+        x.locationId === intersectionId && (x.fromBoard || x.numbers.length > 0);
+
+      // Already this player's? Then this tap removes it.
+      if (setup.settlements.some(isOccupier)) {
+        next[currentPlayerIdx] = {
+          settlements: setup.settlements.filter(x => x.locationId !== intersectionId),
+        };
+        return next;
+      }
+
+      // Taken by someone else in the meantime — leave everything alone.
+      const takenByOther = prev.some(
+        (other, pi) => pi !== currentPlayerIdx && other.settlements.some(isOccupier),
+      );
+      if (takenByOther) return prev;
+
+      next[currentPlayerIdx] = {
+        settlements: [
+          ...setup.settlements,
+          { locationId: intersectionId, numbers, fromBoard: true, ...(port ? { port } : {}) },
+        ],
+      };
+      return next;
+    });
+  };
+
+  const removeSettlementById = (locationId: string) => {
+    setPlayerSetups(prev => {
+      const next = [...prev];
+      const setup = next[currentPlayerIdx] ?? { settlements: [] };
+      next[currentPlayerIdx] = {
+        settlements: setup.settlements.filter(s => s.locationId !== locationId),
+      };
+      return next;
+    });
+  };
+
   // Build exposure events for ALL players
   const buildAllExposureEvents = (): CatanPlayerExposureEvent[] => {
     const events: CatanPlayerExposureEvent[] = [];
@@ -180,7 +344,10 @@ export default function CatanExposureQuickScreen() {
       const player = players[pi]!;
       const setup = playerSetups[pi] ?? { settlements: [] };
       for (const settlement of setup.settlements) {
-        if (settlement.numbers.length === 0) continue;
+        // Skip only the number-pad placeholder. A board placement with no
+        // numbers is a real settlement on a barren corner, and dropping it
+        // would lose a building the player actually owns.
+        if (!settlement.fromBoard && settlement.numbers.length === 0) continue;
         events.push({
           id: generateId(),
           sessionId: activeSession.id,
@@ -202,7 +369,9 @@ export default function CatanExposureQuickScreen() {
   const handleFinishPlayer = () => {
     haptic();
     // Validate: at least one non-empty settlement
-    const hasAny = currentSetup.settlements.some(s => s.numbers.length > 0);
+    const hasAny = currentSetup.settlements.some(
+      s => s.fromBoard || s.numbers.length > 0,
+    );
     if (!hasAny) {
       Alert.alert('No settlements', 'Add at least one settlement for this player before continuing.');
       return;
@@ -228,8 +397,14 @@ export default function CatanExposureQuickScreen() {
     }
   };
 
-  // Completed settlements (all except the last/active one)
-  const completedSettlements = currentSetup.settlements.slice(0, -1);
+  // In board mode every settlement is complete the moment it is tapped, so
+  // there is no trailing in-progress one to exclude.
+  const completedSettlements = boardMode
+    ? currentSetup.settlements.filter(s => s.fromBoard)
+    : currentSetup.settlements.slice(0, -1);
+
+  const removeCompleted = (idx: number, locationId: string) =>
+    boardMode ? removeSettlementById(locationId) : handleRemoveSettlement(idx);
 
   // Summary: all players' completed settlements before this one
   const prevPlayersSummary = playerSetups.slice(0, currentPlayerIdx).map((setup, pi) => ({
@@ -274,11 +449,48 @@ export default function CatanExposureQuickScreen() {
               {currentPlayer?.displayName ?? `Player ${currentPlayerIdx + 1}`}
             </Text>
             <Text style={[styles.playerSub, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-              Tap the numbers each settlement is adjacent to (up to 3 per settlement).
-              Tap twice if it touches two hexes with the same number; long-press to clear one.
+              {boardMode
+                ? 'Tap each corner where this player has a settlement. Numbers and ports are read straight off the board. Tap one of their settlements again to remove it.'
+                : 'Tap the numbers each settlement is adjacent to (up to 3 per settlement). Tap twice if it touches two hexes with the same number; long-press to clear one.'}
             </Text>
           </View>
         </View>
+
+        {/* Board picker — only when the board is known exactly */}
+        {boardMode && board && (
+          <View style={[styles.section, { borderColor: colors.border }]}>
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+              TAP THIS PLAYER'S CORNERS
+            </Text>
+            <CatanHexGrid
+              hexes={board.hexes}
+              ports={board.ports}
+              showIntersections
+              intersectionMarks={intersectionMarks}
+              onIntersectionPress={handleIntersectionPress}
+            />
+          </View>
+        )}
+
+        {/* Input mode switch — only offered when there is a board to switch away from */}
+        {board && (
+          <TouchableOpacity
+            style={[styles.addBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
+            onPress={() => {
+              haptic();
+              setInputMode(m => (m === 'board' ? 'numbers' : 'board'));
+            }}
+          >
+            <Ionicons
+              name={boardMode ? 'keypad-outline' : 'grid-outline'}
+              size={18}
+              color={colors.primary}
+            />
+            <Text style={[styles.addBtnText, { color: colors.primary, fontFamily: 'Inter_600SemiBold' }]}>
+              {boardMode ? 'Enter numbers by hand instead' : 'Pick off the board instead'}
+            </Text>
+          </TouchableOpacity>
+        )}
 
         {/* Completed settlements */}
         {completedSettlements.map((s, idx) => (
@@ -305,13 +517,16 @@ export default function CatanExposureQuickScreen() {
                 )}
               </View>
             </View>
-            <TouchableOpacity onPress={() => handleRemoveSettlement(idx)} hitSlop={8}>
+            <TouchableOpacity onPress={() => removeCompleted(idx, s.locationId)} hitSlop={8}>
               <Ionicons name="trash-outline" size={18} color={colors.destructive} />
             </TouchableOpacity>
           </View>
         ))}
 
-        {/* Active settlement builder */}
+        {/* Active settlement builder — number pad path. Hidden in board
+            mode, where a corner tap already yields a finished settlement. */}
+        {!boardMode && (
+          <>
         <View style={[styles.section, { borderColor: colors.border }]}>
           <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
             SETTLEMENT {completedSettlements.length + 1}
@@ -404,6 +619,9 @@ export default function CatanExposureQuickScreen() {
             Add Another Settlement
           </Text>
         </TouchableOpacity>
+
+          </>
+        )}
 
         {/* Previous players summary */}
         {prevPlayersSummary.length > 0 && (

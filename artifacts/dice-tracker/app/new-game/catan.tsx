@@ -33,6 +33,7 @@ import { useColors } from '@/hooks/useColors';
 import { useGame } from '@/context/GameContext';
 import { useSettings } from '@/context/SettingsContext';
 import {
+  clearActiveBoard,
   clearPrefillSession,
   loadPrefillSession,
 } from '@/services/storage';
@@ -158,7 +159,7 @@ export default function CatanGameSetupScreen() {
     });
   };
 
-  const createAndNavigate = async (dest: 'quick' | 'detailed' | 'scan') => {
+  const createAndNavigate = async (dest: 'quick' | 'detailed' | 'scan' | 'generate') => {
     if (isStarting) return;
     haptic(Haptics.ImpactFeedbackStyle.Medium);
     setIsStarting(true);
@@ -195,9 +196,20 @@ export default function CatanGameSetupScreen() {
       };
 
       await startSession(session);
+
+      // Drop any board left over from a previous game. Only the generator sets
+      // one, and it does so on the way out — so every other path must start
+      // from no board, or a scanned game would silently inherit generated
+      // numbers and attribute production nobody actually had.
+      await clearActiveBoard();
+
       // Navigate to exposure setup — session is now in context
       if (dest === 'detailed') {
         router.navigate('/catan-exposure-detailed' as any);
+      } else if (dest === 'generate') {
+        // Generated boards need no capture at all — the layout is known by
+        // construction, so the vision pipeline is bypassed entirely.
+        router.navigate('/catan-board-generator' as any);
       } else if (dest === 'scan') {
         // Live on-device reading. The AI board-scan screen remains reachable
         // from there as a fallback when the local reader cannot finish.
@@ -309,6 +321,35 @@ export default function CatanGameSetupScreen() {
         {/* ── Tracking mode choice ─────────────────────────────────────────── */}
         <View style={styles.section}>
           <SectionLabel text="TRACKING MODE" colors={colors} />
+
+          {/* Generate Board */}
+          <TouchableOpacity
+            style={[
+              styles.trackCard,
+              {
+                backgroundColor: colors.card,
+                borderColor: '#8B5CF6',
+                marginBottom: 10,
+                opacity: isStarting ? 0.7 : 1,
+              },
+            ]}
+            onPress={() => createAndNavigate('generate')}
+            disabled={isStarting}
+            activeOpacity={0.85}
+          >
+            <View style={[styles.trackIcon, { backgroundColor: '#8B5CF620' }]}>
+              <Ionicons name="dice-outline" size={28} color="#8B5CF6" />
+            </View>
+            <View style={styles.trackContent}>
+              <Text style={[styles.trackTitle, { color: '#8B5CF6', fontFamily: 'Inter_700Bold' }]}>
+                Generate Board 🎲
+              </Text>
+              <Text style={[styles.trackDesc, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                Build a balanced board on screen and lay your tiles out to match. Nothing to scan — the board is already known.
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#8B5CF6" />
+          </TouchableOpacity>
 
           {/* Scan Board */}
           <TouchableOpacity

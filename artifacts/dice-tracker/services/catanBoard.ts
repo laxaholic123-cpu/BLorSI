@@ -122,6 +122,228 @@ export function getCoastalEdgesClockwise(): CoastalEdge[] {
   return edges;
 }
 
+// ─── Intersections ────────────────────────────────────────────────────────────
+
+/** Three mutually adjacent hexes meeting at a corner. */
+export interface LandIntersection {
+  /** Hex indices, ascending. Always three — coastal corners are excluded. */
+  hexIndices: [number, number, number];
+}
+
+/**
+ * Every corner where three land hexes meet.
+ *
+ * Corners with only one or two land hexes are excluded on purpose: this exists
+ * to answer "how strong is the best spot on this board", and a coastal corner
+ * touching two tiles is never that spot. Count is asserted in tests rather than
+ * stated here — it is a fact about the geometry, not a choice.
+ */
+export function getLandIntersections(): LandIntersection[] {
+  const seen = new Set<string>();
+  const out: LandIntersection[] = [];
+
+  for (let hexIndex = 0; hexIndex < HEX_COUNT; hexIndex++) {
+    for (const edge of ALL_EDGES) {
+      // Two consecutive edges bound one corner.
+      const next = ((edge + 1) % 6) as HexEdge;
+      const a = getNeighborIndex(hexIndex, edge);
+      const b = getNeighborIndex(hexIndex, next);
+      if (a === null || b === null) continue;
+
+      const triple = [hexIndex, a, b].sort((x, y) => x - y) as [number, number, number];
+      const key = triple.join(',');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ hexIndices: triple });
+    }
+  }
+
+  return out;
+}
+
+/**
+ * A settlement corner: the meeting point of one, two or three hexes.
+ *
+ * Vertices are numbered 0-5 matching the drawing order in `CatanHexGrid`
+ * (starting at the top and running clockwise). Vertex k is bounded by edges k
+ * and k+1, which is what makes the hex lookup below correct.
+ *
+ * Unlike `getLandIntersections`, this includes coastal corners — a settlement
+ * on the shore touching two hexes is perfectly legal and extremely common, so
+ * exposure entry needs all of them.
+ */
+export interface Intersection {
+  /** Stable id: the touching hex indices, ascending, joined by '-'. */
+  id: string;
+  /** One to three hexes, ascending. */
+  hexIndices: number[];
+}
+
+/**
+ * The hexes touching one corner, ascending.
+ *
+ * Vertex k is bounded by edges k and k+1, so the hexes across those two edges
+ * are the corner's other occupants.
+ */
+export function hexesAtIntersection(hexIndex: number, vertex: number): number[] {
+  const a = getNeighborIndex(hexIndex, (vertex % 6) as HexEdge);
+  const b = getNeighborIndex(hexIndex, ((vertex + 1) % 6) as HexEdge);
+  return [hexIndex, a, b]
+    .filter((h): h is number => h !== null)
+    .sort((x, y) => x - y);
+}
+
+/**
+ * Corner identity is POSITIONAL, not the set of hexes that touch it.
+ *
+ * The obvious id — sorted touching hexes, "0-3-4" — is wrong, and wrong in the
+ * quiet way. It is unique only for the 24 interior corners. On the coast, hex 0
+ * has three outer vertices that touch nothing else, so all three collapse to
+ * "0"; the two ends of the 0/1 border both give "0-1". That yields 48 ids for
+ * 54 corners, and two players on different shore corners would have been told
+ * the spot was taken while their exposure quietly merged.
+ *
+ * So corners are keyed by where they actually are. Each hex centre is placed in
+ * unit axial space and each vertex offset from it; corners shared by several
+ * hexes land on the same point and collapse correctly, while distinct corners
+ * stay distinct however few hexes they touch.
+ */
+const vertexPoint = (hexIndex: number, vertex: number): string => {
+  const axial = HEX_AXIAL[hexIndex]!;
+  const cx = Math.sqrt(3) * (axial.q + axial.r / 2);
+  const cy = 1.5 * axial.r;
+  const theta = ((-90 + 60 * (vertex % 6)) * Math.PI) / 180;
+
+  /**
+   * Rounded to integer thousandths, NOT via toFixed.
+   *
+   * These coordinates are irrational sums that land on zero only to within a
+   * rounding error, and the error has a sign: reaching one corner from the hex
+   * on its left gives +1e-16 while the hex on its right gives -1e-16.
+   * `toFixed(3)` renders those as "0.000" and "-0.000" — two different keys for
+   * one corner, which split six corners in half and produced 60 corners where
+   * there are 54. Integer keys have no negative zero.
+   *
+   * A thousandth is far finer than the ~0.87 gap between adjacent corners, so
+   * the rounding can only ever merge a corner with itself.
+   */
+  const key = (v: number): number => {
+    const n = Math.round(v * 1000);
+    return n === 0 ? 0 : n;
+  };
+
+  return `${key(cx + Math.cos(theta))},${key(cy + Math.sin(theta))}`;
+};
+
+/**
+ * Canonical id per corner position: the lowest hex that touches it, and the
+ * vertex number on that hex. Written "4v2" so it stays readable in stored data.
+ */
+const CANONICAL_ID_BY_POINT: ReadonlyMap<string, string> = (() => {
+  const best = new Map<string, { hexIndex: number; vertex: number }>();
+  for (let hexIndex = 0; hexIndex < HEX_COUNT; hexIndex++) {
+    for (let vertex = 0; vertex < 6; vertex++) {
+      const point = vertexPoint(hexIndex, vertex);
+      const current = best.get(point);
+      if (
+        !current ||
+        hexIndex < current.hexIndex ||
+        (hexIndex === current.hexIndex && vertex < current.vertex)
+      ) {
+        best.set(point, { hexIndex, vertex });
+      }
+    }
+  }
+  const out = new Map<string, string>();
+  for (const [point, { hexIndex, vertex }] of best) out.set(point, `${hexIndex}v${vertex}`);
+  return out;
+})();
+
+/** Canonical corner id for a hex vertex. */
+export function intersectionIdAt(hexIndex: number, vertex: number): string {
+  return CANONICAL_ID_BY_POINT.get(vertexPoint(hexIndex, vertex))!;
+}
+
+/** Every settlement corner on the board. Count is asserted in tests. */
+export function getAllIntersections(): Intersection[] {
+  const byId = new Map<string, Intersection>();
+
+  for (let hexIndex = 0; hexIndex < HEX_COUNT; hexIndex++) {
+    for (let vertex = 0; vertex < 6; vertex++) {
+      const id = intersectionIdAt(hexIndex, vertex);
+      const existing = byId.get(id);
+      const hexIndices = hexesAtIntersection(hexIndex, vertex);
+      if (!existing) {
+        byId.set(id, { id, hexIndices });
+      } else {
+        // Merge: reaching the same corner from another hex can reveal a hex the
+        // first approach could not see.
+        const merged = [...new Set([...existing.hexIndices, ...hexIndices])]
+          .sort((x, y) => x - y);
+        byId.set(id, { id, hexIndices: merged });
+      }
+    }
+  }
+
+  return [...byId.values()].sort((x, y) => x.id.localeCompare(y.id));
+}
+
+/** Cached, because exposure entry asks per tap and the board never changes. */
+const HEXES_BY_INTERSECTION_ID: ReadonlyMap<string, number[]> = new Map(
+  getAllIntersections().map(ix => [ix.id, ix.hexIndices]),
+);
+
+/** The hexes touching a corner, by its canonical id. */
+export function hexesForIntersectionId(intersectionId: string): number[] {
+  return HEXES_BY_INTERSECTION_ID.get(intersectionId) ?? [];
+}
+
+/**
+ * The two corner ids a port serves.
+ *
+ * A harbour sits on an edge, but settlements sit on corners — the two ends of
+ * that edge are the only spots that gain the trade rate. Edge e runs between
+ * vertices e-1 and e.
+ */
+export function intersectionIdsForPort(port: CatanPortDef): [string, string] {
+  return [
+    intersectionIdAt(port.hexIndex, (port.edge + 5) % 6),
+    intersectionIdAt(port.hexIndex, port.edge),
+  ];
+}
+
+/** The port serving a given corner, if any. */
+export function portForIntersection(
+  intersectionId: string,
+  ports: readonly CatanPortDef[],
+): PortType | undefined {
+  for (const port of ports) {
+    const [a, b] = intersectionIdsForPort(port);
+    if (a === intersectionId || b === intersectionId) return port.type;
+  }
+  return undefined;
+}
+
+/** Every unordered pair of adjacent hexes, each pair listed once. */
+export function getAdjacentHexPairs(): Array<[number, number]> {
+  const seen = new Set<string>();
+  const out: Array<[number, number]> = [];
+
+  for (let hexIndex = 0; hexIndex < HEX_COUNT; hexIndex++) {
+    for (const edge of ALL_EDGES) {
+      const other = getNeighborIndex(hexIndex, edge);
+      if (other === null) continue;
+      const pair = (hexIndex < other ? [hexIndex, other] : [other, hexIndex]) as [number, number];
+      const key = pair.join(',');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(pair);
+    }
+  }
+
+  return out;
+}
+
 // ─── Ports ────────────────────────────────────────────────────────────────────
 
 /** The base game ships nine ports: four generic 3:1 and one 2:1 per resource. */
@@ -137,24 +359,38 @@ export const PORT_TYPE_COUNTS: Readonly<Record<PortType, number>> = {
 export const PORT_COUNT = 9;
 
 /**
- * Default port arrangement, spaced evenly around the coast.
+ * Harbour arrangement, read off a physical board.
  *
- * NOTE: port placement is fixed by the physical sea frame, and the arrangement
- * differs between editions and between the standard and variable setups. This
- * is a reasonable default to start from, not an authoritative reproduction of
- * any one edition — players should check it against their own board and edit it.
- * That is why ports are editable and persisted per layout rather than assumed.
+ * Transcribed from a photographed 5th-edition base game: starting at the 3:1
+ * above the ore-4 hex and going clockwise — 3:1, 2:1 brick, 2:1 lumber, 3:1,
+ * 2:1 grain, 2:1 ore, 3:1, 2:1 wool, 3:1.
+ *
+ * This replaced an unverified placeholder whose spacing was right (3-4 coastal
+ * edges apart) but whose TYPES were not. The placeholder ran
+ * generic/specific/generic/specific with a single pair at the end — exactly the
+ * minimum number of same-type neighbours an odd cycle allows. That evenness is
+ * the tell: it was constructed to look tidy rather than transcribed. The real
+ * frame reads G,S,S,G,S,S,G,S,G, with three same-type pairs, because harbours
+ * were placed to suit the island rather than a pattern.
+ *
+ * Anchoring was checked four ways before trusting it — the harbours adjacent to
+ * hexes 18, 15, 12 and 7 in the photo all land where this walk puts them.
+ *
+ * Still edition-specific. Frames differ between printings, so this is one real
+ * board rather than a universal truth; a group whose box disagrees needs their
+ * own layout. Ports feed `portAccess` only, which never enters production or
+ * luck, so a mismatch misreports trade access and nothing else.
  */
 export const STANDARD_PORT_LAYOUT: readonly CatanPortDef[] = [
-  { hexIndex: 0, edge: 0, type: 'generic' },  // NW coast
-  { hexIndex: 1, edge: 1, type: 'wool' },
-  { hexIndex: 6, edge: 1, type: 'generic' },
-  { hexIndex: 11, edge: 2, type: 'ore' },     // E coast
-  { hexIndex: 15, edge: 3, type: 'generic' },
-  { hexIndex: 17, edge: 3, type: 'grain' },   // S coast
-  { hexIndex: 16, edge: 4, type: 'generic' },
-  { hexIndex: 12, edge: 5, type: 'brick' },   // W coast
-  { hexIndex: 3, edge: 5, type: 'lumber' },
+  { hexIndex: 18, edge: 3, type: 'generic' }, // above the ore 4, clockwise from here
+  { hexIndex: 17, edge: 4, type: 'brick' },
+  { hexIndex: 12, edge: 4, type: 'lumber' },
+  { hexIndex: 7, edge: 5, type: 'generic' },
+  { hexIndex: 3, edge: 0, type: 'grain' },
+  { hexIndex: 1, edge: 0, type: 'ore' },
+  { hexIndex: 2, edge: 1, type: 'generic' },
+  { hexIndex: 6, edge: 2, type: 'wool' },
+  { hexIndex: 15, edge: 2, type: 'generic' },
 ];
 
 export interface PortLayoutProblem {

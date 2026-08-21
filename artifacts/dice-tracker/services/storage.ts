@@ -17,13 +17,16 @@ import type {
   AppSettings,
   CatanBoardLayout,
   CatanDevCardEvent,
+  CatanHexDef,
   CatanPlayerExposureEvent,
+  CatanPortDef,
   DiceMode,
   GameSession,
   RollEvent,
 } from '@/types/models';
 import { DEFAULT_SETTINGS, DICE_RANGES, SCHEMA_VERSION } from '@/types/models';
 import { STANDARD_PORT_LAYOUT } from '@/services/catanBoard';
+import { BOARD_HEX_COUNT } from '@/services/boardConstraints';
 
 // ─── Storage keys ────────────────────────────────────────────────────────────
 
@@ -543,6 +546,55 @@ export const loadPrefillSession = async (): Promise<GameSession | null> => {
 export const clearPrefillSession = async (): Promise<void> => {
   try {
     await AsyncStorage.removeItem(PREFILL_KEY);
+  } catch {}
+};
+
+// ─── Active board handoff ─────────────────────────────────────────────────────
+
+const ACTIVE_BOARD_KEY = 'blosi:active_board';
+
+/**
+ * The board the current game is being played on, when it is known exactly.
+ *
+ * Set by the generator; read by exposure setup so settlements can be picked off
+ * the real board instead of typed in as loose numbers. Absent for scanned or
+ * hand-entered games, and the exposure screen treats absence as "fall back to
+ * tapping numbers" rather than as an error.
+ *
+ * These three swallow their errors, unlike the roll and exposure paths. That is
+ * deliberate and it is the one place it is safe: this is a convenience handoff,
+ * not a record. Losing it costs the player a nicer input mode, not any data —
+ * and the fallback is the input mode they would have had anyway.
+ */
+export interface ActiveBoard {
+  hexes: CatanHexDef[];
+  ports: CatanPortDef[];
+}
+
+export const saveActiveBoard = async (board: ActiveBoard): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(ACTIVE_BOARD_KEY, JSON.stringify(board));
+  } catch {}
+};
+
+export const loadActiveBoard = async (): Promise<ActiveBoard | null> => {
+  try {
+    const json = await AsyncStorage.getItem(ACTIVE_BOARD_KEY);
+    if (!json) return null;
+    const raw = JSON.parse(json) as Partial<ActiveBoard>;
+    // A board that is not the right shape is worse than no board: it would put
+    // wrong numbers on a player's settlements without anyone noticing.
+    if (!Array.isArray(raw.hexes) || raw.hexes.length !== BOARD_HEX_COUNT) return null;
+    if (!Array.isArray(raw.ports)) return null;
+    return { hexes: raw.hexes, ports: raw.ports };
+  } catch {
+    return null;
+  }
+};
+
+export const clearActiveBoard = async (): Promise<void> => {
+  try {
+    await AsyncStorage.removeItem(ACTIVE_BOARD_KEY);
   } catch {}
 };
 
