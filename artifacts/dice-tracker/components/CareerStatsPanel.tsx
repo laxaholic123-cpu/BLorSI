@@ -17,7 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import type { useColors } from '@/hooks/useColors';
 import type {
   CareerStats,
-  CatanNumberCareerStat,
+  NumberCareerStat,
   HeadToHeadRecord,
 } from '@/services/careerStats';
 import { CAREER_MIN_SESSIONS } from '@/services/careerStats';
@@ -53,7 +53,7 @@ function NumberRow({
   maxAbsPct,
   colors,
 }: {
-  stat: CatanNumberCareerStat;
+  stat: NumberCareerStat;
   maxAbsPct: number;
   colors: ReturnType<typeof useColors>;
 }) {
@@ -214,9 +214,9 @@ export function CareerStatsPanel({ stats, expanded, onToggle, colors }: CareerSt
                   label="rolls"
                   colors={colors}
                 />
-                {stats.summary.catanSessions > 0 && (
+                {stats.summary.boardModeSessions > 0 && (
                   <StatPill
-                    value={String(stats.summary.catanSessions)}
+                    value={String(stats.summary.boardModeSessions)}
                     label="Catan"
                     colors={colors}
                   />
@@ -283,7 +283,7 @@ function NumberPerformanceList({
   stats,
   colors,
 }: {
-  stats: CatanNumberCareerStat[];
+  stats: NumberCareerStat[];
   colors: ReturnType<typeof useColors>;
 }) {
   // Show top 3 and bottom 3, collapsing middle if > 6 entries

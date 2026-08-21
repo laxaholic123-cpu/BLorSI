@@ -114,7 +114,7 @@ describe('computeCareerStats — summary', () => {
     const result = computeCareerStats([], {}, {});
     expect(result.summary.totalSessions).toBe(0);
     expect(result.summary.totalRolls).toBe(0);
-    expect(result.summary.catanSessions).toBe(0);
+    expect(result.summary.boardModeSessions).toBe(0);
     expect(result.summary.hasEnoughData).toBe(false);
     expect(result.numberStats).toBeNull();
     expect(result.headToHead).toHaveLength(0);
@@ -130,7 +130,7 @@ describe('computeCareerStats — summary', () => {
     const result = computeCareerStats([s1, s2], rollsBySession, {});
     expect(result.summary.totalSessions).toBe(2);
     expect(result.summary.totalRolls).toBe(3);
-    expect(result.summary.catanSessions).toBe(2);
+    expect(result.summary.boardModeSessions).toBe(2);
   });
 
   it('excludes deleted rolls from total count', () => {
@@ -162,7 +162,7 @@ describe('computeCareerStats — summary', () => {
     const generalSess: GameSession = { ...makeSession('s2'), gameType: 'general' };
     const result = computeCareerStats([catanSess, generalSess], {}, {});
     expect(result.summary.totalSessions).toBe(2);
-    expect(result.summary.catanSessions).toBe(1);
+    expect(result.summary.boardModeSessions).toBe(1);
   });
 });
 
@@ -504,7 +504,7 @@ describe('computeCareerStats — integration', () => {
 
     expect(result.summary.totalSessions).toBe(3);
     expect(result.summary.totalRolls).toBe(9);
-    expect(result.summary.catanSessions).toBe(3);
+    expect(result.summary.boardModeSessions).toBe(3);
     expect(result.summary.hasEnoughData).toBe(true);
 
     expect(result.numberStats).not.toBeNull();

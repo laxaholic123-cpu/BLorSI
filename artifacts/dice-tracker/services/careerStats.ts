@@ -8,26 +8,19 @@
  * since the app has no persistent user accounts.
  */
 
-import type { CatanPlayerExposureEvent, GameSession, RollEvent } from '@/types/models';
-import {
-  getBuildingStatesAtTurn,
-  getActiveRobberBlockedNumbers,
-  computePlayerProductionStats,
-  CATAN_PROBS,
-} from '@/services/catanStats';
+import type { BoardExposureEvent, GameSession, RollEvent } from '@/types/models';
+import { getSessionModeAdapter } from '@/services/modes';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /** Minimum sessions before career trends are surfaced */
 export const CAREER_MIN_SESSIONS = 3;
 
-/** Minimum shared Catan sessions to show a head-to-head record */
+/** Minimum shared board-game sessions to show a head-to-head record */
 export const HEAD_TO_HEAD_MIN_SESSIONS = 2;
 
 /** Luck% difference threshold — within this range is a "tie" */
 const TIE_THRESHOLD_PCT = 5;
-
-const CATAN_NUMBERS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12] as const;
 
 // ─── Output types ─────────────────────────────────────────────────────────────
 
@@ -35,16 +28,16 @@ export interface CareerSummary {
   totalSessions: number;
   completedSessions: number;
   totalRolls: number;
-  catanSessions: number;
+  boardModeSessions: number;
   /** True when enough sessions exist to surface meaningful career trends */
   hasEnoughData: boolean;
 }
 
 /**
- * Lifetime production luck for a single dice number across all Catan sessions.
+ * Lifetime production luck for a single dice number across all board sessions.
  * Aggregated over all players on the device.
  */
-export interface CatanNumberCareerStat {
+export interface NumberCareerStat {
   number: number;
   /** Sum of expected weighted production across all contributing sessions */
   totalExpected: number;
@@ -58,7 +51,7 @@ export interface CatanNumberCareerStat {
 
 /**
  * Career head-to-head record between two recurring players.
- * Only built for pairs who share ≥ HEAD_TO_HEAD_MIN_SESSIONS Catan sessions
+ * Only built for pairs who share ≥ HEAD_TO_HEAD_MIN_SESSIONS board sessions
  * with exposure data.
  */
 export interface HeadToHeadRecord {
@@ -81,9 +74,9 @@ export interface CareerStats {
   summary: CareerSummary;
   /**
    * Per-number lifetime production performance, sorted luckiest first.
-   * Null when no Catan sessions with exposure data exist.
+   * Null when no board-mode sessions with exposure data exist.
    */
-  numberStats: CatanNumberCareerStat[] | null;
+  numberStats: NumberCareerStat[] | null;
   /** Head-to-head records for recurring player pairs, sorted by most sessions */
   headToHead: HeadToHeadRecord[];
 }
@@ -93,21 +86,27 @@ export interface CareerStats {
 function computeNumberCareerStats(
   sessions: GameSession[],
   rollsBySession: Record<string, RollEvent[]>,
-  exposuresBySession: Record<string, CatanPlayerExposureEvent[]>,
-): CatanNumberCareerStat[] | null {
+  exposuresBySession: Record<string, BoardExposureEvent[]>,
+): NumberCareerStat[] | null {
   // Accumulate expected/actual production per number across all sessions/players
   const acc: Record<
     number,
     { expected: number; actual: number; sessionIds: Set<string> }
   > = {};
-  for (const n of CATAN_NUMBERS) {
-    acc[n] = { expected: 0, actual: 0, sessionIds: new Set() };
-  }
 
   let hasData = false;
+  // Numbers seen across every mode encountered, so the result can span modes.
+  const seenNumbers = new Set<number>();
 
   for (const session of sessions) {
-    if (session.gameType !== 'catan') continue;
+    const mode = getSessionModeAdapter(session);
+    if (!mode || !mode.hasBoardState(session)) continue;
+    // Hoisted: the membership checks below sit five loops deep.
+    const boardNumbers = new Set(mode.boardNumbers);
+    for (const n of mode.boardNumbers) {
+      if (!acc[n]) acc[n] = { expected: 0, actual: 0, sessionIds: new Set() };
+      seenNumbers.add(n);
+    }
     const rollEvents = rollsBySession[session.id] ?? [];
     const exposureEvents = exposuresBySession[session.id] ?? [];
     if (exposureEvents.length === 0) continue;
@@ -124,20 +123,22 @@ function computeNumberCareerStats(
       for (const roll of activeRolls) {
         const T = roll.turnNumber;
         const V = roll.value;
-        if (V === 7) continue; // 7 never triggers production
+        // A roll outside the mode's board numbers produces nothing. In Catan
+        // that is the 7 moving the robber; other modes may have their own.
+        if (!boardNumbers.has(V)) continue;
 
-        const buildings = getBuildingStatesAtTurn(player.id, T, playerExposures);
-        const blockedNums = getActiveRobberBlockedNumbers(player.id, T, playerExposures);
+        const buildings = mode.getPositionsAtTurn(player.id, T, playerExposures);
+        const blockedNums = mode.getBlockedNumbersAtTurn(player.id, T, playerExposures);
 
         for (const bldg of buildings) {
           for (const n of bldg.affectedNumbers) {
-            if (!CATAN_NUMBERS.includes(n as typeof CATAN_NUMBERS[number])) continue;
+            if (!boardNumbers.has(n)) continue;
             const entry = acc[n];
             if (!entry) continue;
 
             if (!blockedNums.includes(n)) {
               // Expected contribution this turn
-              entry.expected += (CATAN_PROBS[n] ?? 0) * bldg.productionWeight;
+              entry.expected += (mode.numberProbabilities[n] ?? 0) * bldg.productionWeight;
               // Actual production if the roll matched
               if (V === n) {
                 entry.actual += bldg.productionWeight;
@@ -152,7 +153,7 @@ function computeNumberCareerStats(
 
   if (!hasData) return null;
 
-  const stats: CatanNumberCareerStat[] = CATAN_NUMBERS
+  const stats: NumberCareerStat[] = [...seenNumbers]
     .map(n => {
       const { expected, actual, sessionIds } = acc[n]!;
       const luckPct = expected > 0
@@ -177,7 +178,7 @@ function computeNumberCareerStats(
 function computeHeadToHead(
   sessions: GameSession[],
   rollsBySession: Record<string, RollEvent[]>,
-  exposuresBySession: Record<string, CatanPlayerExposureEvent[]>,
+  exposuresBySession: Record<string, BoardExposureEvent[]>,
 ): HeadToHeadRecord[] {
   // Session-level pair data accumulator
   const pairMap = new Map<
@@ -195,7 +196,8 @@ function computeHeadToHead(
   >();
 
   for (const session of sessions) {
-    if (session.gameType !== 'catan') continue;
+    const mode = getSessionModeAdapter(session);
+    if (!mode || !mode.hasBoardState(session)) continue;
     if (session.status !== 'completed') continue;
     if (session.players.length < 2) continue;
 
@@ -206,9 +208,10 @@ function computeHeadToHead(
     // Compute luck% for each player in this session
     const luckByKey = new Map<string, number>();
     for (const player of session.players) {
-      const stats = computePlayerProductionStats(player, rollEvents, exposureEvents);
-      if (stats.totalExpectedProduction > 0) {
-        luckByKey.set(player.displayName.toLowerCase(), stats.productionLuckPct);
+      const stats = mode.getProductionStats(player, rollEvents, exposureEvents);
+      if (stats.expected > 0) {
+        const luckPct = ((stats.actual - stats.expected) / stats.expected) * 100;
+        luckByKey.set(player.displayName.toLowerCase(), luckPct);
       }
     }
     if (luckByKey.size < 2) continue;
@@ -276,10 +279,12 @@ function computeHeadToHead(
 export function computeCareerStats(
   sessions: GameSession[],
   rollsBySession: Record<string, RollEvent[]>,
-  exposuresBySession: Record<string, CatanPlayerExposureEvent[]>,
+  exposuresBySession: Record<string, BoardExposureEvent[]>,
 ): CareerStats {
   const completedSessions = sessions.filter(s => s.status === 'completed').length;
-  const catanSessions = sessions.filter(s => s.gameType === 'catan').length;
+  const boardModeSessions = sessions.filter(
+    s => getSessionModeAdapter(s)?.hasBoardState(s) ?? false,
+  ).length;
   const totalRolls = Object.values(rollsBySession).reduce(
     (sum, rolls) => sum + rolls.filter(r => !r.deletedAt).length,
     0,
@@ -289,7 +294,7 @@ export function computeCareerStats(
     totalSessions: sessions.length,
     completedSessions,
     totalRolls,
-    catanSessions,
+    boardModeSessions,
     hasEnoughData: sessions.length >= CAREER_MIN_SESSIONS,
   };
 

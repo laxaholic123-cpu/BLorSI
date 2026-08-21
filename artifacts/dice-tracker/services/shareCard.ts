@@ -7,10 +7,11 @@
  */
 
 import type { GameSession } from '@/types/models';
+import { getSessionModeAdapter } from '@/services/modes';
 
 // ─── Card type ────────────────────────────────────────────────────────────────
 
-export type CardType = 'verdict' | 'summary' | 'accolade' | 'rivalry' | 'catan';
+export type CardType = 'verdict' | 'summary' | 'accolade' | 'rivalry' | 'production';
 
 export const CARD_METADATA: Record<
   CardType,
@@ -18,9 +19,9 @@ export const CARD_METADATA: Record<
 > = {
   verdict:  { label: 'Verdict Card',      icon: 'trophy-outline',           desc: 'The final dice verdict' },
   summary:  { label: 'Game Summary',      icon: 'bar-chart-outline',        desc: 'Rolls, stats & duration' },
-  accolade: { label: 'Player Accolade',   icon: 'ribbon-outline',           desc: 'Spotlight one player' },
+  accolade: { label: 'Player Accolades',  icon: 'ribbon-outline',           desc: 'An accolade for every player' },
   rivalry:  { label: 'Rivalry Card',      icon: 'swap-horizontal-outline',  desc: 'Head-to-head (2-player)' },
-  catan:    { label: 'Catan Production',  icon: 'home-outline',             desc: 'Settlement production table' },
+  production: { label: 'Production',      icon: 'home-outline',             desc: 'Board production table' },
 };
 
 // ─── Best-card selector ───────────────────────────────────────────────────────
@@ -29,7 +30,7 @@ export const CARD_METADATA: Record<
  * Return the most interesting share card type for a given session.
  *
  * Priority:
- *   1. Catan + ≥2 players + exposure data  → catan
+ *   1. Board mode + ≥2 players + exposure  → production
  *   2. Exactly 2 players                   → rivalry
  *   3. Single player OR ≥3 players         → verdict
  *   4. Fallback                            → summary
@@ -40,12 +41,13 @@ export function selectBestShareCard(
   session: GameSession,
   hasExposureData: boolean,
 ): CardType {
+  const mode = getSessionModeAdapter(session);
   if (
-    session.gameType === 'catan' &&
+    mode?.hasBoardState(session) &&
     session.players.length >= 2 &&
     hasExposureData
   ) {
-    return 'catan';
+    return 'production';
   }
   if (session.players.length === 2) {
     return 'rivalry';

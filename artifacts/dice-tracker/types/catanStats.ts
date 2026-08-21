@@ -4,21 +4,21 @@
  * All types are plain data objects — no UI or React Native imports allowed here.
  */
 
+import type { BoardPosition } from '@/types/boardState';
 import type { PortType, ResourceType } from '@/types/models';
 
 // ─── Building state ───────────────────────────────────────────────────────────
 
 /**
- * The resolved state of a single building at a specific turn.
- * Derived from the event ledger — never stored directly.
+ * A Catan building, resolved to a turn. Derived from the event ledger, never
+ * stored directly.
+ *
+ * Extends the mode-agnostic `BoardPosition` so cross-mode consumers (career
+ * stats, accolades) can read placements without importing anything Catan.
+ * `locationId` is `hexIdentifiers[0]` from the exposure event; productionWeight
+ * is 1 for a settlement and 2 for a city.
  */
-export interface BuildingState {
-  /** locationId = hexIdentifiers[0] from the exposure event */
-  locationId: string;
-  /** Dice numbers this building produces from (2–12, excluding 7) */
-  affectedNumbers: number[];
-  /** 1 = settlement, 2 = city */
-  productionWeight: number;
+export interface BuildingState extends BoardPosition {
   resourceType?: ResourceType;
 }
 

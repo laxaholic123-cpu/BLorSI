@@ -154,7 +154,7 @@ export default function ShareCardScreen() {
     if (!session) return [];
     return CARD_TYPES.filter(c => {
       if (c.type === 'rivalry') return session.players.length === 2;
-      if (c.type === 'catan') return session.gameType === 'catan' && !!catanStats?.hasExposureData;
+      if (c.type === 'production') return session.gameType === 'catan' && !!catanStats?.hasExposureData;
       if (c.type === 'accolade') return session.players.length > 0;
       return true;
     });
@@ -654,7 +654,7 @@ const CardRenderer = React.forwardRef<View, {
       })()}
 
       {/* ── Catan Production ────────────────────────────────────────────── */}
-      {type === 'catan' && catanStats && (
+      {type === 'production' && catanStats && (
         <LinearGradient
           colors={[CARD_BG_START, CARD_BG_END]}
           start={{ x: 0, y: 0 }}
