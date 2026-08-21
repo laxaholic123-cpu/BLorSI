@@ -1,3 +1,59 @@
+### The harbour layout, and what settled it
+
+Confirmed by research: the base game has **four 3:1 and five 2:1 harbours** (one
+per resource). Several search results claim "5 generic and 4 specialized" — that
+is wrong, and it recurs across SEO-farm sites. `PORT_TYPE_COUNTS` is right.
+
+**Web research could not settle the positions.** BoardGameGeek returned 403, the
+Catan wiki 402, CatanFusion a certificate error, and the sites that did answer
+carried the harbour-count error. A photograph of a real board did settle it.
+
+`STANDARD_PORT_LAYOUT` is now transcribed from a photographed 5th-edition base
+game: clockwise from the 3:1 beside the ore-4 hex — 3:1, 2:1 brick, 2:1 lumber,
+3:1, 2:1 grain, 2:1 ore, 3:1, 2:1 wool, 3:1.
+
+**How the placeholder gave itself away.** Its spacing was right and it passed
+every structural check, but its types ran generic/specific/generic/specific with
+a single pair at the end — exactly the *minimum* number of same-type neighbours
+an odd cycle permits. That evenness is the tell. A real frame reads G,S,S,G,S,S,
+G,S,G, with three same-type pairs, because harbours suit the island rather than
+a pattern. Structural plausibility is not evidence; it was the tidiest possible
+arrangement, which is what a construction looks like and a transcription does not.
+
+**What is confirmed, and what is not.** The anchor, the clockwise type order,
+and the tile each harbour sits beside all came from the board owner — all nine
+adjacencies were read back and confirmed. That rules out the large failure mode:
+the ring cannot be rotated, and no harbour is beside the wrong tile.
+
+What remains is one edge of slack per harbour. Each is pinned to a hex, but most
+of those hexes have two or three coastal edges, and the 3-4 spacing that picks
+between them was assumed rather than measured. Being one edge out along the
+coast keeps one of a harbour's two settlement corners correct and swaps the
+other — so the worst case is a single corner gaining or losing trade access.
+
+This is deliberately left open. It cannot reach production, luck or verdicts,
+because ports are a separate axis by design, and closing it needs a straight-down
+photo rather than an angled one.
+
+Still edition-specific: frames differ between printings, and there is **no port
+editor in the app** despite `catanBoard.ts` once implying players could "edit
+it". Ports feed `portAccess` only, which never enters production or luck, so a
+mismatched frame misreports trade access and nothing else.
+
+### Reading a board from a photo — a worked example
+
+The same photo re-derived the whole board, and the technique is worth recording
+because it is the vision pipeline's own logic done by hand:
+
+- The photo was rotated 180° (tokens upside down). Reversing the read order put
+  the desert on index 9, the centre — which is what the photo showed, so the
+  rotation was self-verifying.
+- **One hex was unreadable through glare.** Its token was recovered by
+  elimination against the known bag: seventeen tokens visible, one 3 missing, so
+  the washed-out tile is a 3; and by resource count it is fields. This is direct
+  evidence for the two claims the pipeline rests on — glare is unsolved, and
+  ranking against a known composition recovers what a threshold cannot.
+
 # Bad Luck or Skill Issue? — working notes
 
 A dice tracker that tells you whether you were genuinely unlucky or just bad.
@@ -70,9 +126,12 @@ There is a note in `package.json`.
 artifacts/dice-tracker/     Expo app (expo-router)
   app/                      screens
   services/                 all logic — pure, no React
+    modes/                  the game mode boundary (adapter + registry)
     vision/                 on-device board reader
-  types/models.ts           every shared type and constant
-  __tests__/                ~660 tests, pure logic only
+  types/models.ts           core types — mode-agnostic
+  types/boardState.ts       BoardExposureEvent, BoardPosition
+  types/modes/catan.ts      Catan types (re-exported from models.ts)
+  __tests__/                712 tests, pure logic only
 artifacts/api-server/       Express — one real route, board-scan AI
 tools/                      Python research harnesses (see below)
 ```
@@ -97,6 +156,61 @@ tools/                      Python research harnesses (see below)
 
 ---
 
+## Where this is going
+
+**Catan is the current focus, not the product.** The intent is game modes for
+several popular board games sharing one dice-and-luck spine — the next one is
+expected to be another game with board state, not a pure dice game.
+
+The boundary for that lives in `services/modes/`. `GameModeAdapter` is what
+cross-mode code (career stats, luck, accolades) is allowed to know about a game:
+its board numbers, their probabilities, a player's positions and blocked numbers
+at a turn, and production reduced to actual-vs-expected. Catan's adapter is
+thin — the logic stays in `services/catanStats.ts`.
+
+The rule for what goes in the adapter: **if a second board game would answer the
+question differently, it is an adapter method; if it would answer it the same
+way, it belongs in the core and not in the boundary at all.**
+
+Two things about it that look wrong until explained:
+
+- **The adapter is not generic over its event type.** A registry of adapters
+  with differing event types forces every consumer to carry a type parameter it
+  cannot resolve, because the session's mode is only known at runtime. So the
+  boundary speaks `BoardExposureEvent` and each mode narrows to its own event
+  exactly once, in its own adapter (`asCatan` in `catanMode.ts`).
+- **"Blocked" is a method, not a field.** `robberBlocked` stays on Catan's event
+  because it is a name in storage on real devices, but blocking as a concept —
+  a number you are exposed to but temporarily earn nothing from — is not
+  Catan-specific. Ask `getBlockedNumbersAtTurn`, never read the flag.
+
+`GameSessionSettings.catan*` flags are mode-scoped despite sitting on the core
+session. They keep those names for the same reason: renaming them is a
+migration, not a refactor.
+
+**Two ways in, offered side by side — not a fallback chain.** Game setup forks
+explicitly: take a photo, or enter the board by hand. Both are first-class and
+the choice is the user's, made up front rather than arrived at by failure. The
+fallback ordering lives *inside* the photo path only — the on-device reader
+(`services/vision/`) runs first, the AI call backs it up when it fails. Manual
+entry is not the floor you land on after two failures; it is a peer route
+someone may simply prefer, and it must stay complete enough to play a whole game
+with the camera switched off.
+
+**Every player gets an accolade, not one winner a spotlight.** The share card
+used to describe this as "Spotlight one player", which was the wrong shape and
+has been reworded. Someone wins, but the interesting output is a *different*
+accolade for each player at the table: who was starved on their own best number,
+whose robber luck was absurd, who quietly played the best game nobody noticed.
+Good and bad both qualify; the bar is interesting, not flattering. Luck and skill
+are separate claims and must read as separate claims.
+
+Accolades come in two tiers. Dice-only ones live in the core and work in any
+game; mode-specific ones are supplied by the mode adapter. A new game gets the
+dice accolades for free and adds its own.
+
+---
+
 ## The statistical stance
 
 The app's whole claim is telling real luck from noise, so the bar is higher than
@@ -116,9 +230,142 @@ measurement against, stop and ask what it should be relative to.
 finds something ~43% of the time on fair dice. Per-number breakdowns are
 descriptive only.
 
+**Accolades are descriptive, and have to be built that way.** "The weird thing
+that happened this game" is multiple comparisons by construction: search across
+players, numbers, turns and streaks and something always looks remarkable. This
+is the same error as the fixed threshold and the eleven-number breakdown,
+arriving through the front door as a feature request. The way out is not to drop
+accolades — they are the point of the product — but to fix the candidate set in
+advance and report each one's rarity against simulation, so "once in fifty games"
+means the same thing in every game. Anything mined post hoc is entertainment and
+must never be worded as evidence of luck or skill.
+
 **Ports and dev cards are separate axes.** Ports affect trade, not production —
 reported beside placement strength, never folded in. There is no honest exchange
 rate between "pips" and "2:1 ore", and inventing one is the same error again.
+
+---
+
+## The board generator (`services/boardGenerator.ts`)
+
+Builds a legal board so players can lay the tiles out from the screen. The one
+setup path where the vision pipeline is not involved at all — a generated board
+is known by construction, so there is nothing to read.
+
+**Generate-and-score, not constraint-solve.** Several hundred candidates are
+built and the best is kept. That always returns *something* (a board failing one
+of five constraints beats an error), yields a score worth showing, and degrades
+honestly when the settings are tighter than the tile bag allows.
+
+**Selection score and reported score are deliberately different.** Candidate
+ranking may only optimise the constraints the player switched on; `measureBoard`
+always reports everything. This is not fussiness — measuring caught the bug.
+With one shared score, "completely random" mode produced **0.03 adjacent red
+pairs per board**, because the search was still quietly picking the most
+balanced of 200 random boards and labelling it random. After the split it
+measures 1.27. The test that pins this is in `boardGenerator.test.ts` and says
+so.
+
+**Balance and chaos are constructed indices, not measurements.** The penalty
+weights are declared as a named constant so they can be argued with, and every
+raw count is shown beside the score so nobody has to trust the weighting. There
+is no experiment that makes an adjacent red pair "worth" 12 points.
+
+**The 11-pip intersection cap matters more here than in a generic generator.**
+A settlement on a 12-pip corner out-produces one on a 9-pip corner every game,
+forever. Generating boards with runaway corners would undercut the app's own
+central claim, which is telling luck apart from play.
+
+### Settlement corners (`getAllIntersections`)
+
+Exposure entry picks settlements off a generated board, deriving each one's
+numbers from the hexes meeting at the tapped corner and its port from the
+harbour serving that corner. Two geometry bugs surfaced here, both silent, both
+caught only by testing the mapping from several directions.
+
+**Corner identity is positional, never the set of touching hexes.** The obvious
+id — sorted hex indices, `"0-3-4"` — is unique only for the 24 interior corners.
+On the coast it collapses: hex 0 has three outer vertices touching nothing else,
+so all three become `"0"`, and the two ends of the 0/1 border both become
+`"0-1"`. That gives 48 ids for 54 corners. Nothing throws — two players on
+different shore corners are told the spot is taken, and their exposure quietly
+merges. Ids are now `"4v2"`: the lowest hex touching the corner, and the vertex
+on it.
+
+**Never key geometry on `toFixed`.** The corner positions are irrational sums
+that reach zero only within rounding error, and the error is signed — the hex to
+a corner's left gives +1e-16, the hex to its right −1e-16. `toFixed(3)` renders
+those as `"0.000"` and `"-0.000"`, so one corner became two and the same board
+had 60 corners. Keys are integer thousandths now; integers have no negative zero.
+
+Both are the house failure mode: not a crash, but production credited to a
+player who never had it, with every luck figure downstream inheriting it.
+
+**Corner hit targets are 16 units, not the 7 the dot shows.** An invisible
+circle sits on top of each dot, drawn last so it wins the tap. Neighbouring
+corners are exactly HEX_R (40) apart, so 16 is the practical ceiling before two
+targets overlap — about 28dp on a phone. Short of the 48dp guideline, but the
+board's own geometry caps it: corners are ~35px apart at phone width.
+
+**The distance rule is deliberately not enforced.** Settlements must be two
+edges apart, and the app does not check it. Occupied corners are blocked because
+that is unambiguous, but this is a recording tool, not a referee — and a
+mis-tapped corner is visible in the settlement list, where the numbers are shown.
+
+### Two React traps this screen hit
+
+Both were found by trying to force an edge case, not by anything failing in
+normal use — which is why they are written down rather than just fixed.
+
+**Hooks must come before `catan-exposure-quick`'s `!activeSession` early
+return.** Adding a `useMemo` after it meant the screen called ten hooks when the
+session had not hydrated and twelve once it had. React throws "Rendered more
+hooks than during the previous render" and the error boundary replaces the whole
+screen. Normal navigation never showed it, because the session is already in
+context by then; a cold start, an app restart mid-setup, or opening the route
+directly all do. Any new hook here goes above that return.
+
+**Deciding place-or-remove from a memo is a read-then-write race.** Reading
+"is this corner taken" from derived state and then calling `setPlayerSetups` lets
+two taps in one render cycle both see an empty corner and both append. The board
+shows one mark while the player carries two settlements, so their exposure is
+double-counted with nothing on screen to reveal it. The decision now happens
+inside the updater, against `prev`.
+
+### Handing a board between screens
+
+`saveActiveBoard` / `loadActiveBoard` / `clearActiveBoard` in `storage.ts` carry
+the generated board from the generator to exposure setup.
+
+These three swallow their errors, which contradicts the rule that storage
+failures must surface — and it is the one place that is right. This is a
+convenience handoff, not a record: losing it costs a nicer input mode, and the
+fallback is the number pad the player would have had anyway. `loadActiveBoard`
+does reject a wrong-shaped board rather than repairing it, because a malformed
+board is worse than no board — it would put wrong numbers on real settlements.
+
+**Every non-generator path must call `clearActiveBoard`.** `new-game/catan.tsx`
+does it for all destinations; only the generator sets one, on the way out. Miss
+this and a scanned game silently inherits the previous game's generated numbers.
+
+### What the research did and did not settle
+
+Confirmed: the base game has **four 3:1 and five 2:1 harbours** (one per
+resource). Several search results claim "5 generic and 4 specialized" — that is
+simply wrong, and it recurs across SEO-farm sites. `PORT_TYPE_COUNTS` is right.
+
+**Not settled: the actual fixed harbour positions.** BoardGameGeek returned 403,
+the Catan wiki 402, CatanFusion a certificate error, and the sites that did
+answer are the ones with the harbour-count error. `STANDARD_PORT_LAYOUT`'s own
+disclaimer stands and the generator's "fixed positions" toggle inherits it —
+the UI says so rather than implying an authority that was never established.
+Reading nine positions off a physical box would settle it in two minutes; until
+someone does, treat "traditional" as "the app's standard-style layout".
+
+Structural facts that *are* established, if a future layout is derived: nine
+harbours over thirty coastal edges spaced 3–4 apart (which is what stops two
+sharing a settlement intersection), and near-alternating generic/specific — with
+five and four around a nine-cycle, exactly one same-type adjacent pair is forced.
 
 ---
 
@@ -160,12 +407,16 @@ produced more confident-and-wrong conclusions than the rest of the repo combined
 ## Current state
 
 **Well covered:** dice tracking, stats, verdicts, storage and migrations, the
-constraint solver, the vision pipeline's logic. ~660 tests, all pure.
+constraint solver, the vision pipeline's logic, the mode boundary, the board
+generator, corner geometry, the harbour layout. 712 tests, all pure.
 
 **Never run on a device:** the capture screen, dev card entry, the port selector,
-the quick-exposure tap change, the results percentile column. Every vision
-measurement used hand-marked geometry on a single board — a perfect score on one
-sample is exactly when to be suspicious.
+player exposure setup, the results percentile column, the board generator screen,
+and the harbour and corner rendering in `CatanHexGrid`. ("Exposure" here means a
+player's board exposure — which numbers their settlements touch — not camera
+exposure. The two sit one screen apart, and the collision has already caused one
+misreading.) Every vision measurement used hand-marked geometry on a single
+board — a perfect score on one sample is exactly when to be suspicious.
 
 **Known weak points:** glare is unsolved and no global filter helps (measured);
 grey-vs-brown confusions were the last colour errors to fall; navigation has no
