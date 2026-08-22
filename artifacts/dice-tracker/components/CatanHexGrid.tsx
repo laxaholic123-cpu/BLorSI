@@ -11,7 +11,7 @@
  */
 
 import React from 'react';
-import { StyleProp, ViewStyle } from 'react-native';
+import { Pressable, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import Svg, { Circle, G, Line, Polygon, Text as SvgText } from 'react-native-svg';
 import type { CatanHexDef, CatanPortDef, ResourceType } from '@/types/models';
 import { intersectionIdAt } from '@/services/catanBoard';
@@ -181,15 +181,38 @@ export function CatanHexGrid({
   style,
 }: CatanHexGridProps) {
   const pad = ports && ports.length > 0 ? PORT_PAD : 0;
-  return (
+  const vbX = -pad;
+  const vbY = -pad;
+  const vbW = SVG_W + pad * 2;
+  const vbH = SVG_H + pad * 2;
+
+  /**
+   * Hex touches go through React Native, not through the SVG.
+   *
+   * react-native-svg's Android touch handling fires onPress on concrete shapes
+   * but does NOT reliably fire onLongPress — which is how the board-review
+   * correction ("long-press any hex to fix it") shipped looking correct and did
+   * nothing on a real phone. Rather than fight it, real <Pressable>s are laid
+   * over the hex centres and RN's own responder system does the work.
+   *
+   * Not rendered in intersection mode: there the taps belong to the corner
+   * circles inside the SVG, and an overlay would swallow every one of them.
+   */
+  const wantsHexTouches = Boolean(onHexPress || onHexLongPress) && !showIntersections;
+
+  /** Touch box per hex, in viewBox units. Rows sit 60 apart, so 56 cannot overlap. */
+  const TOUCH = 56;
+
+  const svg = (
     <Svg
       width="100%"
       viewBox={`${-pad} ${-pad} ${SVG_W + pad * 2} ${SVG_H + pad * 2}`}
       preserveAspectRatio="xMidYMid meet"
-      style={[
-        { aspectRatio: (SVG_W + pad * 2) / (SVG_H + pad * 2), width: '100%' },
-        style,
-      ]}
+      style={
+        wantsHexTouches
+          ? { width: '100%', height: '100%' }
+          : [{ aspectRatio: vbW / vbH, width: '100%' }, style]
+      }
     >
       {HEX_POS.map(([col, row], i) => {
         const { cx, cy } = hexCenter(col, row);
@@ -368,5 +391,33 @@ export function CatanHexGrid({
         );
       })}
     </Svg>
+  );
+
+  if (!wantsHexTouches) return svg;
+
+  return (
+    <View style={[{ width: '100%', aspectRatio: vbW / vbH }, style]}>
+      {svg}
+      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+        {HEX_POS.map(([col, row], i) => {
+          const { cx, cy } = hexCenter(col, row);
+          return (
+            <Pressable
+              key={`touch-${i}`}
+              onPress={onHexPress ? () => onHexPress(i) : undefined}
+              onLongPress={onHexLongPress ? () => onHexLongPress(i) : undefined}
+              delayLongPress={350}
+              style={{
+                position: 'absolute',
+                left: `${((cx - TOUCH / 2 - vbX) / vbW) * 100}%`,
+                top: `${((cy - TOUCH / 2 - vbY) / vbH) * 100}%`,
+                width: `${(TOUCH / vbW) * 100}%`,
+                height: `${(TOUCH / vbH) * 100}%`,
+              }}
+            />
+          );
+        })}
+      </View>
+    </View>
   );
 }
