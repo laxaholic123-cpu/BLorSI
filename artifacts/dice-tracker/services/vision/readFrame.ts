@@ -323,7 +323,9 @@ function readToken(
   // and demotes the digits to pips. Locating the face first took a real capture
   // from 1/14 to 4/14 in tools/face_locate_probe.py.
   const gray = cropGray(buffer, left, top, size, size);
-  const found = locateBrightDisc(gray) ?? fallbackDisc(size);
+  const located = locateBrightDisc(gray);
+  const faceLocated = located !== null;
+  const found = located ?? fallbackDisc(size);
   // Pull inside the printed rim, which thresholds as ink along with the digits.
   const disc = { ...found, radius: found.radius * 0.9 };
   const mask = maskToDisc(threshold(gray, otsuThresholdInDisc(gray, disc)), disc);
@@ -334,15 +336,40 @@ function readToken(
   const { glyphs, pips } = splitGlyphsAndPips(components);
   if (glyphs.length === 0) return { hasToken: true, costs: {} };
 
+  // Measured once: it feeds both the decode and the confidence check below.
+  const inkRed = inkIsRed(buffer, left, top, mask);
   const reading = decodeToken({
     pipCount: pips.length,
     glyphCount: glyphs.length,
     holeCount: countHoles(mask),
-    isRed: inkIsRed(buffer, left, top, mask),
+    isRed: inkRed,
   });
+
   if (reading.value === null) return { hasToken: true, costs: {} };
 
-  const commit = reading.confidence === 'high' ? 2 : 8;
+  /**
+   * Downgrade a reading the evidence does not actually support.
+   *
+   * `decodeToken` calls a reading confident whenever the glyph count matched a
+   * signature — and glyph counting has been measured at chance on real photos
+   * (delta -1 five times, 0 eight, +1 five). So "high" was being claimed for
+   * almost everything: one export came back with all nineteen tiles confident
+   * and fourteen of them wrong.
+   *
+   * That is worse than having no confidence signal at all, because
+   * `reconcileBoard` prices its assignment off it — overriding a confident read
+   * costs ten, filling an unknown costs one — so a board of falsely confident
+   * garbage tells the solver to preserve exactly the reads it should be fixing.
+   *
+   * Two things genuinely predict an unreliable read, and neither was consulted:
+   * the face not being found (so the decode ran on a guessed disc), and the ink
+   * colour contradicting the value.
+   */
+  const colourDisagrees =
+    inkRed !== undefined && inkRed !== (reading.value === 6 || reading.value === 8);
+  const trustworthy = reading.confidence === 'high' && faceLocated && !colourDisagrees;
+
+  const commit = trustworthy ? 2 : 8;
   const costs: Partial<Record<number, number>> = {};
   for (const n of [2, 3, 4, 5, 6, 8, 9, 10, 11, 12]) {
     costs[n] = n === reading.value ? 0 : commit;
