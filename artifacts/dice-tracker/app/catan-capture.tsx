@@ -286,7 +286,14 @@ export default function CatanCaptureScreen() {
       const pts = cornersRef.current;
       if (!lastShotUri || !buffer || pts.length !== 4) return { hexes };
 
-      const outcome = await recognizeBoardText(lastShotUri, buffer.width / buffer.height);
+      // The marked corners let OCR crop to the board instead of reading the
+      // whole table — measured, it was picking up a parcel label and missing
+      // most of the tokens.
+      const outcome = await recognizeBoardText(
+        lastShotUri,
+        buffer.width / buffer.height,
+        pts,
+      );
       if (!outcome.available) return { hexes, note: outcome.reason };
 
       // What the recogniser actually saw, verbatim. "No numbers recognised" on

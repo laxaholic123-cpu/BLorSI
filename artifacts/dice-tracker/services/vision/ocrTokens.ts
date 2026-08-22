@@ -134,6 +134,64 @@ export function mapOcrToHexes(
 }
 
 /**
+ * Undo a quarter-turn, bringing a point in a rotated image back to the original.
+ *
+ * ML Kit reads text that is roughly upright and little else. Measured on a real
+ * board it found four items in the whole photo — two token digits, both on
+ * UPRIGHT tokens, plus a parcel label in the background. Every upside-down
+ * token was missed, and Catan tokens sit at every rotation, which is exactly
+ * the property `tokenDecode.ts` was built to sidestep and OCR throws away.
+ *
+ * So the photo is read four times, a quarter-turn apart, and each pass is
+ * mapped back here. All coordinates are normalised 0-1, so a quarter turn also
+ * swaps the axes.
+ *
+ * `degrees` is how far the IMAGE was rotated clockwise before reading.
+ */
+export function unrotatePoint(
+  cx: number,
+  cy: number,
+  degrees: 0 | 90 | 180 | 270,
+): { cx: number; cy: number } {
+  switch (degrees) {
+    case 0:
+      return { cx, cy };
+    // The image turned clockwise, so a point turns back anticlockwise.
+    case 90:
+      return { cx: cy, cy: 1 - cx };
+    case 180:
+      return { cx: 1 - cx, cy: 1 - cy };
+    case 270:
+      return { cx: 1 - cy, cy: cx };
+  }
+}
+
+/**
+ * Merge readings from several rotations into one set.
+ *
+ * A token found upright in more than one pass is the same token, so the
+ * duplicates have to collapse — otherwise four passes report four boards. Two
+ * readings within `tolerance` of each other are treated as the same find; the
+ * first wins, since passes are ordered with the untransformed one first and
+ * that is the least likely to have been displaced by a rounding error.
+ */
+export function mergeRotatedTexts(
+  passes: readonly (readonly OcrText[])[],
+  tolerance = 0.02,
+): OcrText[] {
+  const kept: OcrText[] = [];
+  for (const pass of passes) {
+    for (const item of pass) {
+      const duplicate = kept.some(
+        k => Math.hypot(k.cx - item.cx, k.cy - item.cy) <= tolerance,
+      );
+      if (!duplicate) kept.push(item);
+    }
+  }
+  return kept;
+}
+
+/**
  * Resolve the one ambiguity rotation leaves behind.
  *
  * A 6 upside down is a 9, and no amount of reading the glyph settles it. Ink

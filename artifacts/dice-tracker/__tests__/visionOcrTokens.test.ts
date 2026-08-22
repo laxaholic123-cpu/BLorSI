@@ -12,6 +12,8 @@ import {
   mapOcrToHexes,
   parseTokenText,
   disambiguateWithInk,
+  unrotatePoint,
+  mergeRotatedTexts,
   VALID_TOKENS,
   type OcrText,
 } from '../services/vision/ocrTokens';
@@ -162,5 +164,88 @@ describe('disambiguateWithInk', () => {
       expect(disambiguateWithInk(v, true)).toBe(v);
       expect(disambiguateWithInk(v, false)).toBe(v);
     }
+  });
+});
+
+describe('unrotatePoint', () => {
+  it('leaves an unrotated point alone', () => {
+    expect(unrotatePoint(0.3, 0.7, 0)).toEqual({ cx: 0.3, cy: 0.7 });
+  });
+
+  it('round-trips every quarter turn', () => {
+    // The property that matters: whatever the rotation did, undoing it must
+    // land back on the original point. A transform that is merely plausible
+    // puts numbers on the wrong tiles while looking entirely reasonable.
+    const rotate = (cx: number, cy: number, d: 0 | 90 | 180 | 270) => {
+      switch (d) {
+        case 0: return { cx, cy };
+        case 90: return { cx: 1 - cy, cy: cx };
+        case 180: return { cx: 1 - cx, cy: 1 - cy };
+        case 270: return { cx: cy, cy: 1 - cx };
+      }
+    };
+    for (const d of [0, 90, 180, 270] as const) {
+      for (const [x, y] of [[0.1, 0.2], [0.5, 0.5], [0.9, 0.3], [0.25, 0.75]]) {
+        const spun = rotate(x, y, d);
+        const back = unrotatePoint(spun.cx, spun.cy, d);
+        expect(back.cx).toBeCloseTo(x, 10);
+        expect(back.cy).toBeCloseTo(y, 10);
+      }
+    }
+  });
+
+  it('keeps the centre fixed under every rotation', () => {
+    for (const d of [0, 90, 180, 270] as const) {
+      const p = unrotatePoint(0.5, 0.5, d);
+      expect(p.cx).toBeCloseTo(0.5, 10);
+      expect(p.cy).toBeCloseTo(0.5, 10);
+    }
+  });
+
+  it('stays inside the unit square', () => {
+    for (const d of [0, 90, 180, 270] as const) {
+      for (const [x, y] of [[0, 0], [1, 1], [0, 1], [1, 0], [0.33, 0.66]]) {
+        const p = unrotatePoint(x, y, d);
+        expect(p.cx).toBeGreaterThanOrEqual(0);
+        expect(p.cx).toBeLessThanOrEqual(1);
+        expect(p.cy).toBeGreaterThanOrEqual(0);
+        expect(p.cy).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+});
+
+describe('mergeRotatedTexts', () => {
+  it('collapses the same token found in several passes', () => {
+    // Four passes over one board must not report four boards.
+    const merged = mergeRotatedTexts([
+      [{ text: '9', cx: 0.5, cy: 0.5 }],
+      [{ text: '9', cx: 0.502, cy: 0.499 }],
+      [{ text: '9', cx: 0.5, cy: 0.501 }],
+    ]);
+    expect(merged).toHaveLength(1);
+  });
+
+  it('keeps tokens that are genuinely in different places', () => {
+    const merged = mergeRotatedTexts([
+      [{ text: '9', cx: 0.2, cy: 0.2 }],
+      [{ text: '4', cx: 0.8, cy: 0.8 }],
+    ]);
+    expect(merged).toHaveLength(2);
+  });
+
+  it('prefers the earlier pass, which is the untransformed one', () => {
+    const merged = mergeRotatedTexts([
+      [{ text: 'first', cx: 0.4, cy: 0.4 }],
+      [{ text: 'second', cx: 0.401, cy: 0.4 }],
+    ]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]!.text).toBe('first');
+  });
+
+  it('handles empty passes without losing the rest', () => {
+    // A rotation that fails or finds nothing must not discard the others.
+    const merged = mergeRotatedTexts([[], [{ text: '8', cx: 0.3, cy: 0.3 }], []]);
+    expect(merged).toHaveLength(1);
   });
 });
