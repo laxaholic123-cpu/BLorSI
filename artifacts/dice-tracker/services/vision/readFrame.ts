@@ -35,6 +35,7 @@ import {
   otsuThresholdInDisc,
   splitGlyphsAndPips,
   threshold,
+  type BinaryMask,
 } from '@/services/vision/binaryOps';
 import { decodeToken } from '@/services/vision/tokenDecode';
 import {
@@ -241,6 +242,58 @@ export function classifyTokenPresence(
  * defeat the decode — and it is the signal that identifies the desert, which is
  * the tile colour alone is worst at.
  */
+/**
+ * Is this token's ink red?
+ *
+ * 6 and 8 are the only red tokens, and they are also the pair the counting
+ * signals separate worst: both have five pips, and only the hole count tells
+ * them apart — 6 has one, 8 has two — which is precisely the measurement that
+ * collapses on a real photo. `decodeToken` has always accepted this signal and
+ * nothing ever supplied it.
+ *
+ * Measured RELATIVE to the token's own face, not against a fixed red. The face
+ * is printed cream and therefore already warm, so the question is whether the
+ * ink is warmer than the paper it sits on. That normalises out white balance
+ * and the illumination of the moment, in the same way the terrain classifier
+ * ranks tiles against each other rather than against absolute colours.
+ *
+ * Returns undefined when there is too little ink to judge — the decoder treats
+ * an absent signal as "no opinion", which is the right answer rather than a
+ * coin flip.
+ */
+function inkIsRed(
+  buffer: PixelBuffer,
+  left: number,
+  top: number,
+  mask: BinaryMask,
+): boolean | undefined {
+  let inkR = 0, inkG = 0, inkB = 0, inkN = 0;
+  let faceR = 0, faceG = 0, faceB = 0, faceN = 0;
+
+  for (let y = 0; y < mask.height; y++) {
+    for (let x = 0; x < mask.width; x++) {
+      const px = readPixel(buffer, left + x, top + y);
+      if (mask.data[y * mask.width + x]) {
+        inkR += px.r; inkG += px.g; inkB += px.b; inkN++;
+      } else {
+        faceR += px.r; faceG += px.g; faceB += px.b; faceN++;
+      }
+    }
+  }
+  if (inkN < 12 || faceN < 12) return undefined;
+
+  // Warmth: how far red sits above the mean of the other two channels.
+  const warmth = (r: number, g: number, b: number, n: number) =>
+    r / n - (g / n + b / n) / 2;
+  const inkWarmth = warmth(inkR, inkG, inkB, inkN);
+  const faceWarmth = warmth(faceR, faceG, faceB, faceN);
+
+  // Black ink sits at or below the face's own warmth; red ink sits well above.
+  // The margin is deliberately generous — a false "red" would push a token
+  // towards 6 or 8, and being wrong here is worse than staying silent.
+  return inkWarmth - faceWarmth > 18;
+}
+
 function readToken(
   buffer: PixelBuffer,
   h: Matrix3,
@@ -285,6 +338,7 @@ function readToken(
     pipCount: pips.length,
     glyphCount: glyphs.length,
     holeCount: countHoles(mask),
+    isRed: inkIsRed(buffer, left, top, mask),
   });
   if (reading.value === null) return { hasToken: true, costs: {} };
 
