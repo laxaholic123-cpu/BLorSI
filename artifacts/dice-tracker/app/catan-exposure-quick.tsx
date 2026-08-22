@@ -12,7 +12,7 @@
  * GameContext before navigating to the active Catan screen.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
   Platform,
@@ -23,7 +23,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
@@ -102,19 +102,31 @@ export default function CatanExposureQuickScreen() {
   const [board, setBoard] = useState<ActiveBoard | null>(null);
   const [inputMode, setInputMode] = useState<'board' | 'numbers'>('numbers');
 
-  useEffect(() => {
-    let cancelled = false;
-    loadActiveBoard().then(loaded => {
-      if (cancelled || !loaded) return;
-      setBoard(loaded);
-      // Prefer picking off the board when we have one: it removes the
-      // transcription step entirely, so exposure becomes exact rather than
-      // self-reported. The number pad stays one tap away for anyone whose
-      // physical board drifted from the generated one.
-      setInputMode('board');
-    });
-    return () => { cancelled = true; };
-  }, []);
+  /**
+   * Reload on FOCUS, not on mount — the same trap that made ground truth look
+   * unset on the capture screen.
+   *
+   * The generator writes the board and then navigates here. If this screen is
+   * already mounted from an earlier visit, a mount-only effect never re-reads,
+   * and the player would tap corners on a board that is no longer the one on
+   * the table. That failure is silent and it corrupts exposure, which is the
+   * one thing this screen exists to get right.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      loadActiveBoard().then(loaded => {
+        if (cancelled || !loaded) return;
+        setBoard(loaded);
+        // Prefer picking off the board when we have one: it removes the
+        // transcription step entirely, so exposure becomes exact rather than
+        // self-reported. The number pad stays one tap away for anyone whose
+        // physical board drifted from the generated one.
+        setInputMode('board');
+      });
+      return () => { cancelled = true; };
+    }, []),
+  );
 
   // ─── Board mode ───────────────────────────────────────────────────────────
   //

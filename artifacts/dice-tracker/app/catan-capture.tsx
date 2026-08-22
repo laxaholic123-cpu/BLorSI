@@ -30,7 +30,7 @@
  * This tool is not affiliated with or endorsed by the publishers or owners of Catan.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -46,7 +46,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import Svg, { Polygon, Circle } from 'react-native-svg';
@@ -168,9 +168,24 @@ export default function CatanCaptureScreen() {
   const [groundTruth, setGroundTruth] = useState<CatanHexDef[] | null>(null);
   const [comparison, setComparison] = useState<ReadingSnapshot[] | null>(null);
 
-  useEffect(() => {
-    loadGroundTruth().then(setGroundTruth);
-  }, []);
+  /**
+   * Reload on FOCUS, not on mount.
+   *
+   * Ground truth is set on the correction screen, which this screen reaches via
+   * router.push — so this one stays mounted underneath and coming back does not
+   * remount it. A mount-only effect therefore reads storage exactly once, before
+   * the answer exists, and reports "no ground truth set" forever afterwards
+   * while the value sits correctly in storage.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      loadGroundTruth().then(gt => {
+        if (!cancelled) setGroundTruth(gt);
+      });
+      return () => { cancelled = true; };
+    }, []),
+  );
 
   const guidance = guidanceForEvidence(evidence);
   const confidences = evidence.map(evidenceConfidence);

@@ -691,19 +691,40 @@ export default function CatanBoardScanScreen() {
               );
               return;
             }
+            // Two buttons, not three. The previous version put a destructive
+            // "Clear existing" between Cancel and Set, which on Android renders
+            // as the neutral middle button and is very easy to hit by mistake.
             Alert.alert(
               'Set as ground truth?',
-              'Future captures will be scored against this board. Only do this once it matches the table exactly.',
+              'Captures will be scored against this board. Only do this once it matches the table exactly.',
               [
                 { text: 'Cancel', style: 'cancel' },
                 {
-                  text: 'Clear existing',
-                  style: 'destructive',
-                  onPress: () => { void clearGroundTruth(); },
-                },
-                {
                   text: 'Set',
-                  onPress: () => { void saveGroundTruth(hexes); },
+                  onPress: () => {
+                    void saveGroundTruth(hexes).then(() =>
+                      // Confirm, so it is never ambiguous whether it took.
+                      Alert.alert('Ground truth set', 'Captures will now be scored against this board.'),
+                    );
+                  },
+                },
+              ],
+            );
+          }}
+          onLongPress={() => {
+            Alert.alert(
+              'Clear ground truth?',
+              'Captures will stop being scored until a new one is set.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Clear',
+                  style: 'destructive',
+                  onPress: () => {
+                    void clearGroundTruth().then(() =>
+                      Alert.alert('Cleared', 'No ground truth is set.'),
+                    );
+                  },
                 },
               ],
             );
@@ -711,7 +732,7 @@ export default function CatanBoardScanScreen() {
         >
           <Ionicons name="flask-outline" size={16} color={colors.mutedForeground} />
           <Text style={[s.secondaryBtnText, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
-            Set as ground truth (diagnostics)
+            Set as ground truth (long-press to clear)
           </Text>
         </TouchableOpacity>
 
