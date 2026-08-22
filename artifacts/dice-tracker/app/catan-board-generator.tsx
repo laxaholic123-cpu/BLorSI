@@ -171,11 +171,28 @@ export default function CatanBoardGeneratorScreen() {
 
   const m = board.metrics;
 
+  /**
+   * Describe a hex the way it looks on the table.
+   *
+   * Never by array index. "Hex 18" and "hexes 0, 3, 4" are positions in a 0-18
+   * array, but they read as number tokens — and there is no 0, 1, 7 or 13-18
+   * token in Catan, so they look like a generator that invented numbers. This
+   * is the only vocabulary the player shares with the app: the terrain and the
+   * token on it.
+   */
+  const describeHex = (index: number): string => {
+    const hex = board.hexes[index];
+    if (!hex) return '?';
+    const name = hex.resource ?? 'unknown';
+    return hex.number === null ? name : `${name} ${hex.number}`;
+  };
+
   const hotLabel = useMemo(() => {
     if (!m.hottestIntersection) return '—';
     const { pips, hexIndices } = m.hottestIntersection;
-    return `${pips} pips (hexes ${hexIndices.join(', ')})`;
-  }, [m.hottestIntersection]);
+    return `${pips} pips · ${hexIndices.map(describeHex).join(' + ')}`;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [m.hottestIntersection, board.hexes]);
 
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
@@ -271,7 +288,7 @@ export default function CatanBoardGeneratorScreen() {
           {board.ports.map((p, i) => (
             <DetailRow
               key={`${p.hexIndex}-${p.edge}`}
-              label={`Hex ${p.hexIndex}`}
+              label={`beside ${describeHex(p.hexIndex)}`}
               value={describePort(p.type)}
               colors={colors}
               last={i === board.ports.length - 1}
