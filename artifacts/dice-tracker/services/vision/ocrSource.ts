@@ -23,6 +23,17 @@ export interface OcrOutcome {
   available: boolean;
   /** Why nothing came back, for the diagnostics export. */
   reason?: string;
+  /**
+   * Everything the recogniser returned, verbatim and unfiltered.
+   *
+   * Without this "no numbers recognised" is unactionable: it cannot separate
+   * "the recogniser found nothing" from "it found plenty and the parser threw
+   * it all away", and those need opposite fixes. The raw strings go into the
+   * diagnostic export so one capture answers the question.
+   */
+  rawTexts?: string[];
+  /** Size the boxes were measured against, to check the normalisation. */
+  imageSize?: { width: number; height: number };
 }
 
 const UNAVAILABLE = (reason: string): OcrOutcome => ({ texts: [], available: false, reason });
@@ -31,9 +42,11 @@ type MlkitModule = {
   recognizeText: (uri: string) => Promise<{
     blocks: Array<{
       lines: Array<{
+        text?: string;
         elements: Array<{
           text: string;
-          boundingBox: { x: number; y: number; width: number; height: number };
+          // Nullable on the native side, so never dereferenced blind.
+          boundingBox?: { x: number; y: number; width: number; height: number } | null;
         }>;
       }>;
     }>;
@@ -106,13 +119,27 @@ export async function recognizeBoardText(
   try {
     const result = await mlkit.recognizeText(uri);
     const texts: OcrText[] = [];
+    /** Recognised but not positionable — still evidence about what was seen. */
+    const unplaced: string[] = [];
     for (const block of result.blocks ?? []) {
       for (const line of block.lines ?? []) {
         // Elements, not lines: a line can sweep up two tokens that happen to
         // sit level with each other, and its box would then centre on the gap
         // between them.
-        for (const element of line.elements ?? []) {
+        const elements = line.elements ?? [];
+        if (elements.length === 0 && line.text) {
+          // Some recognisers fill only the line. Better a whole line placed
+          // roughly than a token dropped silently.
+          unplaced.push(line.text);
+        }
+        for (const element of elements) {
           const b = element.boundingBox;
+          if (!b) {
+            // The box is nullable natively. Keep the text for the diagnostic
+            // even though it cannot be positioned.
+            unplaced.push(element.text);
+            continue;
+          }
           texts.push({
             text: element.text,
             cx: (b.x + b.width / 2) / size.width,
@@ -121,7 +148,15 @@ export async function recognizeBoardText(
         }
       }
     }
-    return { texts, available: true };
+    return {
+      texts,
+      available: true,
+      // Capped: a board can produce a lot of fragments and this rides in a
+      // share sheet.
+      rawTexts: [...texts.map(t => t.text), ...unplaced.map(t => `(unplaced) ${t}`)]
+        .slice(0, 60),
+      imageSize: size,
+    };
   } catch {
     return UNAVAILABLE('Text recognition failed on this photo.');
   }

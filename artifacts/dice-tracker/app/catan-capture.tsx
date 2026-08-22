@@ -289,11 +289,20 @@ export default function CatanCaptureScreen() {
       const outcome = await recognizeBoardText(lastShotUri, buffer.width / buffer.height);
       if (!outcome.available) return { hexes, note: outcome.reason };
 
+      // What the recogniser actually saw, verbatim. "No numbers recognised" on
+      // its own cannot distinguish "found nothing" from "found plenty and the
+      // parser rejected it", and those want opposite fixes.
+      const seen = outcome.rawTexts ?? [];
+      const sawSummary =
+        `saw ${seen.length}` + (seen.length ? `: ${seen.slice(0, 24).join(' ')}` : '');
+
       const readings = mapOcrToHexes(
         outcome.texts,
         pts as unknown as [Point, Point, Point, Point],
       );
-      if (readings.length === 0) return { hexes, note: 'No numbers recognised.' };
+      if (readings.length === 0) {
+        return { hexes, note: `No numbers placed — ${sawSummary}` };
+      }
 
       const merged = hexes.map(h => ({ ...h }));
       for (const r of readings) {
@@ -304,7 +313,7 @@ export default function CatanCaptureScreen() {
       }
       return {
         hexes: reconcileBoard(merged).hexes,
-        note: `Read ${readings.length} numbers.`,
+        note: `Placed ${readings.length} of ${seen.length} — ${sawSummary}`,
       };
     },
     [lastShotUri],
