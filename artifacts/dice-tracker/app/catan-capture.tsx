@@ -81,8 +81,18 @@ import type { CatanHexDef } from '@/types/models';
  * Far larger than the live loop could afford. With one shot there is no frame
  * budget, so the token crops keep enough pixels for the digits to survive
  * thresholding — which is what the number decode depends on.
+ *
+ * Raised from 1400 after measuring. At 1400 the buffer came out 1536 wide, the
+ * token face about 55px across, and the pips roughly 4px — below what blob
+ * counting can resolve, which is why pips were consistently UNDER-counted. Read
+ * at falling resolutions the same photo scored 4, 3, 1, 2 out of 14: the decode
+ * is resolution-limited, so the downscale was destroying the very detail the
+ * comment above claims it preserves.
+ *
+ * 2400 leaves a typical phone photo (~3000px) untouched, and still halves
+ * anything enormous.
  */
-const TARGET_WIDTH = 1400;
+const TARGET_WIDTH = 2400;
 
 /** Guide occupies this fraction of the shorter screen edge. */
 const GUIDE_FILL = 0.88;

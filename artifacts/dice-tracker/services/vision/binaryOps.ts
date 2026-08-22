@@ -71,32 +71,70 @@ export function threshold(image: GrayImage, cut?: number): BinaryMask {
   return { data, width: image.width, height: image.height };
 }
 
-/**
- * Keep only the inscribed circle of a square mask; clear everything outside.
- *
- * A number token is a CIRCLE, but the crop taken around it is a square, so
- * roughly 21% of that square (1 - pi/4) is the tile underneath — trees,
- * mountains, furrows. Those threshold into ink and get counted as pips and
- * glyphs, which is not a small error: measured on real captures, tokens on the
- * three textured terrains read 0/30 correct, against 7/24 on the two smooth
- * pale ones. The decoder was largely counting scenery.
- *
- * `inset` pulls the circle in slightly from the crop edge, because the token's
- * printed rim and its shadow both sit right at the boundary and both threshold
- * as ink.
- */
-export function maskToCircle(mask: BinaryMask, inset = 0.92): BinaryMask {
-  const cx = (mask.width - 1) / 2;
-  const cy = (mask.height - 1) / 2;
-  const radius = (Math.min(mask.width, mask.height) / 2) * inset;
-  const r2 = radius * radius;
+/** A located disc within a crop, in crop pixel coordinates. */
+export interface Disc {
+  cx: number;
+  cy: number;
+  radius: number;
+}
 
+/**
+ * Find the token's bright face inside a crop.
+ *
+ * The decoder used to assume the face was centred and filled the crop. Measured
+ * on a real capture, neither holds: the face is about 64% of the assumed radius
+ * and sits up to half a radius off centre, because tokens are dropped on tiles
+ * by hand and the crop is sized from a canonical constant rather than the
+ * board in front of you.
+ *
+ * The cost of assuming was severe. Thresholding a crop that is mostly TILE
+ * marks the tile as ink, hands the decoder one enormous blob as the "glyph",
+ * and demotes the real digits to pips — which is why glyph counting sat at
+ * chance and every two-digit token failed.
+ *
+ * Returns null rather than guessing when what it finds is not disc-like, runs
+ * off the crop edge, or is an implausible size. A bright tile can look like a
+ * face, and a wrong face is worse than no face.
+ */
+export function locateBrightDisc(image: GrayImage): Disc | null {
+  const cut = otsuThreshold(image);
+  const size = image.width * image.height;
+  const bright = new Array<boolean>(size);
+  for (let i = 0; i < size; i++) bright[i] = (image.data[i]! & 0xff) > cut;
+
+  const comps = connectedComponents(
+    { data: bright, width: image.width, height: image.height },
+    true,
+  );
+  if (comps.length === 0) return null;
+
+  let big = comps[0]!;
+  for (const c of comps) if (c.size > big.size) big = c;
+
+  const w = big.maxX - big.minX + 1;
+  const h = big.maxY - big.minY + 1;
+  // A face is round. Anything markedly oblong is scenery.
+  if (Math.min(w, h) / Math.max(w, h) < 0.72) return null;
+  // Touching the edge means the bright region continued into the tile.
+  if (big.minX <= 0 || big.minY <= 0 ||
+      big.maxX >= image.width - 1 || big.maxY >= image.height - 1) return null;
+
+  const half = Math.min(image.width, image.height) / 2;
+  const radius = Math.max(w, h) / 2;
+  if (radius < half * 0.30 || radius > half * 0.98) return null;
+
+  return { cx: (big.minX + big.maxX) / 2, cy: (big.minY + big.maxY) / 2, radius };
+}
+
+/** Clear everything outside a given disc. */
+export function maskToDisc(mask: BinaryMask, disc: Disc): BinaryMask {
+  const r2 = disc.radius * disc.radius;
   const data = new Array<boolean>(mask.data.length);
   for (let y = 0; y < mask.height; y++) {
     for (let x = 0; x < mask.width; x++) {
       const i = y * mask.width + x;
-      const dx = x - cx;
-      const dy = y - cy;
+      const dx = x - disc.cx;
+      const dy = y - disc.cy;
       data[i] = dx * dx + dy * dy <= r2 ? mask.data[i]! : false;
     }
   }
@@ -104,33 +142,30 @@ export function maskToCircle(mask: BinaryMask, inset = 0.92): BinaryMask {
 }
 
 /**
- * Otsu over the inscribed circle only.
+ * Otsu over one disc only.
  *
- * The cut must be chosen from the token face alone for the same reason the
- * blobs must: dark tile artwork in the corners drags the split away from the
- * cream-versus-ink boundary the decoder depends on.
+ * The cut must come from the token face alone. Tile artwork in the crop drags
+ * the split away from the cream-versus-ink boundary the decoder depends on, and
+ * on textured terrain that alone took tokens to 0/30 correct.
  */
-export function otsuThresholdInCircle(image: GrayImage, inset = 0.92): number {
-  const cx = (image.width - 1) / 2;
-  const cy = (image.height - 1) / 2;
-  const radius = (Math.min(image.width, image.height) / 2) * inset;
-  const r2 = radius * radius;
-
+export function otsuThresholdInDisc(image: GrayImage, disc: Disc): number {
+  const r2 = disc.radius * disc.radius;
   const inside: number[] = [];
   for (let y = 0; y < image.height; y++) {
     for (let x = 0; x < image.width; x++) {
-      const dx = x - cx;
-      const dy = y - cy;
+      const dx = x - disc.cx;
+      const dy = y - disc.cy;
       if (dx * dx + dy * dy <= r2) inside.push(image.data[y * image.width + x]! & 0xff);
     }
   }
   if (inside.length === 0) return otsuThreshold(image);
+  return otsuThreshold({ data: Uint8Array.from(inside), width: inside.length, height: 1 });
+}
 
-  return otsuThreshold({
-    data: Uint8Array.from(inside),
-    width: inside.length,
-    height: 1,
-  });
+/** The centred disc to fall back on when the face cannot be found. */
+export function fallbackDisc(size: number): Disc {
+  // 0.65 rather than 1.0: measured, the face is about 64% of the assumed radius.
+  return { cx: (size - 1) / 2, cy: (size - 1) / 2, radius: (size / 2) * 0.65 };
 }
 
 export interface Component {

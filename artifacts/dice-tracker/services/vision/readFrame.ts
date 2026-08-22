@@ -28,9 +28,11 @@ import { cropGray, readPixel, type PixelBuffer } from '@/services/vision/pixelBu
 import {
   connectedComponents,
   countHoles,
+  fallbackDisc,
   filterNoise,
-  maskToCircle,
-  otsuThresholdInCircle,
+  locateBrightDisc,
+  maskToDisc,
+  otsuThresholdInDisc,
   splitGlyphsAndPips,
   threshold,
 } from '@/services/vision/binaryOps';
@@ -258,13 +260,20 @@ function readToken(
     return { hasToken: true, costs: {} };
   }
 
-  // Confine everything to the token's circular face. The crop is square, so its
-  // corners hold the tile beneath — and on textured terrain that scenery
-  // thresholds into ink and gets counted as pips and glyphs. Measured on real
-  // captures before this: 0/30 tokens correct on forest, mountains and hills,
-  // against 7/24 on the two smooth pale terrains.
+  // Find the token's face, then decode inside it.
+  //
+  // The crop is a square sized from a canonical constant, and the face is
+  // neither centred in it nor as large as assumed — measured on a real capture,
+  // about 64% of the assumed radius, offset by up to half a radius, because
+  // tokens are dropped on tiles by hand. Thresholding the whole square marks
+  // the surrounding TILE as ink, hands the decoder one huge blob as the glyph
+  // and demotes the digits to pips. Locating the face first took a real capture
+  // from 1/14 to 4/14 in tools/face_locate_probe.py.
   const gray = cropGray(buffer, left, top, size, size);
-  const mask = maskToCircle(threshold(gray, otsuThresholdInCircle(gray)));
+  const found = locateBrightDisc(gray) ?? fallbackDisc(size);
+  // Pull inside the printed rim, which thresholds as ink along with the digits.
+  const disc = { ...found, radius: found.radius * 0.9 };
+  const mask = maskToDisc(threshold(gray, otsuThresholdInDisc(gray, disc)), disc);
   const minBlob = Math.max(2, Math.round(size * size * 0.0008));
   const components = filterNoise(connectedComponents(mask, true), minBlob);
   if (components.length === 0) return { hasToken: true, costs: {} };
