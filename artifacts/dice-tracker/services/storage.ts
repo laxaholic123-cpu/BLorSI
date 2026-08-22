@@ -598,6 +598,46 @@ export const clearActiveBoard = async (): Promise<void> => {
   } catch {}
 };
 
+// ─── Diagnostics: board reader ground truth ───────────────────────────────────
+
+const GROUND_TRUTH_KEY = 'blosi:diag_ground_truth';
+
+/**
+ * The correct answer for the board currently on the table, for scoring reads.
+ *
+ * Diagnostics only — nothing in the game reads this. It exists because
+ * evaluating the board reader by eye means checking 19 tiles per capture and
+ * losing your place, which is how a testing session produces "seemed worse"
+ * instead of a number.
+ *
+ * Best-effort like the active board handoff: if it fails, scoring silently
+ * turns off and captures still work. It is a measurement aid, not a record.
+ */
+export const saveGroundTruth = async (hexes: CatanHexDef[]): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(GROUND_TRUTH_KEY, JSON.stringify(hexes));
+  } catch {}
+};
+
+export const loadGroundTruth = async (): Promise<CatanHexDef[] | null> => {
+  try {
+    const json = await AsyncStorage.getItem(GROUND_TRUTH_KEY);
+    if (!json) return null;
+    const raw = JSON.parse(json) as CatanHexDef[];
+    // A partial board would score every read against nonsense.
+    if (!Array.isArray(raw) || raw.length !== BOARD_HEX_COUNT) return null;
+    return raw;
+  } catch {
+    return null;
+  }
+};
+
+export const clearGroundTruth = async (): Promise<void> => {
+  try {
+    await AsyncStorage.removeItem(GROUND_TRUTH_KEY);
+  } catch {}
+};
+
 export const clearAllData = async (): Promise<void> => {
   try {
     const allKeys = await AsyncStorage.getAllKeys();

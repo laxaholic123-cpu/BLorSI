@@ -30,13 +30,14 @@
  * This tool is not affiliated with or endorsed by the publishers or owners of Catan.
  */
 
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
   PanResponder,
   Platform,
+  Share,
   ScrollView,
   StyleSheet,
   Text,
@@ -63,6 +64,13 @@ import {
 } from '@/services/vision/evidenceMerge';
 import { reconcileBoardFromEvidence } from '@/services/boardConstraints';
 import { HEX_CENTERS, hexOutline } from '@/services/vision/boardGeometry';
+import {
+  buildDiagnosticPayload,
+  scoreReading,
+  summariseForHumans,
+  type ReadingSnapshot,
+} from '@/services/vision/diagnostics';
+import { loadGroundTruth } from '@/services/storage';
 import type { HexEvidence } from '@/services/boardConstraints';
 import type { Point } from '@/services/vision/homography';
 import type { CatanHexDef } from '@/types/models';
@@ -154,6 +162,16 @@ export default function CatanCaptureScreen() {
   const dragStart = useRef<Record<number, NormPoint>>({});
   const [boxSize, setBoxSize] = useState<{ w: number; h: number } | null>(null);
 
+  // ── Diagnostics (temporary; see services/vision/diagnostics.ts) ────────────
+  /** The guide-derived corners, kept unmodified so they can be compared against. */
+  const [guideCorners, setGuideCorners] = useState<NormPoint[] | null>(null);
+  const [groundTruth, setGroundTruth] = useState<CatanHexDef[] | null>(null);
+  const [comparison, setComparison] = useState<ReadingSnapshot[] | null>(null);
+
+  useEffect(() => {
+    loadGroundTruth().then(setGroundTruth);
+  }, []);
+
   const guidance = guidanceForEvidence(evidence);
   const confidences = evidence.map(evidenceConfidence);
 
@@ -197,14 +215,15 @@ export default function CatanCaptureScreen() {
       // The preview crops the photo — the aspect ratios differ — so this is not
       // a plain scale. See screenToImage. Normalised here so the handles can be
       // laid out at any display size.
-      setCorners(
-        HANDLE_HEXES.map(i => {
-          const p = screenToImage(
-            toScreen(HEX_CENTERS[i]!), screenW, screenH, buffer.width, buffer.height,
-          );
-          return { x: clamp01(p.x / buffer.width), y: clamp01(p.y / buffer.height) };
-        }),
-      );
+      const seeded = HANDLE_HEXES.map(i => {
+        const p = screenToImage(
+          toScreen(HEX_CENTERS[i]!), screenW, screenH, buffer.width, buffer.height,
+        );
+        return { x: clamp01(p.x / buffer.width), y: clamp01(p.y / buffer.height) };
+      });
+      setCorners(seeded);
+      setGuideCorners(seeded);
+      setComparison(null);
       setPhase('adjust');
     } catch {
       setError('Could not read that shot. Try again.');
@@ -254,6 +273,94 @@ export default function CatanCaptureScreen() {
       setPhase('adjust');
     }
   }, [evidence]);
+
+  /**
+   * Read the held frame with one corner set, without merging into the session.
+   *
+   * Merging is what the real flow does, and it is exactly what a measurement
+   * must not do — prior evidence would carry a good read into a bad one and
+   * flatter the result.
+   */
+  const readSnapshot = useCallback(
+    (label: string, pts: readonly NormPoint[]): ReadingSnapshot | null => {
+      const buffer = bufferRef.current;
+      if (!buffer || pts.length !== 4) return null;
+
+      const imagePoints = pts.map(p => ({
+        x: p.x * buffer.width,
+        y: p.y * buffer.height,
+      })) as [Point, Point, Point, Point];
+
+      const reading = readFrame(buffer, imagePoints);
+      const corners = pts.map(p => ({ x: p.x, y: p.y }));
+
+      if (reading.evidence.length === 0) {
+        return {
+          label,
+          corners,
+          hexes: [],
+          usable: false,
+          coverage: reading.assessment.coverage,
+          reason: reading.assessment.reason,
+        };
+      }
+
+      const hexes = reconcileBoardFromEvidence(reading.evidence).hexes;
+      return {
+        label,
+        corners,
+        hexes: hexes.map(h => ({
+          index: h.index,
+          resource: h.resource ?? null,
+          number: h.number ?? null,
+          confidence: h.confidence,
+        })),
+        usable: true,
+        coverage: reading.assessment.coverage,
+        score: groundTruth ? scoreReading(hexes, groundTruth) : undefined,
+      };
+    },
+    [groundTruth],
+  );
+
+  /**
+   * The A/B that matters: same photo, both corner sets.
+   *
+   * Two shots cannot answer this. They differ in the corners AND in the photo,
+   * so a better second result proves nothing about which one helped.
+   */
+  const compareCorners = useCallback(() => {
+    if (!guideCorners || !corners) return;
+    const a = readSnapshot('guide corners', guideCorners);
+    const b = readSnapshot('marked corners', corners);
+    setComparison([a, b].filter(Boolean) as ReadingSnapshot[]);
+  }, [guideCorners, corners, readSnapshot]);
+
+  const exportDiagnostic = useCallback(async () => {
+    const buffer = bufferRef.current;
+    if (!buffer) return;
+    const readings =
+      comparison ??
+      ([readSnapshot('marked corners', cornersRef.current)].filter(Boolean) as ReadingSnapshot[]);
+
+    const payload = buildDiagnosticPayload({
+      bufferWidth: buffer.width,
+      bufferHeight: buffer.height,
+      groundTruth,
+      readings,
+    });
+
+    try {
+      await Share.share({
+        title: 'Board reader diagnostic',
+        message: `${summariseForHumans(payload)}
+
+${JSON.stringify(payload)}`,
+      });
+    } catch {
+      Alert.alert('Could not share', 'The diagnostic was not shared.');
+    }
+  }, [comparison, groundTruth, readSnapshot]);
 
   /** One PanResponder per handle, rebuilt only when the display box resizes. */
   const handleResponders = useMemo(
@@ -448,6 +555,78 @@ export default function CatanCaptureScreen() {
               Read the board
             </Text>
           </TouchableOpacity>
+
+          {/* ── Diagnostics. Temporary — see services/vision/diagnostics.ts ── */}
+          <View style={[s.diagBox, { borderColor: colors.border }]}>
+            <Text style={[s.diagTitle, { color: colors.mutedForeground, fontFamily: 'Inter_600SemiBold' }]}>
+              DIAGNOSTICS
+            </Text>
+            <Text style={[s.diagHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+              {groundTruth
+                ? 'Ground truth is set, so reads are scored automatically.'
+                : 'No ground truth set. Correct a board on the next screen and tap "Set as ground truth" to get scores.'}
+            </Text>
+
+            <View style={s.rowBtns}>
+              <TouchableOpacity
+                style={[s.secondaryBtn, { borderColor: colors.border }]}
+                onPress={compareCorners}
+              >
+                <Text style={[s.secondaryText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
+                  Compare corners
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.secondaryBtn, { borderColor: colors.border }]}
+                onPress={exportDiagnostic}
+              >
+                <Text style={[s.secondaryText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
+                  Export
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {comparison?.map(r => (
+              <View key={r.label} style={[s.diagResult, { borderTopColor: colors.border }]}>
+                <Text style={[s.diagLabel, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
+                  {r.label}
+                </Text>
+                {!r.usable ? (
+                  <Text style={[s.diagHint, { color: '#F59E0B', fontFamily: 'Inter_400Regular' }]}>
+                    unusable — {r.reason ?? 'no reason given'}
+                  </Text>
+                ) : r.score ? (
+                  <>
+                    <Text style={[s.diagScore, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+                      {r.score.correct}/{r.score.total} exact
+                    </Text>
+                    <Text style={[s.diagHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                      terrain {r.score.resourceCorrect}/{r.score.total} · tokens{' '}
+                      {r.score.numberCorrect}/{r.score.total}
+                    </Text>
+                    {r.score.mismatches.slice(0, 6).map(m => (
+                      <Text
+                        key={m.index}
+                        style={[s.diagHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}
+                      >
+                        tile {m.index + 1}: got {m.gotResource ?? '?'} {m.gotNumber ?? '—'} · want{' '}
+                        {m.wantResource ?? '?'} {m.wantNumber ?? '—'} ({m.wrong})
+                      </Text>
+                    ))}
+                    {r.score.mismatches.length > 6 && (
+                      <Text style={[s.diagHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                        …and {r.score.mismatches.length - 6} more (full list in Export)
+                      </Text>
+                    )}
+                  </>
+                ) : (
+                  <Text style={[s.diagHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                    read {r.hexes.length} tiles · coverage {(r.coverage * 100).toFixed(0)}%
+                  </Text>
+                )}
+              </View>
+            ))}
+          </View>
 
           <TouchableOpacity style={s.linkBtn} onPress={() => setPhase('aiming')}>
             <Text style={[s.link, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium', textAlign: 'center' }]}>
@@ -669,6 +848,12 @@ const s = StyleSheet.create({
   primaryBtnText: { fontSize: 16 },
   rowBtns: { flexDirection: 'row', gap: 10, marginTop: 10 },
   secondaryBtn: { flex: 1, borderWidth: 1.5, borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
+  diagBox: { borderWidth: 1, borderRadius: 12, padding: 12, marginTop: 14 },
+  diagTitle: { fontSize: 11, letterSpacing: 1, marginBottom: 6 },
+  diagHint: { fontSize: 12, lineHeight: 17 },
+  diagResult: { borderTopWidth: 1, marginTop: 10, paddingTop: 10 },
+  diagLabel: { fontSize: 13, marginBottom: 2 },
+  diagScore: { fontSize: 20, marginVertical: 2 },
   handleDot: {
     width: 22, height: 22, borderRadius: 11,
     backgroundColor: '#1ABC9C', borderWidth: 2, borderColor: '#FFFFFF',

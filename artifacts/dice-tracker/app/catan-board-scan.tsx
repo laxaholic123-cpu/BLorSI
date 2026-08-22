@@ -45,6 +45,7 @@ import {
   saveBoardLayout,
 } from '@/services/boardLayouts';
 import { getBoardScanApiUrl } from '@/services/boardScanApi';
+import { clearGroundTruth, saveGroundTruth } from '@/services/storage';
 import { getLinkedBuildingEventCount, mergeEditedSettlements } from '@/services/editSettlements';
 import { normalizePieces, type DetectedPiece } from '@/utils/normalizePieces';
 import { describeChange, reconcileBoard, type BoardChange } from '@/services/boardConstraints';
@@ -675,6 +676,44 @@ export default function CatanBoardScanScreen() {
           Long-press any hex to correct its resource or number.
           {unknownCount > 0 ? ` ${unknownCount} hex${unknownCount === 1 ? '' : 'es'} still unknown.` : ' All hexes set ✓'}
         </Text>
+
+        {/* Diagnostics. Temporary — see services/vision/diagnostics.ts.
+            This screen is where a board gets corrected until it is right, which
+            makes it the only place the true answer actually exists. */}
+        <TouchableOpacity
+          style={[s.secondaryBtn, { borderColor: colors.border, marginBottom: 10 }]}
+          onPress={() => {
+            const complete = hexes.length === 19 && hexes.every(h => h.resource !== null);
+            if (!complete) {
+              Alert.alert(
+                'Board not complete',
+                'Every hex needs a resource before this can be the answer to score against.',
+              );
+              return;
+            }
+            Alert.alert(
+              'Set as ground truth?',
+              'Future captures will be scored against this board. Only do this once it matches the table exactly.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Clear existing',
+                  style: 'destructive',
+                  onPress: () => { void clearGroundTruth(); },
+                },
+                {
+                  text: 'Set',
+                  onPress: () => { void saveGroundTruth(hexes); },
+                },
+              ],
+            );
+          }}
+        >
+          <Ionicons name="flask-outline" size={16} color={colors.mutedForeground} />
+          <Text style={[s.secondaryBtnText, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+            Set as ground truth (diagnostics)
+          </Text>
+        </TouchableOpacity>
 
         <View style={s.reviewActions}>
           <TouchableOpacity
