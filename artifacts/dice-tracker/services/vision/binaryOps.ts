@@ -71,6 +71,68 @@ export function threshold(image: GrayImage, cut?: number): BinaryMask {
   return { data, width: image.width, height: image.height };
 }
 
+/**
+ * Keep only the inscribed circle of a square mask; clear everything outside.
+ *
+ * A number token is a CIRCLE, but the crop taken around it is a square, so
+ * roughly 21% of that square (1 - pi/4) is the tile underneath — trees,
+ * mountains, furrows. Those threshold into ink and get counted as pips and
+ * glyphs, which is not a small error: measured on real captures, tokens on the
+ * three textured terrains read 0/30 correct, against 7/24 on the two smooth
+ * pale ones. The decoder was largely counting scenery.
+ *
+ * `inset` pulls the circle in slightly from the crop edge, because the token's
+ * printed rim and its shadow both sit right at the boundary and both threshold
+ * as ink.
+ */
+export function maskToCircle(mask: BinaryMask, inset = 0.92): BinaryMask {
+  const cx = (mask.width - 1) / 2;
+  const cy = (mask.height - 1) / 2;
+  const radius = (Math.min(mask.width, mask.height) / 2) * inset;
+  const r2 = radius * radius;
+
+  const data = new Array<boolean>(mask.data.length);
+  for (let y = 0; y < mask.height; y++) {
+    for (let x = 0; x < mask.width; x++) {
+      const i = y * mask.width + x;
+      const dx = x - cx;
+      const dy = y - cy;
+      data[i] = dx * dx + dy * dy <= r2 ? mask.data[i]! : false;
+    }
+  }
+  return { data, width: mask.width, height: mask.height };
+}
+
+/**
+ * Otsu over the inscribed circle only.
+ *
+ * The cut must be chosen from the token face alone for the same reason the
+ * blobs must: dark tile artwork in the corners drags the split away from the
+ * cream-versus-ink boundary the decoder depends on.
+ */
+export function otsuThresholdInCircle(image: GrayImage, inset = 0.92): number {
+  const cx = (image.width - 1) / 2;
+  const cy = (image.height - 1) / 2;
+  const radius = (Math.min(image.width, image.height) / 2) * inset;
+  const r2 = radius * radius;
+
+  const inside: number[] = [];
+  for (let y = 0; y < image.height; y++) {
+    for (let x = 0; x < image.width; x++) {
+      const dx = x - cx;
+      const dy = y - cy;
+      if (dx * dx + dy * dy <= r2) inside.push(image.data[y * image.width + x]! & 0xff);
+    }
+  }
+  if (inside.length === 0) return otsuThreshold(image);
+
+  return otsuThreshold({
+    data: Uint8Array.from(inside),
+    width: inside.length,
+    height: 1,
+  });
+}
+
 export interface Component {
   /** Pixel indices belonging to this component. */
   size: number;

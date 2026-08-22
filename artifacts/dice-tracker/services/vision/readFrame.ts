@@ -29,6 +29,8 @@ import {
   connectedComponents,
   countHoles,
   filterNoise,
+  maskToCircle,
+  otsuThresholdInCircle,
   splitGlyphsAndPips,
   threshold,
 } from '@/services/vision/binaryOps';
@@ -256,7 +258,13 @@ function readToken(
     return { hasToken: true, costs: {} };
   }
 
-  const mask = threshold(cropGray(buffer, left, top, size, size));
+  // Confine everything to the token's circular face. The crop is square, so its
+  // corners hold the tile beneath — and on textured terrain that scenery
+  // thresholds into ink and gets counted as pips and glyphs. Measured on real
+  // captures before this: 0/30 tokens correct on forest, mountains and hills,
+  // against 7/24 on the two smooth pale terrains.
+  const gray = cropGray(buffer, left, top, size, size);
+  const mask = maskToCircle(threshold(gray, otsuThresholdInCircle(gray)));
   const minBlob = Math.max(2, Math.round(size * size * 0.0008));
   const components = filterNoise(connectedComponents(mask, true), minBlob);
   if (components.length === 0) return { hasToken: true, costs: {} };
