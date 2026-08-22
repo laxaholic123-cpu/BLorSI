@@ -409,12 +409,47 @@ export default function CatanCaptureScreen() {
    * Two shots cannot answer this. They differ in the corners AND in the photo,
    * so a better second result proves nothing about which one helped.
    */
-  const compareCorners = useCallback(() => {
+  const compareCorners = useCallback(async () => {
     if (!guideCorners || !corners) return;
     const a = readSnapshot('guide corners', guideCorners);
     const b = readSnapshot('marked corners', corners);
-    setComparison([a, b].filter(Boolean) as ReadingSnapshot[]);
-  }, [guideCorners, corners, readSnapshot]);
+    const rows = [a, b].filter(Boolean) as ReadingSnapshot[];
+    setComparison(rows);
+
+    /**
+     * Measure the digit reader too, not just the two corner sets.
+     *
+     * Without this the export scores only the blob counter — which is the
+     * reader we already know tops out around half on a good photo and much
+     * worse on a poor one. The whole point of adding OCR was to replace it, so
+     * leaving it out of the instrument means a capture cannot answer the only
+     * question that now matters.
+     */
+    if (!b || b.hexes.length === 0) return;
+    const asHexes: CatanHexDef[] = b.hexes.map(h => ({
+      index: h.index,
+      resource: h.resource as CatanHexDef['resource'],
+      number: h.number,
+      confidence: h.confidence as CatanHexDef['confidence'],
+    }));
+    const { hexes, note } = await applyOcr(asHexes);
+    setComparison([
+      ...rows,
+      {
+        label: `digits (OCR) — ${note ?? 'no note'}`,
+        corners: b.corners,
+        hexes: hexes.map(h => ({
+          index: h.index,
+          resource: h.resource ?? null,
+          number: h.number ?? null,
+          confidence: h.confidence,
+        })),
+        usable: true,
+        coverage: b.coverage,
+        score: groundTruth ? scoreReading(hexes, groundTruth) : undefined,
+      },
+    ]);
+  }, [guideCorners, corners, readSnapshot, applyOcr, groundTruth]);
 
   const exportDiagnostic = useCallback(async () => {
     const buffer = bufferRef.current;
@@ -650,7 +685,7 @@ ${JSON.stringify(payload)}`,
             <View style={s.rowBtns}>
               <TouchableOpacity
                 style={[s.secondaryBtn, { borderColor: colors.border }]}
-                onPress={compareCorners}
+                onPress={() => { void compareCorners(); }}
               >
                 <Text style={[s.secondaryText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
                   Compare corners
