@@ -371,7 +371,25 @@ five and four around a nine-cycle, exactly one same-type adjacent pair is forced
 
 ## The board reader (`services/vision/`)
 
-Reads a board on-device, no network. **19/19 tiles** on a reference board.
+Reads a board on-device, no network. **19/19 tiles** on a reference board with
+hand-marked corners — and **roughly 8/19 on real device captures**, with some
+wrong tiles reported as confident. The first real game, 2026-08-20, is the
+warning below arriving on schedule.
+
+**Do not tune the classifier on this evidence.** No failing capture was kept:
+`takePictureAsync` decoded to a pixel buffer and discarded the photo, so there
+is nothing for `tools/` to measure. The capture review screen now has an opt-in
+"Save this photo" button; a fix should start from a saved failure, not from a
+guess.
+
+**Standing hypothesis, untested:** geometry, not classification. `screenToImage`
+maps hexes 0/2/18/16 to the image corners assuming the board is aligned to the
+capture guide, and the 19/19 came from hand-marked corners rather than that
+assumption. Sampling a tile off-centre pulls colour from its neighbours, which
+produces confidently wrong reads rather than uncertain ones — and "marked
+correct when it was not" fits that better than a classifier failure does. The
+confidence signal not catching these is the second thing to check: it is the
+safety net, and it did not catch them.
 
 Three ideas, each measured rather than assumed:
 
@@ -407,8 +425,12 @@ produced more confident-and-wrong conclusions than the rest of the repo combined
 ## Current state
 
 **Well covered:** dice tracking, stats, verdicts, storage and migrations, the
-constraint solver, the vision pipeline's logic, the mode boundary, the board
-generator, corner geometry, the harbour layout. 712 tests, all pure.
+constraint solver, the mode boundary, the board generator, corner geometry, the
+harbour layout. 712 tests, all pure.
+
+The vision pipeline's *logic* is covered too, but coverage is not the issue
+there — see the board reader section. It is internally consistent and wrong on
+real input.
 
 **Never run on a device:** the capture screen, dev card entry, the port selector,
 player exposure setup, the results percentile column, the board generator screen,

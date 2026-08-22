@@ -71,6 +71,25 @@ may be more or less done than it looks.
 
 ## Not in the original 31, but now on the critical path
 
+0. **First real-game test, 2026-08-20 — results.** Three findings, two already
+   fixed.
+
+   - **Board scan is not usable yet.** ~8/19 tiles, some wrong ones marked
+     confident. See item 7; blocked on a saved failing capture.
+   - ~~**Long-press to correct did nothing.**~~ Fixed. `react-native-svg` on
+     Android fires `onPress` on shapes but not reliably `onLongPress`, so the
+     correction affordance shipped looking right and was inert. Hex touches now
+     go through RN `<Pressable>`s laid over the hex centres. Geometry verified
+     arithmetically; the touch behaviour is unverified until someone long-presses
+     a hex on a phone.
+   - ~~**Generator appeared to invent numbers.**~~ Fixed, and it was a display
+     bug only — 200 generated boards contain zero invalid tokens. Raw 0-18 array
+     indices were being shown as "Hex 18" and "hexes 0, 3, 4", which read as
+     tokens that do not exist.
+
+   Not exercised this session: exposure entry by tapping corners, and the
+   generator-to-game flow past setup. Those remain unverified on a device.
+
 1. **Device verification.** Eleven commits of UI change, none run on a phone,
    spanning six screens: dev card entry, port selector, player exposure setup,
    board-review corrections, results percentile column, home screen backup link.
@@ -133,10 +152,20 @@ may be more or less done than it looks.
    blobs, and optimisation-based registration. Aiming the camera answers the
    question by construction.
 
-   **Remaining:** validation on real device captures. Every measurement so far
-   used one board with hand-marked corners; a perfect score on a single sample is
-   exactly when to be suspicious. The capture screen exists so those photos can
-   finally be taken.
+   **Validated on real device captures — and it failed.** First real game,
+   2026-08-20: roughly **8/19 tiles** correct, with some wrong tiles reported as
+   confident. The suspicion above was correct; the 19/19 came from hand-marked
+   corners, not from the capture guide.
+
+   No failing photo was kept, because the capture path decoded and discarded it,
+   so there is nothing to measure. The review screen now has an opt-in "Save this
+   photo" button. **Next step is one saved failing capture plus its ground truth,
+   run through `tools/`** — not a tuning pass.
+
+   Two things to check in that order: whether the board was aligned to the guide
+   (`screenToImage` assumes it was, and off-centre sampling would explain
+   confidently wrong reads), and why the confidence signal did not flag them,
+   since that is the safety net and it did not catch anything.
 
 8. ~~**Game mode boundary.**~~ Done — `services/modes/` holds a
    `GameModeAdapter` and a registry; `careerStats.ts` now aggregates through it
