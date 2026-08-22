@@ -33,6 +33,7 @@
 import React, { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Platform,
   ScrollView,
   StyleSheet,
@@ -98,6 +99,19 @@ export default function CatanCaptureScreen() {
   const [board, setBoard] = useState<CatanHexDef[]>([]);
   const [shots, setShots] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * The last photo taken, kept only so a bad read can be saved and measured.
+   *
+   * The reader scored 19/19 on a reference board with hand-marked corners and
+   * far worse on real device captures. Nothing in `tools/` can explain that
+   * without the actual failing images — every claim in services/vision was
+   * measured against real photos, and a fix guessed at without one would be the
+   * confident-and-wrong pattern this area keeps producing.
+   *
+   * Held in memory only. Nothing leaves the phone unless the player taps save.
+   */
+  const [lastShotUri, setLastShotUri] = useState<string | null>(null);
+  const [savingShot, setSavingShot] = useState(false);
 
   const guidance = guidanceForEvidence(evidence);
   const confidences = evidence.map(evidenceConfidence);
@@ -123,6 +137,7 @@ export default function CatanCaptureScreen() {
         shutterSound: false,
       });
       if (!shot?.uri) throw new Error('no image');
+      setLastShotUri(shot.uri);
 
       const raw = await loadPixelBuffer(shot.uri);
       if (!raw) throw new Error('could not decode');
@@ -205,6 +220,38 @@ export default function CatanCaptureScreen() {
   }
 
   // ── Review ─────────────────────────────────────────────────────────────────
+  /**
+   * Save the capture to the camera roll so a bad read becomes a fixture.
+   *
+   * Same lazy-require and permission dance as share-card.tsx, for the same
+   * reason: expo-media-library is a native module and must not be imported at
+   * module scope where a web bundle would pick it up.
+   */
+  const saveShot = async () => {
+    if (!lastShotUri || savingShot) return;
+    setSavingShot(true);
+    try {
+      let MediaLibrary: typeof import('expo-media-library');
+      try {
+        MediaLibrary = require('expo-media-library');
+      } catch {
+        Alert.alert('Not available', 'Saving photos is not available in this build.');
+        return;
+      }
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Allow photo access to save this capture.');
+        return;
+      }
+      await MediaLibrary.saveToLibraryAsync(lastShotUri);
+      Alert.alert('Saved', 'The capture is in your photos. Send it over with what the board actually was.');
+    } catch {
+      Alert.alert('Could not save', 'The photo was not saved.');
+    } finally {
+      setSavingShot(false);
+    }
+  };
+
   if (phase === 'review') {
     const unsure = confidences.filter(c => c < CONFIDENCE_THRESHOLD).length;
     return (
@@ -255,6 +302,19 @@ export default function CatanCaptureScreen() {
               );
             })}
           </View>
+
+          {lastShotUri && (
+            <TouchableOpacity
+              style={[s.saveShotBtn, { borderColor: colors.border, opacity: savingShot ? 0.6 : 1 }]}
+              onPress={saveShot}
+              disabled={savingShot}
+            >
+              <Ionicons name="download-outline" size={16} color={colors.mutedForeground} />
+              <Text style={[s.secondaryText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                {savingShot ? 'Saving…' : 'Save this photo (helps fix a bad read)'}
+              </Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity style={[s.primaryBtn, { backgroundColor: colors.primary }]} onPress={useBoard}>
             <Text style={[s.primaryBtnText, { color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold' }]}>
@@ -402,6 +462,10 @@ const s = StyleSheet.create({
   primaryBtnText: { fontSize: 16 },
   rowBtns: { flexDirection: 'row', gap: 10, marginTop: 10 },
   secondaryBtn: { flex: 1, borderWidth: 1.5, borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
+  saveShotBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    borderWidth: 1, borderRadius: 12, paddingVertical: 11, marginBottom: 10,
+  },
   secondaryText: { fontSize: 15 },
   altLink: { color: 'rgba(255,255,255,0.85)', fontSize: 13, textAlign: 'center', paddingVertical: 6 },
   linkBtn: { paddingVertical: 10 },
