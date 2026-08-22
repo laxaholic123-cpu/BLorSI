@@ -17,8 +17,29 @@ import { Image } from 'react-native';
 import type { OcrText } from '@/services/vision/ocrTokens';
 import { mergeRotatedTexts, unrotatePoint } from '@/services/vision/ocrTokens';
 
-/** Quarter turns to read at. 0 first, so it wins ties when passes are merged. */
-const ROTATIONS = [0, 90, 180, 270] as const;
+/**
+ * Angles to read the board at, in the order they are tried.
+ *
+ * ML Kit reads text within roughly 10-15 degrees of upright and little else, so
+ * one pass finds only the tokens that happen to be standing up. Eight passes put
+ * every token within 22.5 degrees of some pass; sixteen would halve that again,
+ * at double the time.
+ *
+ * ORDER MATTERS, because the sweep stops early once the board is full:
+ *
+ *   - 0 and 180 first. Tokens are dropped by hand but tend to land near upright
+ *     or near inverted, so these two do most of the work.
+ *   - 90 and 270 next: still lossless quarter turns, no resampling.
+ *   - the odd 45s last. They need interpolation, which is slower and slightly
+ *     softer, and they only matter for genuinely skewed tokens.
+ *
+ * 0 is first for a second reason: it wins ties when passes are merged, and it
+ * is the pass with no transform to have displaced it.
+ */
+const ROTATIONS = [0, 180, 90, 270, 45, 225, 135, 315] as const;
+
+/** Tokens on a full board. Reaching it means there is nothing left to find. */
+const TOKENS_ON_A_BOARD = 18;
 
 /** Margin around the board when cropping, in fractions of its bounding box. */
 const CROP_MARGIN = 0.04;
@@ -41,6 +62,14 @@ export interface OcrOutcome {
   rawTexts?: string[];
   /** Size the boxes were measured against, to check the normalisation. */
   imageSize?: { width: number; height: number };
+  /**
+   * How long each rotation took and what it found.
+   *
+   * Whether eight passes beat four, and whether sixteen would be worth the
+   * wait, is a question about this board on this phone — so it is measured
+   * rather than argued about.
+   */
+  timing?: string;
 }
 
 const UNAVAILABLE = (reason: string): OcrOutcome => ({ texts: [], available: false, reason });
@@ -185,34 +214,62 @@ export async function recognizeBoardText(
   const manipulator = loadManipulator();
   const rect = corners && corners.length === 4 ? boardRect(corners) : null;
 
+  /**
+   * Crop ONCE and rotate that, rather than re-cropping every pass.
+   *
+   * The crop is the expensive half — it reads and rewrites the full photo —
+   * while rotating the already-small board costs a fraction of it. Doing both
+   * every pass made eight rotations eight full-photo decodes.
+   */
+  let base = uri;
+  let baseSize = size;
+  if (manipulator && rect) {
+    try {
+      const out = await manipulator.manipulateAsync(
+        uri,
+        [{
+          crop: {
+            originX: Math.round(rect.x * size.width),
+            originY: Math.round(rect.y * size.height),
+            width: Math.round(rect.width * size.width),
+            height: Math.round(rect.height * size.height),
+          },
+        }],
+        { compress: 1 },
+      );
+      base = out.uri;
+      baseSize = { width: out.width, height: out.height };
+    } catch {
+      // Crop failed; read the whole photo rather than nothing.
+    }
+  }
+  const didCrop = base !== uri;
+
   const passes: OcrText[][] = [];
   const raw: string[] = [];
+  const timings: string[] = [];
+  const startedAt = Date.now();
+  let distinctNumbers = new Set<string>();
 
   for (const degrees of ROTATIONS) {
     // Nothing to rotate with means only the plain pass is possible.
     if (degrees !== 0 && !manipulator) break;
 
-    let readUri = uri;
-    if (manipulator) {
+    const passStart = Date.now();
+    let readUri = base;
+    let readSize = baseSize;
+
+    if (degrees !== 0 && manipulator) {
       try {
-        const actions: Array<Record<string, unknown>> = [];
-        if (rect) {
-          actions.push({
-            crop: {
-              originX: Math.round(rect.x * size.width),
-              originY: Math.round(rect.y * size.height),
-              width: Math.round(rect.width * size.width),
-              height: Math.round(rect.height * size.height),
-            },
-          });
-        }
-        if (degrees !== 0) actions.push({ rotate: degrees });
-        if (actions.length > 0) {
-          const out = await manipulator.manipulateAsync(uri, actions, { compress: 1 });
-          readUri = out.uri;
-        }
+        const turned = await manipulator.manipulateAsync(
+          base,
+          [{ rotate: degrees }],
+          { compress: 1 },
+        );
+        readUri = turned.uri;
+        readSize = { width: turned.width, height: turned.height };
       } catch {
-        continue; // one failed preparation must not lose the other passes
+        continue; // one failed rotation must not lose the others
       }
     }
 
@@ -229,7 +286,17 @@ export async function recognizeBoardText(
           }
         }
       }
-      passes.push(await toOriginalSpace(pass, readUri, degrees, rect));
+      passes.push(toOriginalSpace(pass, readSize, baseSize, degrees, didCrop ? rect : null));
+
+      for (const t of pass) {
+        const n = t.text.trim();
+        if (/^\d{1,2}$/.test(n)) distinctNumbers.add(`${n}@${Math.round(t.cx)}`);
+      }
+      timings.push(`${degrees}°:${pass.length}/${Date.now() - passStart}ms`);
+
+      // Stop once the board is full. Most of the cost is in the later, skewed
+      // passes, and they are only worth paying for when something is missing.
+      if (distinctNumbers.size >= TOKENS_ON_A_BOARD) break;
     } catch {
       continue;
     }
@@ -238,7 +305,15 @@ export async function recognizeBoardText(
   if (passes.length === 0) return UNAVAILABLE('Text recognition failed on this photo.');
 
   const texts = mergeRotatedTexts(passes);
-  return { texts, available: true, rawTexts: raw.slice(0, 60), imageSize: size };
+  return {
+    texts,
+    available: true,
+    rawTexts: raw.slice(0, 60),
+    imageSize: size,
+    // So the next capture answers whether more passes are worth their time,
+    // instead of the question being settled by opinion.
+    timing: `${passes.length} passes in ${Date.now() - startedAt}ms — ${timings.join(' ')}`,
+  };
 }
 
 /**
@@ -251,32 +326,27 @@ export async function recognizeBoardText(
  *   2. undo the rotation                  ->  0-1 within the crop
  *   3. undo the crop                      ->  0-1 within the original photo
  */
-async function toOriginalSpace(
+function toOriginalSpace(
   pass: readonly OcrText[],
-  readUri: string,
-  degrees: (typeof ROTATIONS)[number],
+  readSize: { width: number; height: number },
+  baseSize: { width: number; height: number },
+  degrees: number,
   rect: { x: number; y: number; width: number; height: number } | null,
-): Promise<OcrText[]> {
-  if (pass.length === 0) return [];
-
-  // Measured rather than derived: the manipulator may adjust dimensions, and
-  // guessing them would offset every box.
-  // measureRaw, not measure: the aspect-swap guard exists for the original
-  // photo's EXIF ambiguity, and a quarter-turned crop legitimately has the
-  // other aspect. Applying the guard here would transpose every box.
-  const read = await measureRaw(readUri).catch(() => null);
-  const readW = read?.width ?? 1;
-  const readH = read?.height ?? 1;
-  if (readW <= 1 || readH <= 1) return [];
+): OcrText[] {
+  if (pass.length === 0 || readSize.width <= 1 || readSize.height <= 1) return [];
 
   return pass.map(item => {
-    const inRead = { cx: item.cx / readW, cy: item.cy / readH };
-    const inCrop = unrotatePoint(inRead.cx, inRead.cy, degrees);
-    if (!rect) return { text: item.text, cx: inCrop.cx, cy: inCrop.cy };
+    // 1. undo the rotation, in pixels, back into the cropped frame
+    const inBase = unrotatePoint(item.cx, item.cy, degrees, readSize, baseSize);
+    // 2. normalise within that frame
+    const nx = inBase.x / baseSize.width;
+    const ny = inBase.y / baseSize.height;
+    // 3. undo the crop, back into the original photo
+    if (!rect) return { text: item.text, cx: nx, cy: ny };
     return {
       text: item.text,
-      cx: rect.x + inCrop.cx * rect.width,
-      cy: rect.y + inCrop.cy * rect.height,
+      cx: rect.x + nx * rect.width,
+      cy: rect.y + ny * rect.height,
     };
   });
 }

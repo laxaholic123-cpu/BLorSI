@@ -301,7 +301,8 @@ export default function CatanCaptureScreen() {
       // parser rejected it", and those want opposite fixes.
       const seen = outcome.rawTexts ?? [];
       const sawSummary =
-        `saw ${seen.length}` + (seen.length ? `: ${seen.slice(0, 24).join(' ')}` : '');
+        `saw ${seen.length}` + (seen.length ? `: ${seen.slice(0, 24).join(' ')}` : '') +
+        (outcome.timing ? ` | ${outcome.timing}` : '');
 
       const readings = mapOcrToHexes(
         outcome.texts,

@@ -13,6 +13,7 @@ import {
   parseTokenText,
   disambiguateWithInk,
   unrotatePoint,
+  rotatedSize,
   mergeRotatedTexts,
   VALID_TOKENS,
   type OcrText,
@@ -168,50 +169,71 @@ describe('disambiguateWithInk', () => {
 });
 
 describe('unrotatePoint', () => {
-  it('leaves an unrotated point alone', () => {
-    expect(unrotatePoint(0.3, 0.7, 0)).toEqual({ cx: 0.3, cy: 0.7 });
-  });
+  const SIZE = { width: 400, height: 300 };
 
-  it('round-trips every quarter turn', () => {
-    // The property that matters: whatever the rotation did, undoing it must
-    // land back on the original point. A transform that is merely plausible
-    // puts numbers on the wrong tiles while looking entirely reasonable.
-    const rotate = (cx: number, cy: number, d: 0 | 90 | 180 | 270) => {
-      switch (d) {
-        case 0: return { cx, cy };
-        case 90: return { cx: 1 - cy, cy: cx };
-        case 180: return { cx: 1 - cx, cy: 1 - cy };
-        case 270: return { cx: cy, cy: 1 - cx };
-      }
+  /** Forward transform: where a point lands after turning clockwise. */
+  function rotateForward(x: number, y: number, deg: number) {
+    const t = (deg * Math.PI) / 180;
+    const cos = Math.cos(t), sin = Math.sin(t);
+    const out = rotatedSize(SIZE, deg);
+    const dx = x - SIZE.width / 2;
+    const dy = y - SIZE.height / 2;
+    return {
+      x: dx * cos - dy * sin + out.width / 2,
+      y: dx * sin + dy * cos + out.height / 2,
     };
-    for (const d of [0, 90, 180, 270] as const) {
-      for (const [x, y] of [[0.1, 0.2], [0.5, 0.5], [0.9, 0.3], [0.25, 0.75]]) {
-        const spun = rotate(x, y, d);
-        const back = unrotatePoint(spun.cx, spun.cy, d);
-        expect(back.cx).toBeCloseTo(x, 10);
-        expect(back.cy).toBeCloseTo(y, 10);
+  }
+
+  it('round-trips at every angle the sweep uses', () => {
+    // The property that matters. A transform that is merely plausible puts
+    // numbers on the wrong tiles while looking entirely reasonable, and no
+    // score sheet would reveal it.
+    for (const deg of [0, 45, 90, 135, 180, 225, 270, 315]) {
+      const out = rotatedSize(SIZE, deg);
+      for (const [x, y] of [[10, 10], [200, 150], [399, 299], [50, 250]]) {
+        const spun = rotateForward(x, y, deg);
+        const back = unrotatePoint(spun.x, spun.y, deg, out, SIZE);
+        expect(back.x).toBeCloseTo(x, 6);
+        expect(back.y).toBeCloseTo(y, 6);
       }
     }
   });
 
-  it('keeps the centre fixed under every rotation', () => {
-    for (const d of [0, 90, 180, 270] as const) {
-      const p = unrotatePoint(0.5, 0.5, d);
-      expect(p.cx).toBeCloseTo(0.5, 10);
-      expect(p.cy).toBeCloseTo(0.5, 10);
+  it('keeps the centre at the centre', () => {
+    for (const deg of [0, 45, 90, 180, 270, 315]) {
+      const out = rotatedSize(SIZE, deg);
+      const back = unrotatePoint(out.width / 2, out.height / 2, deg, out, SIZE);
+      expect(back.x).toBeCloseTo(SIZE.width / 2, 6);
+      expect(back.y).toBeCloseTo(SIZE.height / 2, 6);
     }
   });
 
-  it('stays inside the unit square', () => {
-    for (const d of [0, 90, 180, 270] as const) {
-      for (const [x, y] of [[0, 0], [1, 1], [0, 1], [1, 0], [0.33, 0.66]]) {
-        const p = unrotatePoint(x, y, d);
-        expect(p.cx).toBeGreaterThanOrEqual(0);
-        expect(p.cx).toBeLessThanOrEqual(1);
-        expect(p.cy).toBeGreaterThanOrEqual(0);
-        expect(p.cy).toBeLessThanOrEqual(1);
-      }
-    }
+  it('is the identity at zero degrees', () => {
+    const back = unrotatePoint(123, 45, 0, SIZE, SIZE);
+    expect(back.x).toBeCloseTo(123, 10);
+    expect(back.y).toBeCloseTo(45, 10);
+  });
+});
+
+describe('rotatedSize', () => {
+  it('swaps the axes on a quarter turn', () => {
+    const r = rotatedSize({ width: 400, height: 300 }, 90);
+    expect(r.width).toBeCloseTo(300, 6);
+    expect(r.height).toBeCloseTo(400, 6);
+  });
+
+  it('leaves a half turn the same shape', () => {
+    const r = rotatedSize({ width: 400, height: 300 }, 180);
+    expect(r.width).toBeCloseTo(400, 6);
+    expect(r.height).toBeCloseTo(300, 6);
+  });
+
+  it('grows both dimensions on a diagonal turn', () => {
+    // This is why the mapping cannot work in normalised space: at 45 degrees
+    // the canvas expands and the two frames stop sharing a scale.
+    const r = rotatedSize({ width: 100, height: 100 }, 45);
+    expect(r.width).toBeCloseTo(Math.SQRT2 * 100, 4);
+    expect(r.height).toBeCloseTo(Math.SQRT2 * 100, 4);
   });
 });
 

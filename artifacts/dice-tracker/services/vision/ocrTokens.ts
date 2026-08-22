@@ -134,36 +134,62 @@ export function mapOcrToHexes(
 }
 
 /**
- * Undo a quarter-turn, bringing a point in a rotated image back to the original.
+ * Bring a point in a rotated image back to the image it was rotated from.
  *
- * ML Kit reads text that is roughly upright and little else. Measured on a real
- * board it found four items in the whole photo — two token digits, both on
- * UPRIGHT tokens, plus a parcel label in the background. Every upside-down
- * token was missed, and Catan tokens sit at every rotation, which is exactly
- * the property `tokenDecode.ts` was built to sidestep and OCR throws away.
+ * ML Kit reads text within roughly 10-15 degrees of upright and little else.
+ * Measured on a real board it found four items in a whole photo — two token
+ * digits, both on UPRIGHT tokens, plus a parcel label in the background. Every
+ * upside-down token was missed, and Catan tokens sit at every rotation, which
+ * is exactly the property `tokenDecode.ts` was built to sidestep and OCR throws
+ * away. So the board is read at several angles and each pass is mapped back
+ * here.
  *
- * So the photo is read four times, a quarter-turn apart, and each pass is
- * mapped back here. All coordinates are normalised 0-1, so a quarter turn also
- * swaps the axes.
+ * Works in PIXELS, not normalised space, because rotating by anything other
+ * than a quarter turn grows the canvas — a 45-degree turn of a square makes it
+ * about 1.41x wider AND taller — and the two frames no longer share a scale.
+ * Both sizes are needed to undo that, and normalising too early loses them.
  *
- * `degrees` is how far the IMAGE was rotated clockwise before reading.
+ * `degrees` is how far the image was turned CLOCKWISE before being read.
  */
 export function unrotatePoint(
-  cx: number,
-  cy: number,
-  degrees: 0 | 90 | 180 | 270,
-): { cx: number; cy: number } {
-  switch (degrees) {
-    case 0:
-      return { cx, cy };
-    // The image turned clockwise, so a point turns back anticlockwise.
-    case 90:
-      return { cx: cy, cy: 1 - cx };
-    case 180:
-      return { cx: 1 - cx, cy: 1 - cy };
-    case 270:
-      return { cx: 1 - cy, cy: cx };
-  }
+  x: number,
+  y: number,
+  degrees: number,
+  rotatedSize: { width: number; height: number },
+  originalSize: { width: number; height: number },
+): { x: number; y: number } {
+  const theta = (degrees * Math.PI) / 180;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+
+  // Rotation happens about the centre of each frame, and the frames have
+  // different centres once the canvas has grown.
+  const dx = x - rotatedSize.width / 2;
+  const dy = y - rotatedSize.height / 2;
+
+  return {
+    x: dx * cos + dy * sin + originalSize.width / 2,
+    y: -dx * sin + dy * cos + originalSize.height / 2,
+  };
+}
+
+/**
+ * Canvas size after turning an image clockwise by `degrees`.
+ *
+ * Matches what an image manipulator produces: the bounding box of the turned
+ * rectangle, which is why a 45-degree turn grows both dimensions.
+ */
+export function rotatedSize(
+  size: { width: number; height: number },
+  degrees: number,
+): { width: number; height: number } {
+  const theta = (degrees * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(theta));
+  const sin = Math.abs(Math.sin(theta));
+  return {
+    width: size.width * cos + size.height * sin,
+    height: size.width * sin + size.height * cos,
+  };
 }
 
 /**
