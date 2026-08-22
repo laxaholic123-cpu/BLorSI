@@ -30,10 +30,12 @@
  * This tool is not affiliated with or endorsed by the publishers or owners of Catan.
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
+  PanResponder,
   Platform,
   ScrollView,
   StyleSheet,
@@ -80,7 +82,22 @@ const GUIDE_FILL = 0.88;
 /** Canonical board half-extent, including the outer hexes' sample rings. */
 const CANONICAL_EXTENT = 4.4;
 
-type Phase = 'aiming' | 'reading' | 'review';
+type Phase = 'aiming' | 'reading' | 'adjust' | 'review';
+
+/** A point in normalised image space, 0-1 on each axis. */
+interface NormPoint { x: number; y: number }
+
+const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/**
+ * Which hexes the four adjustable handles sit on, and what to call them.
+ *
+ * These are hex CENTRES, not board corners — `readFrame` wants the middle of
+ * each corner tile, which is why the on-screen copy says "centre of that tile"
+ * rather than "corner of the board".
+ */
+const HANDLE_HEXES = [0, 2, 18, 16] as const;
+const HANDLE_LABELS = ['TL', 'TR', 'BR', 'BL'] as const;
 
 const RESOURCE_LABEL: Record<string, string> = {
   grain: 'Grain', wool: 'Wool', lumber: 'Lumber',
@@ -113,6 +130,30 @@ export default function CatanCaptureScreen() {
   const [lastShotUri, setLastShotUri] = useState<string | null>(null);
   const [savingShot, setSavingShot] = useState(false);
 
+  /**
+   * The decoded frame, held between capture and read.
+   *
+   * A ref rather than state: it is large, and nothing about rendering depends
+   * on it. Kept so adjusting the corners re-reads the same photo instead of
+   * asking the player to shoot again.
+   */
+  const bufferRef = useRef<ReturnType<typeof downscale> | null>(null);
+  const [shotAspect, setShotAspect] = useState(4 / 3);
+
+  /**
+   * The four handle positions, normalised so they survive any display size.
+   *
+   * Seeded from exactly the guide-derived corners the reader used before this
+   * step existed, so confirming without touching anything reproduces the old
+   * behaviour precisely. Anything better than that comes from the player
+   * actually moving them.
+   */
+  const [corners, setCorners] = useState<NormPoint[] | null>(null);
+  const cornersRef = useRef<NormPoint[]>([]);
+  cornersRef.current = corners ?? [];
+  const dragStart = useRef<Record<number, NormPoint>>({});
+  const [boxSize, setBoxSize] = useState<{ w: number; h: number } | null>(null);
+
   const guidance = guidanceForEvidence(evidence);
   const confidences = evidence.map(evidenceConfidence);
 
@@ -142,17 +183,62 @@ export default function CatanCaptureScreen() {
       const raw = await loadPixelBuffer(shot.uri);
       if (!raw) throw new Error('could not decode');
       const buffer = downscale(raw, Math.max(1, Math.round(raw.width / TARGET_WIDTH)));
+      bufferRef.current = buffer;
+      // Aspect comes from the BUFFER, not from shot.width/height. Those two can
+      // disagree on Android, where EXIF rotation may or may not have been
+      // applied by the time each is read. The handles are normalised against
+      // buffer coordinates, so anything else would put them somewhere the
+      // reader is not looking — and it would look fine on screen while being
+      // wrong. If the decoder and <Image> ever disagree about orientation the
+      // photo will look obviously squashed here, which is the failure mode to
+      // prefer.
+      setShotAspect(buffer.width / buffer.height);
 
       // The preview crops the photo — the aspect ratios differ — so this is not
-      // a plain scale. See screenToImage.
-      const corners = [0, 2, 18, 16].map(i =>
-        screenToImage(toScreen(HEX_CENTERS[i]!), screenW, screenH, buffer.width, buffer.height),
-      ) as [Point, Point, Point, Point];
+      // a plain scale. See screenToImage. Normalised here so the handles can be
+      // laid out at any display size.
+      setCorners(
+        HANDLE_HEXES.map(i => {
+          const p = screenToImage(
+            toScreen(HEX_CENTERS[i]!), screenW, screenH, buffer.width, buffer.height,
+          );
+          return { x: clamp01(p.x / buffer.width), y: clamp01(p.y / buffer.height) };
+        }),
+      );
+      setPhase('adjust');
+    } catch {
+      setError('Could not read that shot. Try again.');
+      setPhase('aiming');
+    }
+  }, [screenW, screenH, toScreen]);
 
-      const reading = readFrame(buffer, corners);
+  /**
+   * Read the frame using whatever corners are currently set.
+   *
+   * Separated from capture so the corners can be corrected without retaking
+   * the photo. The reader scored 19/19 on a board whose corners were marked by
+   * hand and far worse when they came from the guide, so letting a player mark
+   * them is the closest the app can get to the conditions that worked.
+   */
+  const runRead = useCallback(() => {
+    const buffer = bufferRef.current;
+    const pts = cornersRef.current;
+    if (!buffer || pts.length !== 4) return;
+
+    setPhase('reading');
+    setError(null);
+    try {
+      const imagePoints = pts.map(p => ({
+        x: p.x * buffer.width,
+        y: p.y * buffer.height,
+      })) as [Point, Point, Point, Point];
+
+      const reading = readFrame(buffer, imagePoints);
       if (reading.evidence.length === 0) {
+        // Back to adjust, not to aiming: the photo is fine, the corners are the
+        // thing to change, and making them reshoot would discard the evidence.
         setError(reading.assessment.reason);
-        setPhase('aiming');
+        setPhase('adjust');
         return;
       }
 
@@ -164,10 +250,40 @@ export default function CatanCaptureScreen() {
       setShots(n => n + 1);
       setPhase('review');
     } catch {
-      setError('Could not read that shot. Try again.');
-      setPhase('aiming');
+      setError('Could not read that shot. Try adjusting the corners.');
+      setPhase('adjust');
     }
-  }, [evidence, screenW, screenH, toScreen]);
+  }, [evidence]);
+
+  /** One PanResponder per handle, rebuilt only when the display box resizes. */
+  const handleResponders = useMemo(
+    () =>
+      HANDLE_HEXES.map((_, i) =>
+        PanResponder.create({
+          onStartShouldSetPanResponder: () => true,
+          onMoveShouldSetPanResponder: () => true,
+          // Read the live position from the ref, so the responder never has to
+          // be rebuilt mid-drag just because the point moved.
+          onPanResponderGrant: () => {
+            dragStart.current[i] = cornersRef.current[i] ?? { x: 0.5, y: 0.5 };
+          },
+          onPanResponderMove: (_e, g) => {
+            if (!boxSize) return;
+            const from = dragStart.current[i] ?? { x: 0.5, y: 0.5 };
+            setCorners(prev => {
+              if (!prev) return prev;
+              const next = [...prev];
+              next[i] = {
+                x: clamp01(from.x + g.dx / boxSize.w),
+                y: clamp01(from.y + g.dy / boxSize.h),
+              };
+              return next;
+            });
+          },
+        }),
+      ),
+    [boxSize],
+  );
 
   const useBoard = () => {
     router.push({
@@ -251,6 +367,97 @@ export default function CatanCaptureScreen() {
       setSavingShot(false);
     }
   };
+
+  // ── Adjust the corners ─────────────────────────────────────────────────────
+  if (phase === 'adjust' && lastShotUri && corners) {
+    return (
+      <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top + (Platform.OS === 'web' ? 60 : 8) }]}>
+        <View style={[s.header, { borderBottomColor: colors.border }]}>
+          <TouchableOpacity onPress={() => setPhase('aiming')} hitSlop={10}>
+            <Ionicons name="arrow-back" size={24} color={colors.foreground} />
+          </TouchableOpacity>
+          <Text style={[s.headerTitle, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+            Mark the corners
+          </Text>
+          <View style={{ width: 24 }} />
+        </View>
+
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24 }}>
+          <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'left' }]}>
+            Drag each dot to the middle of that corner tile. Getting these right
+            matters more than anything else — every tile is measured from them.
+          </Text>
+
+          <View
+            style={{ width: '100%', aspectRatio: shotAspect, marginVertical: 12 }}
+            onLayout={e => setBoxSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
+          >
+            <Image
+              source={{ uri: lastShotUri }}
+              style={{ width: '100%', height: '100%', borderRadius: 8 }}
+              resizeMode="stretch"
+            />
+
+            {/* The quad being marked out, drawn under the handles. */}
+            {boxSize && (
+              <Svg
+                style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%' }}
+                pointerEvents="none"
+              >
+                <Polygon
+                  points={corners.map(c => `${c.x * boxSize.w},${c.y * boxSize.h}`).join(' ')}
+                  fill="#1ABC9C22"
+                  stroke="#1ABC9C"
+                  strokeWidth={2}
+                />
+              </Svg>
+            )}
+
+            {boxSize &&
+              corners.map((c, i) => (
+                <View
+                  key={`handle-${i}`}
+                  {...handleResponders[i]!.panHandlers}
+                  style={{
+                    position: 'absolute',
+                    // Generous target: this is a precision drag on a small
+                    // image, and the visible dot is far smaller than a finger.
+                    left: c.x * boxSize.w - 26,
+                    top: c.y * boxSize.h - 26,
+                    width: 52,
+                    height: 52,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <View style={s.handleDot}>
+                    <Text style={s.handleLabel}>{HANDLE_LABELS[i]}</Text>
+                  </View>
+                </View>
+              ))}
+          </View>
+
+          {error && (
+            <Text style={[s.body, { color: '#F59E0B', fontFamily: 'Inter_400Regular' }]}>
+              {error}
+            </Text>
+          )}
+
+          <TouchableOpacity style={[s.primaryBtn, { backgroundColor: colors.primary }]} onPress={runRead}>
+            <Text style={[s.primaryBtnText, { color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold' }]}>
+              Read the board
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={s.linkBtn} onPress={() => setPhase('aiming')}>
+            <Text style={[s.link, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium', textAlign: 'center' }]}>
+              Shoot again
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
 
   if (phase === 'review') {
     const unsure = confidences.filter(c => c < CONFIDENCE_THRESHOLD).length;
@@ -462,6 +669,12 @@ const s = StyleSheet.create({
   primaryBtnText: { fontSize: 16 },
   rowBtns: { flexDirection: 'row', gap: 10, marginTop: 10 },
   secondaryBtn: { flex: 1, borderWidth: 1.5, borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
+  handleDot: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: '#1ABC9C', borderWidth: 2, borderColor: '#FFFFFF',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  handleLabel: { fontSize: 8, fontWeight: '700', color: '#04201B' },
   saveShotBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
     borderWidth: 1, borderRadius: 12, paddingVertical: 11, marginBottom: 10,
