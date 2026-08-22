@@ -29,7 +29,9 @@
       "expo-font",
       "expo-web-browser",
       "@sentry/react-native",
-      "expo-audio"
+      "expo-audio",
+      "expo-mlkit-ocr",
+      "expo-build-properties"
     ],
     "experiments": {
       "typedRoutes": true,

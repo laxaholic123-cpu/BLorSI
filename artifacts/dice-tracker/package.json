@@ -66,10 +66,12 @@
     "@sentry/react-native": "~7.2.0",
     "@shopify/react-native-skia": "2.2.12",
     "expo-audio": "~1.1.1",
+    "expo-build-properties": "~1.0.10",
     "expo-camera": "~17.0.10",
     "expo-dev-client": "~6.0.21",
     "expo-document-picker": "^14.0.8",
     "expo-media-library": "^18.2.1",
+    "expo-mlkit-ocr": "^0.2.7",
     "expo-sharing": "^14.0.8",
     "react-native-view-shot": "^4.0.3"
   }

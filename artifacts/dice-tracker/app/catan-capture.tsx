@@ -62,7 +62,7 @@ import {
   guidanceForEvidence,
   mergeEvidence,
 } from '@/services/vision/evidenceMerge';
-import { reconcileBoardFromEvidence } from '@/services/boardConstraints';
+import { reconcileBoard, reconcileBoardFromEvidence } from '@/services/boardConstraints';
 import { HEX_CENTERS, hexOutline } from '@/services/vision/boardGeometry';
 import {
   buildDiagnosticPayload,
@@ -71,6 +71,8 @@ import {
   type ReadingSnapshot,
 } from '@/services/vision/diagnostics';
 import { loadGroundTruth } from '@/services/storage';
+import { recognizeBoardText } from '@/services/vision/ocrSource';
+import { mapOcrToHexes } from '@/services/vision/ocrTokens';
 import type { HexEvidence } from '@/services/boardConstraints';
 import type { Point } from '@/services/vision/homography';
 import type { CatanHexDef } from '@/types/models';
@@ -177,6 +179,7 @@ export default function CatanCaptureScreen() {
   const [guideCorners, setGuideCorners] = useState<NormPoint[] | null>(null);
   const [groundTruth, setGroundTruth] = useState<CatanHexDef[] | null>(null);
   const [comparison, setComparison] = useState<ReadingSnapshot[] | null>(null);
+  const [ocrNote, setOcrNote] = useState<string | null>(null);
 
   /**
    * Reload on FOCUS, not on mount.
@@ -264,6 +267,49 @@ export default function CatanCaptureScreen() {
    * hand and far worse when they came from the guide, so letting a player mark
    * them is the closest the app can get to the conditions that worked.
    */
+  /**
+   * Overlay OCR numbers onto a read, then let the token bag repair the rest.
+   *
+   * Blob counting reads 9 of 18 at best — measured with the face located, at
+   * full resolution, on a clean overhead shot. The tokens are printed digits
+   * from a closed set of ten, so reading them as digits is the better tool, and
+   * `reconcileBoard` already enforces the deck composition on whatever comes
+   * back: exactly one 2, one 12, two of everything else.
+   *
+   * OCR is best-effort. A build without the native module, an unsupported
+   * device or a failed recognition all leave the counted numbers in place
+   * rather than clearing them.
+   */
+  const applyOcr = useCallback(
+    async (hexes: CatanHexDef[]): Promise<{ hexes: CatanHexDef[]; note?: string }> => {
+      const buffer = bufferRef.current;
+      const pts = cornersRef.current;
+      if (!lastShotUri || !buffer || pts.length !== 4) return { hexes };
+
+      const outcome = await recognizeBoardText(lastShotUri, buffer.width / buffer.height);
+      if (!outcome.available) return { hexes, note: outcome.reason };
+
+      const readings = mapOcrToHexes(
+        outcome.texts,
+        pts as unknown as [Point, Point, Point, Point],
+      );
+      if (readings.length === 0) return { hexes, note: 'No numbers recognised.' };
+
+      const merged = hexes.map(h => ({ ...h }));
+      for (const r of readings) {
+        const hex = merged[r.hexIndex];
+        if (!hex || hex.resource === 'desert') continue; // the desert has no token
+        hex.number = r.value;
+        hex.confidence = 'high';
+      }
+      return {
+        hexes: reconcileBoard(merged).hexes,
+        note: `Read ${readings.length} numbers.`,
+      };
+    },
+    [lastShotUri],
+  );
+
   const runRead = useCallback(() => {
     const buffer = bufferRef.current;
     const pts = cornersRef.current;
@@ -290,14 +336,23 @@ export default function CatanCaptureScreen() {
       // way it was not for a drifting loop.
       const merged = mergeEvidence(evidence, reading.evidence);
       setEvidence(merged);
-      setBoard(reconcileBoardFromEvidence(merged).hexes);
+      const counted = reconcileBoardFromEvidence(merged).hexes;
+      setBoard(counted);
       setShots(n => n + 1);
       setPhase('review');
+
+      // OCR runs after the board is already on screen. It is the better reader,
+      // but it is also the slower one and the one that can be missing entirely,
+      // so the counted board goes up first and is replaced if OCR delivers.
+      void applyOcr(counted).then(({ hexes, note }) => {
+        setBoard(hexes);
+        if (note) setOcrNote(note);
+      });
     } catch {
       setError('Could not read that shot. Try adjusting the corners.');
       setPhase('adjust');
     }
-  }, [evidence]);
+  }, [evidence, applyOcr]);
 
   /**
    * Read the held frame with one corner set, without merging into the session.
@@ -713,6 +768,12 @@ ${JSON.stringify(payload)}`,
               );
             })}
           </View>
+
+          {ocrNote && (
+            <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'left' }]}>
+              Digit reader: {ocrNote}
+            </Text>
+          )}
 
           {lastShotUri && (
             <TouchableOpacity
