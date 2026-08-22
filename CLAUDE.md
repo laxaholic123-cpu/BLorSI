@@ -1,3 +1,91 @@
+### Why token reading failed, in the order the causes were found
+
+Each of these was found by measuring, and each looked like the whole answer
+until the next one appeared. Worth reading before touching the token path.
+
+**1. Scenery counted as ink.** The crop is square, the token is a circle, so
+~21% of it is the tile beneath. Measured: tokens read 0/30 on the three textured
+terrains against 7/24 on the two smooth pale ones. The decoder was largely
+counting trees. Fixed by thresholding and blob-counting inside the disc only.
+
+**2. The face is neither centred nor as large as assumed.** Measured on a real
+capture, it is about 64% of the assumed radius and sits up to half a radius off
+centre, because tokens are dropped onto tiles by hand. So the decoder was
+thresholding a square that is mostly TILE, taking that huge region as the
+"glyph", and demoting the actual digits to pips — which is why glyph counting
+sat at chance and every two-digit token failed. `locateBrightDisc` finds the
+face and refuses rather than guessing when what it finds is not disc-like.
+Measured: 1/14 to 4/14.
+
+**3. The downscale was destroying the detail.** `TARGET_WIDTH` was 1400, giving
+a 1536-wide buffer, a ~55px token face and ~4px pips — under what blob counting
+can resolve, which is why pips were consistently UNDER-counted. The same photo
+read at falling widths scored 4, 3, 1, 2 out of 14. Raised to 2400, which leaves
+a typical phone photo untouched.
+
+**4. Confidence was a lie.** `decodeToken` called a reading confident whenever
+the glyph count matched, and glyph counting is at chance. One export came back
+with all nineteen tiles confident and fourteen wrong. That is worse than no
+signal, because `reconcileBoard` prices its assignment off it. A reading is now
+trusted only when the face was actually located and the ink colour agrees.
+
+**Even with all four fixed, blob counting reads 9 of 18.** That is roughly its
+ceiling: the pips are a few pixels across and no amount of tuning recovers them.
+Hence OCR.
+
+### The deck constraint helps less than it looks
+
+Recorded because it is genuinely counter-intuitive and was measured twice.
+
+`reconcileBoard` solves a Hungarian assignment with the deck enforced — one 2,
+one 12, two of everything else. The obvious next step is to feed it graded
+evidence instead of one guess per tile. **That is worse.** On the real capture it
+scored 8/18 against 9/18 for the plain per-tile decode, and simulated across
+accuracy levels it loses at every one, including 95%.
+
+The reason is structural: forcing a complete permutation means a wrong tile can
+only be fixed by moving a right one, and flat costs give the solver no basis for
+choosing which to sacrifice. Pinning confident reads recovers the loss but does
+not beat the raw reader.
+
+The deck only pays when it **fills gaps** rather than overriding: +0.2 to +0.9
+tiles, growing with the gap rate. The existing costs already encode that
+preference ten to one, which is why calibrating confidence matters more than
+reweighting the matrix. `tools/assignment_probe.py` keeps the experiment.
+
+### Reading numbers as digits (`ocrTokens.ts`, `ocrSource.ts`)
+
+`tokenDecode.ts` avoids OCR deliberately, and its reason is sound: counting
+pips, glyphs and holes is rotation-invariant and OCR is not. But it needs small
+features to survive thresholding and on real photos they do not.
+
+expo-mlkit-ocr reads the whole photo once; each recognised number is mapped back
+to a hex through the same homography the reader uses. One native call, and no
+file writing — cropping 19 tokens would need `expo-file-system`, which is not
+installed.
+
+The two approaches complement rather than compete. **Ink colour resolves the one
+ambiguity rotation leaves**: 6 and 8 are the only red tokens, so a red 6-or-9 is
+a 6. And the deck can still fill what OCR misses.
+
+Split to preserve the rule that tests import no React Native: geometry in
+`ocrTokens.ts` (pure, tested), the native call in `ocrSource.ts`, mirroring
+pixelBuffer/pixelSource. **Lazily required** — it is a native module, so a build
+made before it was added simply falls back and says so rather than crashing.
+
+### Read storage on focus, not on mount
+
+Three separate instances of this in one session, so it is a rule now.
+
+A screen reached with `router.push` stays mounted underneath. If another screen
+writes something it reads, a mount-only effect never sees it. Ground truth
+looked unset after being set; exposure entry would have kept a stale board and
+tapped corners on numbers no longer on the table; saved layouts went missing
+from the scan screen's list.
+
+**Anything reading storage that another screen can write belongs in
+`useFocusEffect`.**
+
 ### The harbour layout, and what settled it
 
 Confirmed by research: the base game has **four 3:1 and five 2:1 harbours** (one
@@ -131,7 +219,7 @@ artifacts/dice-tracker/     Expo app (expo-router)
   types/models.ts           core types — mode-agnostic
   types/boardState.ts       BoardExposureEvent, BoardPosition
   types/modes/catan.ts      Catan types (re-exported from models.ts)
-  __tests__/                712 tests, pure logic only
+  __tests__/                748 tests, pure logic only
 artifacts/api-server/       Express — one real route, board-scan AI
 tools/                      Python research harnesses (see below)
 ```
@@ -371,25 +459,13 @@ five and four around a nine-cycle, exactly one same-type adjacent pair is forced
 
 ## The board reader (`services/vision/`)
 
-Reads a board on-device, no network. **19/19 tiles** on a reference board with
-hand-marked corners — and **roughly 8/19 on real device captures**, with some
-wrong tiles reported as confident. The first real game, 2026-08-20, is the
-warning below arriving on schedule.
+Reads a board on-device, no network.
 
-**Do not tune the classifier on this evidence.** No failing capture was kept:
-`takePictureAsync` decoded to a pixel buffer and discarded the photo, so there
-is nothing for `tools/` to measure. The capture review screen now has an opt-in
-"Save this photo" button; a fix should start from a saved failure, not from a
-guess.
-
-**Standing hypothesis, untested:** geometry, not classification. `screenToImage`
-maps hexes 0/2/18/16 to the image corners assuming the board is aligned to the
-capture guide, and the 19/19 came from hand-marked corners rather than that
-assumption. Sampling a tile off-centre pulls colour from its neighbours, which
-produces confidently wrong reads rather than uncertain ones — and "marked
-correct when it was not" fits that better than a classifier failure does. The
-confidence signal not catching these is the second thing to check: it is the
-safety net, and it did not catch them.
+**Terrain works. Tokens do not.** On a clean overhead capture with the corners
+marked, terrain reads **19/19** — the ranking approach genuinely holds up. Tokens
+read 5/19 in the app and 9/18 at best in `tools/`. Those are two different
+features behind one button, and it is worth keeping them apart when reasoning
+about this area.
 
 Three ideas, each measured rather than assumed:
 

@@ -90,6 +90,24 @@ may be more or less done than it looks.
    Not exercised this session: exposure entry by tapping corners, and the
    generator-to-game flow past setup. Those remain unverified on a device.
 
+0. **Second real-game session, 2026-08-22 — results.**
+
+   - **Corner marking works and geometry is no longer the problem.** Terrain
+     went 4/19 to 17/19 on the same photo, and 19/19 on a good one. The
+     experiment was clean because Compare reads one photo with both corner sets.
+   - **Tokens diagnosed properly at last**, by looking at the crops rather than
+     the scores. Four causes, all fixed, all recorded in `CLAUDE.md`.
+   - **ML Kit OCR added** (`expo-mlkit-ocr`), lazily required so the previous
+     build keeps working. Needs a new development build to take effect.
+   - **A negative result worth keeping:** enriching the deck-constraint cost
+     matrix makes things WORSE, at every accuracy level. Do not build it. See
+     `tools/assignment_probe.py`.
+   - **Three stale-read bugs** from screens reading storage on mount while
+     another screen writes it. Rule recorded: use `useFocusEffect`.
+
+   Still unexercised on a device: corner tapping for exposure entry, and the
+   generator-to-game flow past setup.
+
 1. **Device verification.** Eleven commits of UI change, none run on a phone,
    spanning six screens: dev card entry, port selector, player exposure setup,
    board-review corrections, results percentile column, home screen backup link.
@@ -152,10 +170,16 @@ may be more or less done than it looks.
    blobs, and optimisation-based registration. Aiming the camera answers the
    question by construction.
 
-   **Validated on real device captures — and it failed.** First real game,
-   2026-08-20: roughly **8/19 tiles** correct, with some wrong tiles reported as
-   confident. The suspicion above was correct; the 19/19 came from hand-marked
-   corners, not from the capture guide.
+   **Validated on real device captures — and it split in two.** Terrain is
+   solved: **19/19** on a clean overhead capture with the corners marked. Tokens
+   are not: 5/19 in the app, 9/18 at best offline. Four separate causes were
+   found and fixed by measuring (scenery counted as ink, the face neither centred
+   nor as large as assumed, the downscale destroying pip detail, and confidence
+   claiming reliability it did not have) — see `CLAUDE.md` for the order and the
+   numbers. Even with all four fixed, blob counting tops out around half, because
+   pips are a few pixels across on a phone photo of a whole board.
+
+   That is why OCR went in. Awaiting a device run to find out whether it lands.
 
    No failing photo was kept, because the capture path decoded and discarded it,
    so there is nothing to measure. The review screen now has an opt-in "Save this

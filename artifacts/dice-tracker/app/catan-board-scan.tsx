@@ -29,7 +29,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
@@ -178,10 +178,22 @@ export default function CatanBoardScanScreen() {
     if (settings.hapticsEnabled) void Haptics.impactAsync(style);
   }, [settings.hapticsEnabled]);
 
-  // ── Load saved layouts on mount ────────────────────────────────────────────
-  useEffect(() => {
-    void loadBoardLayouts().then(setSavedLayouts);
-  }, []);
+  // ── Saved layouts ──────────────────────────────────────────────────────────
+  //
+  // On FOCUS, not on mount. The generator can save a layout while this screen
+  // sits mounted underneath, and a mount-only read would leave it missing from
+  // the list until the app restarted. Third instance of this in one session, so
+  // the rule is now: anything reading storage that another screen can write
+  // belongs in useFocusEffect.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      void loadBoardLayouts().then(layouts => {
+        if (!cancelled) setSavedLayouts(layouts);
+      });
+      return () => { cancelled = true; };
+    }, []),
+  );
 
   // ── No active session guard ────────────────────────────────────────────────
   if (!activeSession) {
