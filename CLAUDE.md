@@ -151,6 +151,31 @@ runs the actual shipped modules over the actual captures and reproduced the
 probe to within a point. A translation error here would not have failed a test;
 it would have surfaced weeks later as "recognition is worse on the phone".
 
+**A reader that declines needs a UI that shows it.** Missed entirely on the
+first device run. `reconcileBoardFromEvidence` folded "the reader had no
+opinion" into "the solver agreed" — `cheapestKey({})` returns null, and null
+read as agreement — so every declined token was filled by the deck solver and
+stamped confident. The whole value of 100% precision is that a refusal is
+visible and costs a tap; invisible refusals turn it back into the old problem of
+not knowing which numbers to trust. Confidence now has three cases: agreed,
+overruled, no opinion.
+
+The symptom was indirect and worth remembering: the player reported "it said
+seven needed fixing but they were fine". Those seven were TERRAIN adjustments,
+correct and unrelated; the genuinely unsure numbers were the ones NOT flagged.
+A vague "needs your attention" that does not say which part of a hex is unsure
+trains people to ignore it.
+
+**6 vs 8 is the pair with no side-signal.** Both are printed red, so ink says
+nothing; both carry five pips, so pip direction says nothing. Shape alone
+separates them. Hole counting looks like the answer and is not: on clean digit
+masks a 6 shows exactly one loop every time (7/7) but an 8 shows two in only 5
+of 9 — glare closes a loop — so applying it would turn well-read 8s into 6s.
+It can CONFIRM an 8, never rule one out. Across the seven reference captures
+6/8 separates cleanly (gaps 0.17-0.35, nothing under 0.02), but a real game
+produced two 6/8 errors, so that margin does not hold everywhere and there is
+no capture of the failure yet.
+
 **Caveat, and it is a real one.** All seven captures are of the SAME physical
 board. This is validated across photos — different angles, distances, lighting
 and glare — but NOT across Catan sets. A different printing may need its own
