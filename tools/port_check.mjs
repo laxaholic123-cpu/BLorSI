@@ -87,3 +87,4 @@ const matchMs = performance.now() - t0;
 console.log(`\ncost for a ${timed.length}-token board, ${library.length} templates:`);
 console.log(`  sampling ${sampleMs.toFixed(0)}ms, matching ${matchMs.toFixed(0)}ms, ` +
             `total ${(sampleMs + matchMs).toFixed(0)}ms`);
+

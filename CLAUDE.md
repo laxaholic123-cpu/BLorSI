@@ -200,9 +200,33 @@ usually stays clear of the crescent.
                                           scores under the accept threshold, so
                                           it adds no auto-fill at all
 
-The honest read is that face localisation needs to fit an actual circle to the
-face boundary rather than take a centroid and assume a radius. That is real
-work, not a tweak, and four tweaks have now failed at it.
+**The circle fit was then built properly, and it does not beat the assumption.**
+`tools/circle_fit_probe.py` casts 64 rays from the saturation centroid, ends
+each on a sustained run of non-face, and fits a circle algebraically with one
+round of outlier rejection. Measured against the assumed radius:
+
+    assumed radius        HARD 14/18   refs 111/126   100% precision, 86% cov
+    fitted, global test   HARD 14/18   refs 104-107   98%  precision
+    fitted, adaptive test HARD 15/18   refs 106-108   100% precision, 85% cov
+
+Better on the one hard capture, worse on the seven references. Not shipped.
+
+Two traps inside it, both worth knowing before anyone tries again:
+
+- **Rays start INSIDE the numeral.** The digit sits at the token's centre, so a
+  ray that ends on the first sustained non-face run ends on the digit and fits
+  a circle to it — measured, a median radius of 0.33x the true one. A ray must
+  cross the digit before its run can end.
+- **A version that refuses often looks like a version that works.** Before that
+  fix the guard rails rejected 106 of 126 fits, so the reader silently fell
+  back to the assumed radius on 84% of tokens and the "fit" was only really
+  applied to twenty. It scored BETTER that way than when fixed. Always count
+  how often a fallback fires before believing a comparison.
+
+The remaining obstacle is that the face predicate cannot cleanly separate the
+token from the pale sandy TILE BORDERS, which are also bright and unsaturated.
+Calibrating the predicate against the token's own face colour helps a little
+and not enough.
 
 **6 vs 8 is the pair with no side-signal**, which is why losing their shapes is
 worse than losing any other token's.** Both are printed red, so ink says
