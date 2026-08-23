@@ -282,6 +282,11 @@ export default function CatanCaptureScreen() {
    */
   const applyOcr = useCallback(
     async (hexes: CatanHexDef[]): Promise<{ hexes: CatanHexDef[]; note?: string }> => {
+      // Wrapped end to end. A throw here rejects the promise and the caller's
+      // diagnostic row simply never appears — which is exactly what happened
+      // when nineteen concurrent bitmap decodes ran out of memory: the OCR line
+      // vanished from the export with nothing at all to say why.
+      try {
       const buffer = bufferRef.current;
       const pts = cornersRef.current;
       if (!lastShotUri || !buffer || pts.length !== 4) return { hexes };
@@ -332,10 +337,13 @@ export default function CatanCaptureScreen() {
         hex.number = r.value;
         hex.confidence = 'high';
       }
-      return {
-        hexes: reconcileBoard(merged).hexes,
-        note: `Placed ${readings.length} — ${sawSummary}`,
-      };
+        return {
+          hexes: reconcileBoard(merged).hexes,
+          note: `Placed ${readings.length} — ${sawSummary}`,
+        };
+      } catch (err) {
+        return { hexes, note: `OCR threw: ${String(err)}` };
+      }
     },
     [lastShotUri],
   );
@@ -462,7 +470,16 @@ export default function CatanCaptureScreen() {
       number: h.number,
       confidence: h.confidence as CatanHexDef['confidence'],
     }));
-    const { hexes, note } = await applyOcr(asHexes);
+    // Also guarded: losing this row is losing the measurement.
+    let hexes = asHexes;
+    let note: string | undefined;
+    try {
+      const out = await applyOcr(asHexes);
+      hexes = out.hexes;
+      note = out.note;
+    } catch (err) {
+      note = `compare threw: ${String(err)}`;
+    }
     setComparison([
       ...rows,
       {

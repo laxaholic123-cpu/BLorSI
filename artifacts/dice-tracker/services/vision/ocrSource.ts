@@ -379,6 +379,16 @@ const FACE_TARGET_PX = 220;
 const FACE_ROTATIONS = [0, 180] as const;
 
 /**
+ * Token crops decoded at once.
+ *
+ * Not nineteen. Each manipulate call decodes a bitmap, and nineteen of those in
+ * flight against a 3072x4080 photo is on the order of a gigabyte — which is how
+ * the first version of this died, throwing somewhere inside the native call and
+ * taking the whole diagnostic row with it silently.
+ */
+const FACE_BATCH = 4;
+
+/**
  * Read each token from its own crop.
  *
  * The whole-board approach failed for a reason that more rotations cannot fix.
@@ -410,7 +420,46 @@ export async function recognizeTokenFaces(
   const size = await measure(uri, bufferAspect);
   if (!size) return { readings: [], available: false, reason: 'Could not measure the photo.' };
 
-  const rects = tokenCropRects(corners as unknown as [Point, Point, Point, Point], size);
+  /**
+   * Crop the board out ONCE, then take the tokens from that.
+   *
+   * Every token crop otherwise re-decodes the full photo. Cutting the board out
+   * first shrinks the source by roughly an order of magnitude, so the per-token
+   * work is cheap and the memory stays bounded.
+   */
+  let source = uri;
+  let sourceSize = size;
+  let sourceOffset = { x: 0, y: 0 };
+  const board = boardRect(corners);
+  try {
+    const originX = Math.round(board.x * size.width);
+    const originY = Math.round(board.y * size.height);
+    const width = Math.round(board.width * size.width);
+    const height = Math.round(board.height * size.height);
+    if (width > 0 && height > 0 && originX + width <= size.width && originY + height <= size.height) {
+      const cut = await manipulator.manipulateAsync(
+        uri,
+        [{ crop: { originX, originY, width, height } }],
+        { compress: 1 },
+      );
+      source = cut.uri;
+      sourceSize = { width: cut.width, height: cut.height };
+      sourceOffset = { x: originX, y: originY };
+    }
+  } catch {
+    // Board crop failed; take tokens from the full photo instead.
+  }
+
+  // Corners expressed against whatever image the crops are actually taken from.
+  const localCorners = corners.map(c => ({
+    x: (c.x * size.width - sourceOffset.x) / sourceSize.width,
+    y: (c.y * size.height - sourceOffset.y) / sourceSize.height,
+  }));
+
+  const rects = tokenCropRects(
+    localCorners as unknown as [Point, Point, Point, Point],
+    sourceSize,
+  );
   if (rects.length === 0) {
     return { readings: [], available: false, reason: 'No token crops fit inside the photo.' };
   }
@@ -418,44 +467,48 @@ export async function recognizeTokenFaces(
   const startedAt = Date.now();
   const found = new Map<number, number>();
   const raw: string[] = [];
+  let failures = 0;
 
   for (const degrees of FACE_ROTATIONS) {
     const pending = rects.filter(r => !found.has(r.hexIndex));
     if (pending.length === 0) break;
 
-    const results = await Promise.all(
-      pending.map(async rect => {
-        try {
-          const actions: Array<Record<string, unknown>> = [
-            { crop: { originX: rect.x, originY: rect.y, width: rect.width, height: rect.height } },
-          ];
-          if (degrees !== 0) actions.push({ rotate: degrees });
-          // Blown up: a digit that fills a 220px frame is a far easier
-          // proposition than the same digit inside a photo of a table.
-          actions.push({ resize: { width: FACE_TARGET_PX, height: FACE_TARGET_PX } });
+    // Batched, not all at once: see FACE_BATCH.
+    for (let start = 0; start < pending.length; start += FACE_BATCH) {
+      const batch = pending.slice(start, start + FACE_BATCH);
+      const results = await Promise.all(
+        batch.map(async rect => {
+          try {
+            const actions: Array<Record<string, unknown>> = [
+              { crop: { originX: rect.x, originY: rect.y, width: rect.width, height: rect.height } },
+            ];
+            if (degrees !== 0) actions.push({ rotate: degrees });
+            actions.push({ resize: { width: FACE_TARGET_PX } });
 
-          const prepared = await manipulator.manipulateAsync(uri, actions, { compress: 1 });
-          const result = await mlkit.recognizeText(prepared.uri);
+            const prepared = await manipulator.manipulateAsync(source, actions, { compress: 1 });
+            const result = await mlkit.recognizeText(prepared.uri);
 
-          const texts: string[] = [];
-          for (const block of result.blocks ?? []) {
-            for (const line of block.lines ?? []) {
-              if (line.text) texts.push(line.text);
-              for (const el of line.elements ?? []) if (el.text) texts.push(el.text);
+            const texts: string[] = [];
+            for (const block of result.blocks ?? []) {
+              for (const line of block.lines ?? []) {
+                if (line.text) texts.push(line.text);
+                for (const el of line.elements ?? []) if (el.text) texts.push(el.text);
+              }
             }
+            return { hexIndex: rect.hexIndex, texts, failed: false };
+          } catch {
+            return { hexIndex: rect.hexIndex, texts: [] as string[], failed: true };
           }
-          return { hexIndex: rect.hexIndex, texts };
-        } catch {
-          return { hexIndex: rect.hexIndex, texts: [] as string[] };
-        }
-      }),
-    );
+        }),
+      );
 
-    for (const r of results) {
-      for (const t of r.texts) {
-        raw.push(`${degrees}°h${r.hexIndex}:${t}`);
-        const value = parseTokenText(t);
-        if (value !== null && !found.has(r.hexIndex)) found.set(r.hexIndex, value);
+      for (const r of results) {
+        if (r.failed) failures++;
+        for (const t of r.texts) {
+          raw.push(`${degrees}°h${r.hexIndex}:${t}`);
+          const value = parseTokenText(t);
+          if (value !== null && !found.has(r.hexIndex)) found.set(r.hexIndex, value);
+        }
       }
     }
   }
@@ -466,6 +519,8 @@ export async function recognizeTokenFaces(
       .sort((a, b) => a.hexIndex - b.hexIndex),
     available: true,
     raw: raw.slice(0, 60),
-    timing: `${rects.length} faces, ${found.size} read, ${Date.now() - startedAt}ms`,
+    timing:
+      `${rects.length} faces, ${found.size} read, ${failures} failed, ` +
+      `${Date.now() - startedAt}ms`,
   };
 }
