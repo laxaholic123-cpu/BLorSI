@@ -205,10 +205,19 @@ may be more or less done than it looks.
    settle because a 6 turned 180 degrees IS a 9; ink colour settles it
    completely and took precision from 93.7% to 100%.
 
-   Probe-only (`tools/digit_match_probe.py`, data in `tools/board_shots.py`);
-   nothing is wired into the app. **Next: port it into the read path** — the
-   pieces are `sampleTokenFace`-style polar sampling, saturation face location,
-   rim rejection, and the existing `disambiguateWithInk`. Then a device run.
+   **Wired into the reader.** `readToken` now samples the digit
+   (`digitSample.ts`) and matches it (`digitShape.ts`) against a bundled library
+   harvested from the reference captures (`tokenLibrary.ts`). The port was
+   verified by running the shipped modules over the same photos
+   (`tools/port_check.mjs`): 88% overall, 96/96 precision, matching the probe.
+
+   Two things went with it. OCR no longer writes to the board — at 1 of 17 it
+   would have clobbered a 100%-precise matcher — and is kept only as a
+   diagnostic. And `clippedTokenHexes` warns when the board sits so close to the
+   frame edge that padded crops run off the photo, which used to fail silently
+   and look exactly like unreadable tokens.
+
+   **Next: a device run.** None of this has executed on hardware.
 
    Caveat: all seven captures are the same physical board. Validated across
    photos, not across Catan sets, so a "teach it your board" step may still be

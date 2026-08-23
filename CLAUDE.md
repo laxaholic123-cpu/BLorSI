@@ -137,6 +137,20 @@ declines rather than guessing, and a declined token costs a tap while a wrong on
 is expensive and invisible. `tools/digit_match_probe.py`, corners and ground
 truth in `tools/board_shots.py`.
 
+**Shipped, and two things had to move out of its way.** `readToken` no longer
+counts anything. OCR was demoted to a diagnostic: it used to overwrite every hex
+it had an opinion about and stamp it confident, which was fine while nothing
+else could read a token and is not fine next to a 100%-precise matcher measured
+at 1 of 17 against it. And `clippedTokenHexes` now warns about framing, because
+padding the crop makes the OTHER failure likelier — a board shot tight to the
+edge has crops running off the photo, which the reader drops silently and which
+is indistinguishable in the result from a token it could not read.
+
+**Check a port against the photos, not against unit tests.** `tools/port_check.mjs`
+runs the actual shipped modules over the actual captures and reproduced the
+probe to within a point. A translation error here would not have failed a test;
+it would have surfaced weeks later as "recognition is worse on the phone".
+
 **Caveat, and it is a real one.** All seven captures are of the SAME physical
 board. This is validated across photos — different angles, distances, lighting
 and glare — but NOT across Catan sets. A different printing may need its own
