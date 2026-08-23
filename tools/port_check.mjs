@@ -67,3 +67,23 @@ console.log(`OVERALL   ${ok}/${n} (${(100 * ok / n).toFixed(0)}%)`);
 console.log(`ACCEPTED  ${accOk}/${acc} (${(100 * accOk / acc).toFixed(1)}% precision), ` +
             `covering ${(100 * acc / n).toFixed(0)}%`);
 if (wrong.length) console.log('wrong but accepted:\n  ' + wrong.join('\n  '));
+
+// ── Cost ─────────────────────────────────────────────────────────────────────
+// 111 templates x 64 rotations x 18 tokens is the one thing that could be fine
+// offline and unacceptable on a phone. Desktop node is optimistic against a
+// mid-range Android, so the useful number is the shape of it, not the absolute.
+const timed = [...byPhoto.values()][0].slice(0, 18);
+const library = [];
+for (const [, rows] of byPhoto) for (const r of rows) library.push({ value: r.value, bits: r.sample.bits });
+
+let t0 = performance.now();
+for (const r of timed) sampleDigit(bufferFor(r), 0, 0, r.size);
+const sampleMs = performance.now() - t0;
+
+t0 = performance.now();
+for (const r of timed) matchDigit(r.sample.bits, library);
+const matchMs = performance.now() - t0;
+
+console.log(`\ncost for a ${timed.length}-token board, ${library.length} templates:`);
+console.log(`  sampling ${sampleMs.toFixed(0)}ms, matching ${matchMs.toFixed(0)}ms, ` +
+            `total ${(sampleMs + matchMs).toFixed(0)}ms`);
