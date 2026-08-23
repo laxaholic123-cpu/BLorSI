@@ -29,8 +29,9 @@ with all nineteen tiles confident and fourteen wrong. That is worse than no
 signal, because `reconcileBoard` prices its assignment off it. A reading is now
 trusted only when the face was actually located and the ink colour agrees.
 
-**5. Matching examples instead of reading digits does not work either.** The
-idea was good — the token is already located, there are ten possible answers,
+**5. Matching examples instead of reading digits works, but only on the DIGIT.**
+The first attempt matched the whole token face and scored at chance; that result
+was wrong, and wrong for a findable reason. See below. The idea was good — the token is already located, there are ten possible answers,
 and every one is printed identically on the same board under the same lamp, so
 it is a matching problem, not a recognition problem. It was built (polar
 sampling, so rotation becomes a cyclic shift) and measured, and it does not
@@ -47,10 +48,14 @@ version of the task and a necessary condition. Results, against ~1.2/12 chance:
     grey-value NCC            3/12
     sampling radius 0.65-0.95 flat
 
-Only "10" matched confidently — wide, two-digit, distinctive. Every single-digit
-token failed. A polar grid at this resolution does not carry enough shape to
-separate 5 from 6 from 8 from 9 once print, glare and centring vary. Changing
-the comparison is not the lever; three different metrics land in the same place.
+Only "10" matched confidently. Changing the comparison is not the lever; three
+different metrics land in the same place.
+
+**The reason is that it was sampling the wrong thing** — see cause 6. The face
+was located badly and a crescent of TILE sat inside every sample. Matching the
+cleaned digit instead takes the same test from 3/12 to 6/12. Do not conclude
+from the table above that matching cannot work; conclude that matching a
+contaminated whole-face sample cannot.
 
 **6. Locating the face by BRIGHTNESS is wrong, and this one is still live.** A
 gold wheat field is as bright as a cream token. `locateBrightDisc` found 5 of 18
@@ -71,6 +76,46 @@ The cross-photo run of the above first reported 3/18. That number was garbage:
 the second photo's corners were stale, so every crop landed on bare tile, scored
 against a truth array for a board that was not in the frame. Rendering the 18
 crops as a contact sheet took one minute and showed it immediately.
+
+**7. Blob counting was given a second chance with cause 6 fixed. It stays dead.**
+Worth recording because the fix looked like it should have rescued it: face
+location went from 5 of 18 to 16 of 18, and it made almost no difference.
+Swept across disc radii 0.60-0.90 and rim-rejection reaches 0.85-0.99, the best
+cell is 7/18 against a 6/18 baseline, and the surface is noisy with no
+structure — the signature of a weak feature set, not a tuning problem. PIPS,
+which every decode keys off first, never exceed 10 of 18. `tools/blob_relocate_probe.py`.
+
+**8. The masks are the useful thing, and nobody had looked at them.** Rendering
+the binary mask beside each crop showed the digits segment CLEANLY — 9, 5, 10,
+11, 12, 8 all plainly legible. Blob counting throws that away by reducing a
+readable digit to three integers. Two findings came straight off that picture:
+
+- Every failure was the same shape, a white CRESCENT down one side. The tile is
+  darker than the face, so any of it inside the sampled disc thresholds as ink,
+  and being the largest blob it gets called the digit while the real digit is
+  demoted to a pip. It enters from outside, so it touches the disc boundary;
+  the digit and pips never do.
+- The earlier matching result was measured on those contaminated samples.
+
+**Matching the cleaned digit shape is the one thing that works.** Centre and
+scale on the DIGIT's own extent, not the face, so print size, camera distance
+and face-centring all drop out. Measured cross-photo — learn from one capture,
+read a different one of the same board under different light with glare:
+
+    7 of 16 correct overall
+    6 of 6 correct among those it ACCEPTED (score >= 0.91)
+    10 left for the player to tap
+
+**The score is honest, and that is new.** Cause 4 was "confidence was a lie" —
+nineteen tiles confident, fourteen wrong. Here the threshold separated right
+from wrong perfectly on the pilot AND held on a photo it had never seen. A
+reading it commits to has been right every time so far; it declines the rest
+rather than guessing. Accuracy can stay mediocre and still be useful, because a
+wrong number is expensive and a blank one costs a tap.
+
+Using every example rather than one per value went 5/5 to 6/6 accepted, so the
+trend rewards a larger library — which is what dedicated per-tile photos would
+give. `tools/digit_match_probe.py`.
 
 **Even with all four fixed, blob counting reads 9 of 18.** That is roughly its
 ceiling: the pips are a few pixels across and no amount of tuning recovers them.
