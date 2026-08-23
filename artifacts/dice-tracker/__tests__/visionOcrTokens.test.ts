@@ -15,6 +15,7 @@ import {
   unrotatePoint,
   rotatedSize,
   mergeRotatedTexts,
+  tokenCropRects,
   VALID_TOKENS,
   type OcrText,
 } from '../services/vision/ocrTokens';
@@ -269,5 +270,71 @@ describe('mergeRotatedTexts', () => {
     // A rotation that fails or finds nothing must not discard the others.
     const merged = mergeRotatedTexts([[], [{ text: '8', cx: 0.3, cy: 0.3 }], []]);
     expect(merged).toHaveLength(1);
+  });
+});
+
+describe('tokenCropRects', () => {
+  const IMAGE = { width: 3072, height: 4080 };
+
+  it('produces one crop per hex, inside the photo', () => {
+    const rects = tokenCropRects(CORNERS, IMAGE);
+    expect(rects.length).toBeGreaterThan(0);
+    for (const r of rects) {
+      expect(r.x).toBeGreaterThanOrEqual(0);
+      expect(r.y).toBeGreaterThanOrEqual(0);
+      expect(r.x + r.width).toBeLessThanOrEqual(IMAGE.width);
+      expect(r.y + r.height).toBeLessThanOrEqual(IMAGE.height);
+      expect(r.width).toBeGreaterThan(0);
+      expect(r.height).toBeGreaterThan(0);
+    }
+  });
+
+  it('centres each crop on its own hex', () => {
+    // The whole point of per-token crops is that the hex is decided before the
+    // recogniser is asked. If a crop is not centred on its hex, that guarantee
+    // is gone and the numbers land wrong with nothing to reveal it.
+    const rects = tokenCropRects(CORNERS, IMAGE);
+    for (const r of rects) {
+      const p = hexAt(r.hexIndex);
+      const cx = r.x + r.width / 2;
+      const cy = r.y + r.height / 2;
+      expect(Math.abs(cx - p.x * IMAGE.width)).toBeLessThan(2);
+      expect(Math.abs(cy - p.y * IMAGE.height)).toBeLessThan(2);
+    }
+  });
+
+  it('keeps every hex index distinct and in range', () => {
+    const rects = tokenCropRects(CORNERS, IMAGE);
+    const seen = new Set(rects.map(r => r.hexIndex));
+    expect(seen.size).toBe(rects.length);
+    for (const r of rects) {
+      expect(r.hexIndex).toBeGreaterThanOrEqual(0);
+      expect(r.hexIndex).toBeLessThan(19);
+    }
+  });
+
+  it('drops crops that would run off the photo rather than clamping them', () => {
+    // A clamped crop is off-centre, which silently reads the neighbouring tile.
+    // Dropping it loses a number; clamping it invents one.
+    const tiny = { width: 100, height: 100 };
+    const rects = tokenCropRects(CORNERS, tiny, 6);
+    for (const r of rects) {
+      expect(r.x + r.width).toBeLessThanOrEqual(tiny.width);
+      expect(r.y + r.height).toBeLessThanOrEqual(tiny.height);
+    }
+  });
+
+  it('returns nothing rather than throwing on degenerate corners', () => {
+    const same = { x: 0.5, y: 0.5 };
+    expect(tokenCropRects([same, same, same, same], IMAGE)).toEqual([]);
+  });
+
+  it('scales the crop with the board, not with the photo', () => {
+    // Padding is measured in token radii, so a board filling more of the frame
+    // gets proportionally larger crops — not a fixed pixel box that would clip
+    // a close-up and miss a distant one.
+    const small = tokenCropRects(CORNERS, IMAGE, 1.0);
+    const large = tokenCropRects(CORNERS, IMAGE, 2.0);
+    expect(large[0]!.width).toBeGreaterThan(small[0]!.width * 1.8);
   });
 });

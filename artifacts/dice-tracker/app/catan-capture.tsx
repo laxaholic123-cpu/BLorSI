@@ -71,7 +71,7 @@ import {
   type ReadingSnapshot,
 } from '@/services/vision/diagnostics';
 import { loadGroundTruth } from '@/services/storage';
-import { recognizeBoardText } from '@/services/vision/ocrSource';
+import { recognizeBoardText, recognizeTokenFaces } from '@/services/vision/ocrSource';
 import { mapOcrToHexes } from '@/services/vision/ocrTokens';
 import type { HexEvidence } from '@/services/boardConstraints';
 import type { Point } from '@/services/vision/homography';
@@ -286,28 +286,41 @@ export default function CatanCaptureScreen() {
       const pts = cornersRef.current;
       if (!lastShotUri || !buffer || pts.length !== 4) return { hexes };
 
-      // The marked corners let OCR crop to the board instead of reading the
-      // whole table — measured, it was picking up a parcel label and missing
-      // most of the tokens.
-      const outcome = await recognizeBoardText(
-        lastShotUri,
-        buffer.width / buffer.height,
-        pts,
-      );
-      if (!outcome.available) return { hexes, note: outcome.reason };
+      /**
+       * Per-token crops first, whole board only as a fallback.
+       *
+       * Reading the whole photo does not work: across three captures ML Kit
+       * returned harbour labels and never a number token, because an isolated
+       * digit on a cream circle is not text-shaped and its detector never
+       * proposes the region. Cropping to one token removes that problem, and
+       * removes the geometry with it — a crop from a known hex cannot land on
+       * the wrong tile.
+       */
+      const faces = await recognizeTokenFaces(lastShotUri, buffer.width / buffer.height, pts);
+      let readings: Array<{ hexIndex: number; value: number }> = faces.readings;
+      let sawSummary = faces.available
+        ? `faces: ${faces.timing ?? ''} — ${(faces.raw ?? []).slice(0, 20).join(' ')}`
+        : (faces.reason ?? 'faces unavailable');
 
-      // What the recogniser actually saw, verbatim. "No numbers recognised" on
-      // its own cannot distinguish "found nothing" from "found plenty and the
-      // parser rejected it", and those want opposite fixes.
-      const seen = outcome.rawTexts ?? [];
-      const sawSummary =
-        `saw ${seen.length}` + (seen.length ? `: ${seen.slice(0, 24).join(' ')}` : '') +
-        (outcome.timing ? ` | ${outcome.timing}` : '');
+      if (readings.length === 0) {
+        // Fall back to the whole-board sweep, which at least finds something
+        // when the crops cannot be taken at all.
+        const outcome = await recognizeBoardText(
+          lastShotUri,
+          buffer.width / buffer.height,
+          pts,
+        );
+        if (!outcome.available) return { hexes, note: outcome.reason };
+        const seen = outcome.rawTexts ?? [];
+        sawSummary +=
+          ` | board: saw ${seen.length}: ${seen.slice(0, 16).join(' ')}` +
+          (outcome.timing ? ` | ${outcome.timing}` : '');
+        readings = mapOcrToHexes(
+          outcome.texts,
+          pts as unknown as [Point, Point, Point, Point],
+        );
+      }
 
-      const readings = mapOcrToHexes(
-        outcome.texts,
-        pts as unknown as [Point, Point, Point, Point],
-      );
       if (readings.length === 0) {
         return { hexes, note: `No numbers placed — ${sawSummary}` };
       }
@@ -321,7 +334,7 @@ export default function CatanCaptureScreen() {
       }
       return {
         hexes: reconcileBoard(merged).hexes,
-        note: `Placed ${readings.length} of ${seen.length} — ${sawSummary}`,
+        note: `Placed ${readings.length} — ${sawSummary}`,
       };
     },
     [lastShotUri],

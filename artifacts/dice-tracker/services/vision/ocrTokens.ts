@@ -25,7 +25,7 @@
  * tests import no React Native.
  */
 
-import { HEX_CENTERS, CORNER_HEX_CENTERS } from '@/services/vision/boardGeometry';
+import { HEX_CENTERS, CORNER_HEX_CENTERS, TOKEN_RADIUS } from '@/services/vision/boardGeometry';
 import { solveHomography, applyHomography, type Point } from '@/services/vision/homography';
 
 /** Every value a Catan number token can carry. 7 is absent: it has no token. */
@@ -190,6 +190,69 @@ export function rotatedSize(
     width: size.width * cos + size.height * sin,
     height: size.width * sin + size.height * cos,
   };
+}
+
+/**
+ * Where each token sits in the photo, in pixels.
+ *
+ * Reading the whole board does not work. Across three real captures ML Kit
+ * returned harbour labels ("3:1" — two characters and a colon, high contrast,
+ * text-shaped) and never once a number token. A single digit centred on a cream
+ * circle with pips beneath it is not text-shaped, so the detector never
+ * proposes it as a text region at all, at any rotation.
+ *
+ * Detection is the problem, not recognition. Handing the recogniser one token
+ * filling the frame removes detection from the question entirely — and it also
+ * removes the geometry, because a crop taken from a known hex needs no mapping
+ * back. Nothing can land on the wrong tile if the tile is decided before the
+ * recogniser is asked.
+ */
+export function tokenCropRects(
+  corners: readonly [Point, Point, Point, Point],
+  imageSize: { width: number; height: number },
+  /** How much of the surrounding tile to include, as a fraction of the face. */
+  padding = 1.35,
+): Array<{ hexIndex: number; x: number; y: number; width: number; height: number }> {
+  const toImage = solveHomography(
+    CORNER_HEX_CENTERS as unknown as readonly [Point, Point, Point, Point],
+    corners,
+  );
+  if (!toImage) return [];
+
+  // Pixels per canonical hex-radius, measured across the middle row — the same
+  // span readFrame uses, so the two agree about how big a token is.
+  const left = applyHomography(toImage, HEX_CENTERS[7]!);
+  const right = applyHomography(toImage, HEX_CENTERS[11]!);
+  if (!left || !right) return [];
+  const canonicalGap = HEX_CENTERS[11]!.x - HEX_CENTERS[7]!.x;
+  const scalePerRadius =
+    Math.hypot(right.x - left.x, right.y - left.y) / canonicalGap;
+
+  // Normalised corners mean the homography lands in 0-1 space, not pixels.
+  const half = TOKEN_RADIUS * scalePerRadius * padding;
+
+  const rects: Array<{ hexIndex: number; x: number; y: number; width: number; height: number }> = [];
+  HEX_CENTERS.forEach((centre, hexIndex) => {
+    const p = applyHomography(toImage, centre);
+    if (!p) return;
+    const cx = p.x * imageSize.width;
+    const cy = p.y * imageSize.height;
+    const rx = half * imageSize.width;
+    const ry = half * imageSize.height;
+
+    const x = Math.round(cx - rx);
+    const y = Math.round(cy - ry);
+    const width = Math.round(rx * 2);
+    const height = Math.round(ry * 2);
+    // A crop that runs off the photo would be rejected by the manipulator, and
+    // a silently clamped one would be off-centre — so it is dropped instead.
+    if (x < 0 || y < 0 || width <= 0 || height <= 0) return;
+    if (x + width > imageSize.width || y + height > imageSize.height) return;
+
+    rects.push({ hexIndex, x, y, width, height });
+  });
+
+  return rects;
 }
 
 /**

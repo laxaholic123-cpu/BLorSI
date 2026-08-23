@@ -15,7 +15,13 @@
 import { Image } from 'react-native';
 
 import type { OcrText } from '@/services/vision/ocrTokens';
-import { mergeRotatedTexts, unrotatePoint } from '@/services/vision/ocrTokens';
+import {
+  mergeRotatedTexts,
+  parseTokenText,
+  tokenCropRects,
+  unrotatePoint,
+} from '@/services/vision/ocrTokens';
+import type { Point } from '@/services/vision/homography';
 
 /**
  * Angles to read the board at, in the order they are tried.
@@ -349,4 +355,117 @@ function toOriginalSpace(
       cy: rect.y + ny * rect.height,
     };
   });
+}
+
+/** A number read from one token's own crop, already tied to its hex. */
+export interface TokenFaceReading {
+  hexIndex: number;
+  value: number;
+}
+
+export interface TokenFaceOutcome {
+  readings: TokenFaceReading[];
+  available: boolean;
+  reason?: string;
+  /** Raw strings per hex, for the diagnostic. */
+  raw?: string[];
+  timing?: string;
+}
+
+/** Side length the crops are blown up to before reading. */
+const FACE_TARGET_PX = 220;
+
+/** Turns tried per token. Two, because 36 native calls is already the budget. */
+const FACE_ROTATIONS = [0, 180] as const;
+
+/**
+ * Read each token from its own crop.
+ *
+ * The whole-board approach failed for a reason that more rotations cannot fix.
+ * Across three real captures ML Kit returned harbour labels and never a single
+ * number token: an isolated digit on a cream circle is not text-shaped, so its
+ * detector never proposes the region. Detection is the blocker, not recognition.
+ *
+ * Cropping to one token removes the detection problem — the digit fills the
+ * frame — and removes the geometry problem too, since a crop taken from a known
+ * hex needs no mapping back. Nothing can land on the wrong tile when the tile
+ * is decided before the recogniser is asked.
+ *
+ * The cost is native calls: 19 crops and up to 38 reads. They run in parallel
+ * per rotation, and the second rotation is skipped for tokens already read.
+ */
+export async function recognizeTokenFaces(
+  uri: string,
+  bufferAspect: number,
+  corners: readonly { x: number; y: number }[],
+): Promise<TokenFaceOutcome> {
+  const mlkit = loadModule();
+  if (!mlkit) return { readings: [], available: false, reason: 'OCR module not in this build.' };
+  const manipulator = loadManipulator();
+  if (!manipulator) {
+    return { readings: [], available: false, reason: 'Image manipulator not in this build.' };
+  }
+  if (corners.length !== 4) return { readings: [], available: false, reason: 'Corners not marked.' };
+
+  const size = await measure(uri, bufferAspect);
+  if (!size) return { readings: [], available: false, reason: 'Could not measure the photo.' };
+
+  const rects = tokenCropRects(corners as unknown as [Point, Point, Point, Point], size);
+  if (rects.length === 0) {
+    return { readings: [], available: false, reason: 'No token crops fit inside the photo.' };
+  }
+
+  const startedAt = Date.now();
+  const found = new Map<number, number>();
+  const raw: string[] = [];
+
+  for (const degrees of FACE_ROTATIONS) {
+    const pending = rects.filter(r => !found.has(r.hexIndex));
+    if (pending.length === 0) break;
+
+    const results = await Promise.all(
+      pending.map(async rect => {
+        try {
+          const actions: Array<Record<string, unknown>> = [
+            { crop: { originX: rect.x, originY: rect.y, width: rect.width, height: rect.height } },
+          ];
+          if (degrees !== 0) actions.push({ rotate: degrees });
+          // Blown up: a digit that fills a 220px frame is a far easier
+          // proposition than the same digit inside a photo of a table.
+          actions.push({ resize: { width: FACE_TARGET_PX, height: FACE_TARGET_PX } });
+
+          const prepared = await manipulator.manipulateAsync(uri, actions, { compress: 1 });
+          const result = await mlkit.recognizeText(prepared.uri);
+
+          const texts: string[] = [];
+          for (const block of result.blocks ?? []) {
+            for (const line of block.lines ?? []) {
+              if (line.text) texts.push(line.text);
+              for (const el of line.elements ?? []) if (el.text) texts.push(el.text);
+            }
+          }
+          return { hexIndex: rect.hexIndex, texts };
+        } catch {
+          return { hexIndex: rect.hexIndex, texts: [] as string[] };
+        }
+      }),
+    );
+
+    for (const r of results) {
+      for (const t of r.texts) {
+        raw.push(`${degrees}°h${r.hexIndex}:${t}`);
+        const value = parseTokenText(t);
+        if (value !== null && !found.has(r.hexIndex)) found.set(r.hexIndex, value);
+      }
+    }
+  }
+
+  return {
+    readings: [...found.entries()]
+      .map(([hexIndex, value]) => ({ hexIndex, value }))
+      .sort((a, b) => a.hexIndex - b.hexIndex),
+    available: true,
+    raw: raw.slice(0, 60),
+    timing: `${rects.length} faces, ${found.size} read, ${Date.now() - startedAt}ms`,
+  };
 }
