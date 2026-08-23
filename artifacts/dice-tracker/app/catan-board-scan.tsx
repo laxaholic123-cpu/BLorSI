@@ -174,6 +174,27 @@ export default function CatanBoardScanScreen() {
   const isLastPlayer = currentPlayerIdx === players.length - 1;
   const lowConfIndices = hexes.map((h, i) => (h.confidence === 'low' ? i : -1)).filter(i => i >= 0);
 
+  /**
+   * Say WHICH part of a flagged hex is uncertain.
+   *
+   * "7 hexes need your attention" was reported as confusing in real use, and
+   * fairly: the reader had adjusted seven TERRAINS, the numbers on them were
+   * fine, so checking the numbers found nothing wrong and the warning looked
+   * like noise. Meanwhile the numbers that WERE wrong sat unflagged. Splitting
+   * the count points the player at the thing that is actually unsure.
+   */
+  const attentionSummary = (() => {
+    const numbers = lowConfIndices.filter(i => {
+      const h = hexes[i];
+      return h && h.resource !== 'desert' && h.number !== null;
+    }).length;
+    const parts: string[] = [];
+    if (numbers > 0) parts.push(`${numbers} number${numbers === 1 ? '' : 's'} to check`);
+    const others = lowConfIndices.length - numbers;
+    if (others > 0) parts.push(`${others} resource${others === 1 ? '' : 's'} adjusted`);
+    return parts.length > 0 ? parts.join(', ') : `${lowConfIndices.length} to check`;
+  })();
+
   const haptic = useCallback((style = Haptics.ImpactFeedbackStyle.Light) => {
     if (settings.hapticsEnabled) void Haptics.impactAsync(style);
   }, [settings.hapticsEnabled]);
@@ -652,7 +673,7 @@ export default function CatanBoardScanScreen() {
           <View style={[s.hintBanner, { backgroundColor: colors.muted, borderColor: colors.border }]}>
             <Ionicons name="alert-circle-outline" size={16} color="#F59E0B" />
             <Text style={[s.hintText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-              {lowConfIndices.length} hex{lowConfIndices.length === 1 ? '' : 'es'} need{lowConfIndices.length === 1 ? 's' : ''} your attention — long-press any amber hex to correct it.
+              {attentionSummary} — long-press any amber hex to correct it.
             </Text>
           </View>
         )}

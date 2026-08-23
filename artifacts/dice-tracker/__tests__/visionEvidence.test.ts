@@ -21,6 +21,7 @@ import {
   validateBoardComposition,
   type HexEvidence,
 } from '@/services/boardConstraints';
+import type { ResourceType } from '@/types/models';
 
 const decisive = { grain: 2, wool: 30, lumber: 28, brick: 26, ore: 24, desert: 22 };
 const ambiguous = { grain: 20, wool: 21, lumber: 22, brick: 40, ore: 41, desert: 42 };
@@ -227,5 +228,75 @@ describe('accumulated evidence feeds the constraint solver', () => {
     }
     const { hexes } = reconcileBoardFromEvidence(acc);
     expect(validateBoardComposition(hexes)).toEqual([]);
+  });
+});
+
+describe('confidence tells the player which numbers to check', () => {
+  /**
+   * Evidence where every hex has a clear terrain but only SOME have a number.
+   *
+   * This is now the normal shape of a reading, not an edge case: the digit
+   * matcher is built to decline rather than guess, and a decline arrives as an
+   * empty `tokenCost`.
+   */
+  /** A legal terrain layout, so the solver never has to overrule the colour. */
+  const TERRAIN: ResourceType[] = [
+    'lumber', 'wool', 'grain', 'brick', 'ore', 'lumber', 'wool',
+    'grain', 'desert', 'brick', 'ore', 'lumber', 'wool', 'grain',
+    'brick', 'ore', 'lumber', 'wool', 'grain',
+  ];
+
+  function evidenceWithTokensOn(indices: readonly number[]) {
+    return emptyEvidence().map((ev, i) => {
+      const mine = TERRAIN[i]!;
+      const resourceCost: Partial<Record<ResourceType, number>> = {};
+      for (const r of ['lumber', 'wool', 'grain', 'brick', 'ore', 'desert'] as ResourceType[]) {
+        resourceCost[r] = r === mine ? 0 : 30;
+      }
+      return {
+        ...ev,
+        hasToken: mine !== 'desert',
+        resourceCost,
+        // A number the solver can accept as-is, so only the PRESENCE of an
+        // opinion varies between hexes — which is what these tests are about.
+        tokenCost: indices.includes(i) ? { [TOKENS[i]!]: 0 } : {},
+      };
+    });
+  }
+
+  /** The standard token bag laid out in board order, desert skipped. */
+  const TOKENS: Array<number | undefined> = [
+    5, 2, 6, 3, 8, 10, 9, 12, undefined, 11, 4, 8, 10, 9, 4, 5, 6, 3, 11,
+  ];
+
+  it('marks a hex the reader had NO OPINION about as low, not high', () => {
+    // The bug this pins cost the reader its whole point. A declined token was
+    // filled in by the deck solver and then stamped confident, so the player
+    // was never shown which numbers to check — every guess looked exactly like
+    // every certainty. "No opinion" is not "agreed".
+    const withOpinions = [0, 1, 2, 3, 4];
+    const { hexes } = reconcileBoardFromEvidence(evidenceWithTokensOn(withOpinions));
+
+    const silent = hexes.filter(
+      (h, i) => !withOpinions.includes(i) && h.resource !== 'desert',
+    );
+    expect(silent.length).toBeGreaterThan(0);
+    for (const hex of silent) {
+      expect(hex.confidence).toBe('low');
+    }
+  });
+
+  it('still fills those hexes with a legal board', () => {
+    // Declining must cost the player a TAP, never a broken board — the deck
+    // constraint is what makes a refusal cheap.
+    const { hexes } = reconcileBoardFromEvidence(evidenceWithTokensOn([0, 1, 2, 3, 4]));
+    expect(validateBoardComposition(hexes)).toEqual([]);
+    expect(hexes.every(h => h.resource === 'desert' || h.number !== null)).toBe(true);
+  });
+
+  it('does not flag the desert, which has no token to be unsure about', () => {
+    const { hexes } = reconcileBoardFromEvidence(evidenceWithTokensOn([]));
+    const desert = hexes.find(h => h.resource === 'desert');
+    expect(desert?.confidence).toBe('high');
   });
 });

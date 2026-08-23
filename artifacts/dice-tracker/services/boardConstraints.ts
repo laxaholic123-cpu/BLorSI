@@ -417,15 +417,34 @@ export function reconcileBoardFromEvidence(
     resolved[hexPos]!.number = tokenSlots[tokenAssignment[row]!]!;
   });
 
-  // Confidence reflects whether the solver agreed with the scanner's own best
-  // guess. Where it overruled the evidence, a human should take a look.
+  /**
+   * Confidence has to distinguish THREE cases, not two.
+   *
+   *   - the solver agreed with the reader        -> high
+   *   - the solver overruled the reader          -> low, a human should look
+   *   - the reader had NO OPINION                -> low, a human MUST look
+   *
+   * The third was being folded into the first, and that quietly destroyed the
+   * point of the reader declining. The digit matcher is built to refuse rather
+   * than guess — it is 100% precise on what it accepts precisely BECAUSE it
+   * hands back nothing when unsure — and a refusal arrives here as an empty
+   * `tokenCost`. Treating "no opinion" as "agreed" stamped those hexes
+   * confident, so the deck solver's guess was presented as a reading and the
+   * player was never told which numbers to check. Everything the reader
+   * declined looked exactly like everything it was sure of.
+   *
+   * `bestResource === null` stays permissive because the colour classifier
+   * always has an opinion; an empty resourceCost means the hex was off-frame,
+   * which `hasToken` and the assessment already cover.
+   */
   const hexes = resolved.map((hex, i) => {
     const ev = evidence[i]!;
     const bestResource = cheapestKey(ev.resourceCost);
     const bestToken = cheapestKey(ev.tokenCost);
     const resourceAgreed = bestResource === null || bestResource === hex.resource;
     const tokenAgreed =
-      hex.resource === 'desert' || bestToken === null || Number(bestToken) === hex.number;
+      hex.resource === 'desert' ||
+      (bestToken !== null && Number(bestToken) === hex.number);
     return { ...hex, confidence: resourceAgreed && tokenAgreed ? ('high' as const) : ('low' as const) };
   });
 
