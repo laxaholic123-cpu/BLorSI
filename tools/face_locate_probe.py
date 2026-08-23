@@ -77,6 +77,9 @@ def locate_face(crop, size):
     return cx, cy, r
 
 
+HOLE_MIN = 0  # overridden from the command line
+
+
 def read(crop, size, mode):
     if mode == 'current':
         cx = cy = (size - 1) / 2.0
@@ -105,7 +108,8 @@ def read(crop, size, mode):
     pips = [k for k in comps if k['size'] < largest * 0.5]
     holes = sum(1 for k in components(mask, False)
                 if k['minx'] > 0 and k['miny'] > 0
-                and k['maxx'] < size - 1 and k['maxy'] < size - 1)
+                and k['maxx'] < size - 1 and k['maxy'] < size - 1
+                and k['size'] >= HOLE_MIN)
     return decode(len(pips), len(glyphs), holes), len(pips), len(glyphs), holes
 
 
@@ -115,8 +119,12 @@ def main():
     ap.add_argument('--corners', nargs=4, required=True)
     ap.add_argument('--truth', default='4,11,6,5,10,11,12,4,5,,8,10,2,9,3,3,6,8,9',
                     help='19 comma-separated tokens, empty for the desert')
+    ap.add_argument('--hole-min', type=int, default=0,
+                    help='minimum hole area in px; 0 keeps every speck')
     ap.add_argument('--skip', default='', help='hex indices to ignore (overlay-contaminated)')
     args = ap.parse_args()
+    global HOLE_MIN
+    HOLE_MIN = args.hole_min
 
     truth = [int(t) if t else None for t in args.truth.split(',')]
     skip = {int(s) for s in args.skip.split(',') if s.strip()}

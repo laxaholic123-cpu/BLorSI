@@ -29,6 +29,49 @@ with all nineteen tiles confident and fourteen wrong. That is worse than no
 signal, because `reconcileBoard` prices its assignment off it. A reading is now
 trusted only when the face was actually located and the ink colour agrees.
 
+**5. Matching examples instead of reading digits does not work either.** The
+idea was good — the token is already located, there are ten possible answers,
+and every one is printed identically on the same board under the same lamp, so
+it is a matching problem, not a recognition problem. It was built (polar
+sampling, so rotation becomes a cyclic shift) and measured, and it does not
+separate the digits. See `tools/token_match_probe.py`; the implementation was
+removed rather than left in the tree.
+
+The decisive test is leave-one-out on ONE photo: eight values appear twice, so a
+template harvested from one physical token reads the other. Same lamp, same
+camera, different token at a different angle. That is the easiest possible
+version of the task and a necessary condition. Results, against ~1.2/12 chance:
+
+    binary agreement          2/12
+    binary Jaccard / Dice     3/12
+    grey-value NCC            3/12
+    sampling radius 0.65-0.95 flat
+
+Only "10" matched confidently — wide, two-digit, distinctive. Every single-digit
+token failed. A polar grid at this resolution does not carry enough shape to
+separate 5 from 6 from 8 from 9 once print, glare and centring vary. Changing
+the comparison is not the lever; three different metrics land in the same place.
+
+**6. Locating the face by BRIGHTNESS is wrong, and this one is still live.** A
+gold wheat field is as bright as a cream token. `locateBrightDisc` found 5 of 18
+faces on one capture and 0 of 18 on another, then silently fell back to a
+guessed centre and radius — so nearly every face has been sampled off-centre
+this whole time, by up to a quarter of a radius. SATURATION separates them
+completely: nothing on a Catan tile is both bright and grey except the token.
+Swapping to it tightened the per-face ink fraction from 0.14-0.78 to 0.19-0.50,
+which is what a cream disc with a dark digit should give.
+
+That is a genuine fix to the SAMPLING and it is measured, but it was only ever
+run in the probe — it did NOT rescue matching, and it has not been tried against
+blob counting, which had the same mislocalisation. If the local path is ever
+picked up again, start here.
+
+**Do not trust an accuracy number without checking the crops contain tokens.**
+The cross-photo run of the above first reported 3/18. That number was garbage:
+the second photo's corners were stale, so every crop landed on bare tile, scored
+against a truth array for a board that was not in the frame. Rendering the 18
+crops as a contact sheet took one minute and showed it immediately.
+
 **Even with all four fixed, blob counting reads 9 of 18.** That is roughly its
 ceiling: the pips are a few pixels across and no amount of tuning recovers them.
 Hence OCR.
