@@ -60,3 +60,7 @@ Thumbs.db
 # Python research harnesses under tools/
 __pycache__/
 *.py[cod]
+
+# Raw crop dump for the TypeScript port check — regenerate with tools/dump_crops.py
+tools/crops.bin
+tools/crops.json

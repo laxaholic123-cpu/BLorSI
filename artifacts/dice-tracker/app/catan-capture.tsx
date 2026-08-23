@@ -54,7 +54,7 @@ import Svg, { Polygon, Circle } from 'react-native-svg';
 import { useColors } from '@/hooks/useColors';
 import { loadPixelBuffer } from '@/services/vision/pixelSource';
 import { downscale, screenToImage } from '@/services/vision/pixelBuffer';
-import { readFrame } from '@/services/vision/readFrame';
+import { boardTransform, clippedTokenHexes, readFrame } from '@/services/vision/readFrame';
 import {
   CONFIDENCE_THRESHOLD,
   emptyEvidence,
@@ -62,7 +62,7 @@ import {
   guidanceForEvidence,
   mergeEvidence,
 } from '@/services/vision/evidenceMerge';
-import { reconcileBoard, reconcileBoardFromEvidence } from '@/services/boardConstraints';
+import { reconcileBoardFromEvidence } from '@/services/boardConstraints';
 import { HEX_CENTERS, hexOutline } from '@/services/vision/boardGeometry';
 import {
   buildDiagnosticPayload,
@@ -180,6 +180,15 @@ export default function CatanCaptureScreen() {
   const [groundTruth, setGroundTruth] = useState<CatanHexDef[] | null>(null);
   const [comparison, setComparison] = useState<ReadingSnapshot[] | null>(null);
   const [ocrNote, setOcrNote] = useState<string | null>(null);
+  /**
+   * Set when the board sits so close to the edge of the frame that some token
+   * crops run off the photo.
+   *
+   * Those tokens are dropped, and a dropped token is indistinguishable in the
+   * result from one that could not be read — so without saying this out loud,
+   * the honest fix (step back half a pace) looks like the reader being bad.
+   */
+  const [framingNote, setFramingNote] = useState<string | null>(null);
 
   /**
    * Reload on FOCUS, not on mount.
@@ -330,16 +339,24 @@ export default function CatanCaptureScreen() {
         return { hexes, note: `No numbers placed — ${sawSummary}` };
       }
 
-      const merged = hexes.map(h => ({ ...h }));
-      for (const r of readings) {
-        const hex = merged[r.hexIndex];
-        if (!hex || hex.resource === 'desert') continue; // the desert has no token
-        hex.number = r.value;
-        hex.confidence = 'high';
-      }
+      /**
+       * OCR NO LONGER WRITES TO THE BOARD. Reported, not applied.
+       *
+       * It used to overwrite every hex it had an opinion about and stamp it
+       * `confidence: 'high'`. That was defensible only while nothing else could
+       * read a token at all. It is not defensible now: OCR was measured at 1 of
+       * 17 on real captures, and the digit matcher that fills the board before
+       * this runs is measured at 100% precision on what it accepts. Letting a
+       * 6%-accurate reader overwrite a 100%-precise one, and call the result
+       * confident, would undo the entire point.
+       *
+       * The call is kept because the diagnostic export uses what it saw, and
+       * because a note costs the player nothing. If the diagnostics harness
+       * goes, this goes with it.
+       */
         return {
-          hexes: reconcileBoard(merged).hexes,
-          note: `Placed ${readings.length} — ${sawSummary}`,
+          hexes,
+          note: `Saw ${readings.length}, applied none (matcher leads) — ${sawSummary}`,
         };
       } catch (err) {
         return { hexes, note: `OCR threw: ${String(err)}` };
@@ -369,6 +386,18 @@ export default function CatanCaptureScreen() {
         setPhase('adjust');
         return;
       }
+
+      const transform = boardTransform(imagePoints);
+      const clipped = transform
+        ? clippedTokenHexes(transform, { width: buffer.width, height: buffer.height })
+        : [];
+      setFramingNote(
+        clipped.length === 0
+          ? null
+          : `${clipped.length} token${clipped.length === 1 ? '' : 's'} sat too close ` +
+            'to the edge of the photo to read. Step back a little and reshoot to ' +
+            'catch them.',
+      );
 
       // A second aimed shot is deliberate evidence, so merging is safe here in a
       // way it was not for a drifting loop.
@@ -850,6 +879,12 @@ ${JSON.stringify(payload)}`,
               );
             })}
           </View>
+
+          {framingNote && (
+            <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'left' }]}>
+              Framing: {framingNote}
+            </Text>
+          )}
 
           {ocrNote && (
             <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'left' }]}>

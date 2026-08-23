@@ -25,19 +25,17 @@ import {
   type Point,
 } from '@/services/vision/homography';
 import { cropGray, readPixel, type PixelBuffer } from '@/services/vision/pixelBuffer';
+import { CROP_PADDING, sampleDigit } from '@/services/vision/digitSample';
 import {
-  connectedComponents,
-  countHoles,
-  fallbackDisc,
-  filterNoise,
-  locateBrightDisc,
-  maskToDisc,
-  otsuThresholdInDisc,
-  splitGlyphsAndPips,
-  threshold,
-  type BinaryMask,
-} from '@/services/vision/binaryOps';
-import { decodeToken } from '@/services/vision/tokenDecode';
+  isTrustworthy,
+  matchDigit,
+  resolveSixNine,
+  type DigitTemplate,
+} from '@/services/vision/digitShape';
+import { TOKEN_TEMPLATES } from '@/services/vision/tokenLibrary';
+
+/** Every value a Catan number token can carry. 7 has no token. */
+const VALID_TOKEN_VALUES: readonly number[] = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12];
 import {
   classifyBoardRelative,
   medianLab,
@@ -64,6 +62,17 @@ export interface ReadFrameOptions {
    * Undefined means all of them.
    */
   decodeTokensFor?: readonly number[];
+
+  /**
+   * Extra token examples photographed from the player's own set.
+   *
+   * The bundled library was harvested from one physical board. It is validated
+   * across photos of that board — angles, distances, lighting, glare — but NOT
+   * across Catan sets, and a differently printed 6 is exactly the case it has
+   * never seen. Supplying examples from the set on the table is the answer, and
+   * they are tried before the bundled ones.
+   */
+  learnedTemplates?: readonly DigitTemplate[];
 }
 
 /** Where the board sits in the image, given the four guide corners. */
@@ -80,6 +89,52 @@ function pixelScale(h: Matrix3): number {
   if (!a || !b) return 0;
   const canonicalGap = HEX_CENTERS[11]!.x - HEX_CENTERS[7]!.x;
   return Math.hypot(b.x - a.x, b.y - a.y) / canonicalGap;
+}
+
+/**
+ * Which tokens would be cut off by the edge of the PHOTO?
+ *
+ * There are two ways a number gets lost, they look identical in the output, and
+ * only one of them is fixed by padding the crop:
+ *
+ *   1. The token sits off-centre on its tile and runs off the edge of its own
+ *      crop. `CROP_PADDING` fixes that, and it was costing 8 of 18.
+ *   2. The BOARD sits too close to the edge of the frame, so the padded crop
+ *      runs off the photo entirely. Padding makes this one likelier, not less
+ *      likely — the crop is now half again as wide.
+ *
+ * The second used to be silent: the reader dropped the hex and reported no
+ * opinion, which is indistinguishable from a token it simply could not read. A
+ * player would see missing numbers and reasonably conclude recognition is bad,
+ * when the fix is to step back half a pace.
+ *
+ * Returns the hex indices at risk, so the capture screen can say so BEFORE the
+ * shutter rather than after.
+ */
+export function clippedTokenHexes(
+  h: Matrix3,
+  imageSize: { width: number; height: number },
+): number[] {
+  const scale = pixelScale(h);
+  if (scale <= 0) return [];
+  const radius = TOKEN_RADIUS * scale * CROP_PADDING;
+  const size = Math.round(radius * 2);
+
+  const clipped: number[] = [];
+  HEX_CENTERS.forEach((centre, index) => {
+    const p = applyHomography(h, centre);
+    if (!p) {
+      clipped.push(index);
+      return;
+    }
+    const left = Math.round(p.x - radius);
+    const top = Math.round(p.y - radius);
+    if (left < 0 || top < 0 ||
+        left + size > imageSize.width || top + size > imageSize.height) {
+      clipped.push(index);
+    }
+  });
+  return clipped;
 }
 
 /** Median terrain colour for one hex, or null when it lies outside the frame. */
@@ -236,143 +291,77 @@ export function classifyTokenPresence(
 
 /**
  * Look at a hex's token: is one there, and which number is it?
-
  *
- * Presence is answered first and separately, because it survives conditions that
- * defeat the decode — and it is the signal that identifies the desert, which is
- * the tile colour alone is worst at.
+ * Presence is answered first and separately, because it survives conditions
+ * that defeat the decode — and it is the signal that identifies the desert,
+ * which the tile colour alone is worst at.
+ *
+ * The number is read by MATCHING the digit against photographed examples of
+ * the same ten numerals, not by counting pips or by OCR. Both of those were
+ * measured to their ceilings and neither was usable; see `digitShape.ts` for
+ * why matching succeeds where they did not.
+ *
+ * Ink colour is measured inside `digitSample` now, alongside the pip direction,
+ * because both exist to answer the same single question — 6 or 9 — and the
+ * masks they need are already built there.
  */
-/**
- * Is this token's ink red?
- *
- * 6 and 8 are the only red tokens, and they are also the pair the counting
- * signals separate worst: both have five pips, and only the hole count tells
- * them apart — 6 has one, 8 has two — which is precisely the measurement that
- * collapses on a real photo. `decodeToken` has always accepted this signal and
- * nothing ever supplied it.
- *
- * Measured RELATIVE to the token's own face, not against a fixed red. The face
- * is printed cream and therefore already warm, so the question is whether the
- * ink is warmer than the paper it sits on. That normalises out white balance
- * and the illumination of the moment, in the same way the terrain classifier
- * ranks tiles against each other rather than against absolute colours.
- *
- * Returns undefined when there is too little ink to judge — the decoder treats
- * an absent signal as "no opinion", which is the right answer rather than a
- * coin flip.
- */
-function inkIsRed(
-  buffer: PixelBuffer,
-  left: number,
-  top: number,
-  mask: BinaryMask,
-): boolean | undefined {
-  let inkR = 0, inkG = 0, inkB = 0, inkN = 0;
-  let faceR = 0, faceG = 0, faceB = 0, faceN = 0;
-
-  for (let y = 0; y < mask.height; y++) {
-    for (let x = 0; x < mask.width; x++) {
-      const px = readPixel(buffer, left + x, top + y);
-      if (mask.data[y * mask.width + x]) {
-        inkR += px.r; inkG += px.g; inkB += px.b; inkN++;
-      } else {
-        faceR += px.r; faceG += px.g; faceB += px.b; faceN++;
-      }
-    }
-  }
-  if (inkN < 12 || faceN < 12) return undefined;
-
-  // Warmth: how far red sits above the mean of the other two channels.
-  const warmth = (r: number, g: number, b: number, n: number) =>
-    r / n - (g / n + b / n) / 2;
-  const inkWarmth = warmth(inkR, inkG, inkB, inkN);
-  const faceWarmth = warmth(faceR, faceG, faceB, faceN);
-
-  // Black ink sits at or below the face's own warmth; red ink sits well above.
-  // The margin is deliberately generous — a false "red" would push a token
-  // towards 6 or 8, and being wrong here is worse than staying silent.
-  return inkWarmth - faceWarmth > 18;
-}
-
 function readToken(
   buffer: PixelBuffer,
   h: Matrix3,
   hexIndex: number,
   scale: number,
+  templates: readonly DigitTemplate[],
 ): TokenObservation {
   const centre = applyHomography(h, HEX_CENTERS[hexIndex]!);
   if (!centre || scale <= 0) return { hasToken: true, costs: {} };
 
-  const radius = TOKEN_RADIUS * scale;
+  /**
+   * Padded, and that padding is load-bearing.
+   *
+   * Cut at exactly TOKEN_RADIUS the crop CLIPPED its own token: they are
+   * dropped onto tiles by hand, and on the reference capture 8 of 18 ran off
+   * the edge of their crop. A clipped token also pulls tile into the sampled
+   * disc, which is what `digitSample` then has to throw away.
+   */
+  const radius = TOKEN_RADIUS * scale * CROP_PADDING;
   const size = Math.round(radius * 2);
-  if (size < 12) return { hasToken: true, costs: {} };
+  if (size < 24) return { hasToken: true, costs: {} };
 
-  const left = centre.x - radius;
-  const top = centre.y - radius;
+  const left = Math.round(centre.x - radius);
+  const top = Math.round(centre.y - radius);
   if (left < 0 || top < 0 || left + size > buffer.width || top + size > buffer.height) {
     return { hasToken: true, costs: {} };
   }
 
-  // Find the token's face, then decode inside it.
-  //
-  // The crop is a square sized from a canonical constant, and the face is
-  // neither centred in it nor as large as assumed — measured on a real capture,
-  // about 64% of the assumed radius, offset by up to half a radius, because
-  // tokens are dropped on tiles by hand. Thresholding the whole square marks
-  // the surrounding TILE as ink, hands the decoder one huge blob as the glyph
-  // and demotes the digits to pips. Locating the face first took a real capture
-  // from 1/14 to 4/14 in tools/face_locate_probe.py.
-  const gray = cropGray(buffer, left, top, size, size);
-  const located = locateBrightDisc(gray);
-  const faceLocated = located !== null;
-  const found = located ?? fallbackDisc(size);
-  // Pull inside the printed rim, which thresholds as ink along with the digits.
-  const disc = { ...found, radius: found.radius * 0.9 };
-  const mask = maskToDisc(threshold(gray, otsuThresholdInDisc(gray, disc)), disc);
-  const minBlob = Math.max(2, Math.round(size * size * 0.0008));
-  const components = filterNoise(connectedComponents(mask, true), minBlob);
-  if (components.length === 0) return { hasToken: true, costs: {} };
+  const sample = sampleDigit(buffer, left, top, size);
+  if (!sample) return { hasToken: true, costs: {} };
 
-  const { glyphs, pips } = splitGlyphsAndPips(components);
-  if (glyphs.length === 0) return { hasToken: true, costs: {} };
+  const match = matchDigit(sample.bits, templates);
+  if (!match) return { hasToken: true, costs: {} };
 
-  // Measured once: it feeds both the decode and the confidence check below.
-  const inkRed = inkIsRed(buffer, left, top, mask);
-  const reading = decodeToken({
-    pipCount: pips.length,
-    glyphCount: glyphs.length,
-    holeCount: countHoles(mask),
-    isRed: inkRed,
-  });
-
-  if (reading.value === null) return { hasToken: true, costs: {} };
+  const value = resolveSixNine(match.value, sample.inkIsRed, sample.pipsSuggest);
+  // null means the two orientation signals contradicted each other. Reporting
+  // no opinion costs the player one tap; guessing costs them a wrong number
+  // they will not notice until the stats are already skewed.
+  if (value === null) return { hasToken: true, costs: {} };
 
   /**
-   * Downgrade a reading the evidence does not actually support.
+   * Commit only on a score the measurements support.
    *
-   * `decodeToken` calls a reading confident whenever the glyph count matched a
-   * signature — and glyph counting has been measured at chance on real photos
-   * (delta -1 five times, 0 eight, +1 five). So "high" was being claimed for
-   * almost everything: one export came back with all nineteen tiles confident
-   * and fourteen of them wrong.
-   *
-   * That is worse than having no confidence signal at all, because
-   * `reconcileBoard` prices its assignment off it — overriding a confident read
-   * costs ten, filling an unknown costs one — so a board of falsely confident
-   * garbage tells the solver to preserve exactly the reads it should be fixing.
-   *
-   * Two things genuinely predict an unreliable read, and neither was consulted:
-   * the face not being found (so the decode ran on a guessed disc), and the ink
-   * colour contradicting the value.
+   * Leave-one-photo-out over seven captures: precision rises smoothly to 98% at
+   * 0.90 and then holds at 100% across 0.91-0.94, giving up only coverage. So
+   * above the threshold this is worth telling the solver to keep, and below it
+   * the honest report is nothing at all rather than a weak preference — the old
+   * decoder's habit of claiming confidence it had not earned is what let one
+   * export come back with nineteen confident tiles and fourteen wrong.
    */
-  const colourDisagrees =
-    inkRed !== undefined && inkRed !== (reading.value === 6 || reading.value === 8);
-  const trustworthy = reading.confidence === 'high' && faceLocated && !colourDisagrees;
+  if (!isTrustworthy(match) || !sample.faceLocated) {
+    return { hasToken: true, costs: {} };
+  }
 
-  const commit = trustworthy ? 2 : 8;
   const costs: Partial<Record<number, number>> = {};
-  for (const n of [2, 3, 4, 5, 6, 8, 9, 10, 11, 12]) {
-    costs[n] = n === reading.value ? 0 : commit;
+  for (const n of VALID_TOKEN_VALUES) {
+    costs[n] = n === value ? 0 : 2;
   }
   return { hasToken: true, costs };
 }
@@ -533,6 +522,13 @@ export function readFrame(
 
   const resourceCosts = classifyBoardRelative(observations);
 
+  // Bundled examples plus anything the player taught it about their own set.
+  // Their own board's examples go FIRST so that, all else equal, a template
+  // photographed from the set actually on the table wins the tie.
+  const templates = options.learnedTemplates
+    ? [...options.learnedTemplates, ...TOKEN_TEMPLATES]
+    : TOKEN_TEMPLATES;
+
   const wanted = options.decodeTokensFor ? new Set(options.decodeTokensFor) : null;
   const evidence: HexEvidence[] = observations.map((_, index) => {
     const base = {
@@ -541,7 +537,7 @@ export function readFrame(
       hasToken: hasToken[index],
     };
     if (!wanted || wanted.has(index)) {
-      return { ...base, tokenCost: readToken(buffer, h, index, scale).costs };
+      return { ...base, tokenCost: readToken(buffer, h, index, scale, templates).costs };
     }
     return { ...base, tokenCost: {} };
   });
