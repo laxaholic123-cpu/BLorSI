@@ -289,6 +289,32 @@ describe('tokenCropRects', () => {
     }
   });
 
+  it('makes every crop SQUARE, whatever the photo shape', () => {
+    // The bug this pins: computing the half-width in normalised space and then
+    // multiplying by width for x and height for y gives the axes different
+    // scales on any non-square photo. On a 3072x4080 one that stretched each
+    // crop half again as tall as it was wide, so a "token" crop reached into
+    // the tiles above and below — and at the edges into the sea frame, which is
+    // how an interior hex came back reading "3:1".
+    for (const img of [
+      { width: 3072, height: 4080 },
+      { width: 4080, height: 3072 },
+      { width: 1000, height: 1000 },
+    ]) {
+      for (const r of tokenCropRects(CORNERS, img)) {
+        expect(r.width).toBe(r.height);
+      }
+    }
+  });
+
+  it('sizes the crop from the board, not from the photo', () => {
+    // A token is a fixed fraction of a hex, so the crop must scale with the
+    // board. A fixed pixel box would clip a close-up and miss a distant one.
+    const big = tokenCropRects(CORNERS, { width: 3000, height: 3000 });
+    const small = tokenCropRects(CORNERS, { width: 1500, height: 1500 });
+    expect(big[0]!.width).toBeGreaterThan(small[0]!.width * 1.8);
+  });
+
   it('centres each crop on its own hex', () => {
     // The whole point of per-token crops is that the hex is decided before the
     // recogniser is asked. If a crop is not centred on its hex, that guarantee
