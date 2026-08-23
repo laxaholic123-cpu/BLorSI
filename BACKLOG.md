@@ -179,7 +179,31 @@ may be more or less done than it looks.
    numbers. Even with all four fixed, blob counting tops out around half, because
    pips are a few pixels across on a phone photo of a whole board.
 
-   That is why OCR went in. Awaiting a device run to find out whether it lands.
+   **OCR went in and failed too**, three ways: the whole photo, the cropped board
+   at eight rotations, and one crop per token — 1 of 17 at best. It reads
+   text-SHAPED things, and a serif digit on a cream circle with pips beneath it
+   is not one. Detection is the blocker, not recognition.
+
+   **Blob counting then got a fair second chance and stays dead.** The face
+   locator was the suspect — it finds the token by BRIGHTNESS, and a gold wheat
+   field is as bright as a cream token, so it was locating 5 of 18 faces and
+   silently falling back to a guess. Locating by SATURATION takes that to 16 of
+   18 and decoding barely moves: best 7/18 against 6/18, across a full sweep of
+   disc radii and rim rejection. Pips never exceed 10 of 18. Closed.
+
+   **What does work: matching the cleaned DIGIT SHAPE against examples of it.**
+   Cross-photo, learning from one capture and reading a different one of the same
+   board under glare: 7 of 16 correct overall, but **6 of 6 correct among those
+   it accepted**, with 10 declined for the player to tap. The score is honest —
+   the threshold that separated right from wrong on the pilot held on a photo it
+   had never seen, which is exactly what "confidence was a lie" was not. Using
+   more examples per value improved it, so a larger library should help.
+
+   Probe-only so far (`tools/digit_match_probe.py`); nothing is wired into the
+   app. The open question is whether dedicated close-up photos of each token —
+   a "teach it your board" step — lift the accepted share enough to be worth the
+   flow, or whether terrain-only scanning plus tapping 18 numbers is simply
+   better value.
 
    No failing photo was kept, because the capture path decoded and discarded it,
    so there is nothing to measure. The review screen now has an opt-in "Save this
