@@ -1,0 +1,37 @@
+"""The seven captures, their corner-hex centres, and the board they all show.
+
+Every capture is the SAME physical board, so one truth array serves all of them.
+Corners are the centres of hexes 0, 2, 18, 16 (TL TR BR BL) in normalised image
+space, read off a 5% grid overlay and then CHECKED by rendering all 19 crops —
+a stale corner set silently puts every crop on bare tile, which once produced a
+confident 3/18 measured against tiles that held no tokens at all.
+
+CROP PADDING is why it matters here. The crop was sized at exactly
+TOKEN_RADIUS * scale with no margin, so a token sitting off-centre on its tile
+was clipped by the crop boundary before anything downstream ran — 8 of 18 on
+the reference capture, and the clipped edge is also where the tile crescent
+that wrecks thresholding comes from.
+"""
+
+TRUTH = [4, 11, 6, 5, 10, 11, 12, 4, 5, None, 8, 10, 2, 9, 3, 3, 6, 8, 9]
+
+#: Enough margin that an off-centre token is still whole inside the crop.
+CROP_PADDING = 1.45
+
+SHOTS = {
+ '10b3b22d': ('tools/captures/10b3b22d-c658-44e2-9fb6-5d7d88648dbc.jpg',
+   [(0.388,0.335),(0.634,0.335),(0.629,0.655),(0.370,0.655)]),
+ '1d41f580': ('tools/captures/1d41f580-d734-458d-ac1d-1ea3665b61f3.jpg',
+   [(0.393,0.335),(0.630,0.335),(0.626,0.642),(0.370,0.642)]),
+ '1d6634b3': ('tools/captures/1d6634b3-61da-4a06-abdf-cdb4b2e0ec24.jpg',
+   [(0.412,0.363),(0.632,0.363),(0.632,0.651),(0.393,0.651)]),
+ '668f66fa': ('tools/captures/668f66fa-336e-4750-b8b5-7a8ca72d02c4.jpg',
+   [(0.36033829841462417,0.3151133873349144),(0.6301235448161349,0.31775884961325024),
+    (0.6458563277912783,0.662966817220052),(0.37439455060886506,0.6641293310740636)]),
+ '6c385815': ('tools/captures/6c385815-c438-4f9e-8be5-10f704bab41b.jpg',
+   [(0.368,0.321),(0.626,0.324),(0.610,0.653),(0.351,0.647)]),
+ 'PXL2040':  ('tools/captures/PXL_20260822_204040222.jpg',
+   [(0.346,0.318),(0.629,0.318),(0.637,0.690),(0.337,0.690)]),
+ 'a56c00ec': ('tools/captures/a56c00ec-cb8c-4353-b5b4-3ac2f5572b4a.jpg',
+   [(0.343,0.326),(0.589,0.312),(0.600,0.639),(0.354,0.647)]),
+}

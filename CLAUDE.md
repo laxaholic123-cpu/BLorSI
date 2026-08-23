@@ -97,25 +97,51 @@ readable digit to three integers. Two findings came straight off that picture:
   the digit and pips never do.
 - The earlier matching result was measured on those contaminated samples.
 
-**Matching the cleaned digit shape is the one thing that works.** Centre and
-scale on the DIGIT's own extent, not the face, so print size, camera distance
-and face-centring all drop out. Measured cross-photo — learn from one capture,
-read a different one of the same board under different light with glare:
+**9. The crop had no padding, so it was CLIPPING the tokens.** Found by a human
+looking at the contact sheet, not by any measurement here. The crop was sized at
+exactly `TOKEN_RADIUS * scale`, and tokens are dropped on tiles by hand, so any
+token sitting off-centre ran off the edge of its own crop — 8 of 18 on the
+reference capture. It is also where the crescent in cause 8 comes from: a clipped
+token pulls tile into the sampled disc. `CROP_PADDING = 1.45` makes every token
+whole in every crop across all seven captures. **Render the crops and LOOK at
+them** — this cost weeks and was visible the whole time.
 
-    7 of 16 correct overall
-    6 of 6 correct among those it ACCEPTED (score >= 0.91)
-    10 left for the player to tap
+**Matching the cleaned digit shape works, and is the path forward.** Centre and
+scale on the DIGIT's own extent, not the face, so print size, camera distance and
+face-centring all drop out. Measured LEAVE-ONE-PHOTO-OUT across seven captures of
+the same board — library built from six, reading the seventh, seven times over,
+so nothing is ever matched against an example of itself:
 
-**The score is honest, and that is new.** Cause 4 was "confidence was a lie" —
-nineteen tiles confident, fourteen wrong. Here the threshold separated right
-from wrong perfectly on the pilot AND held on a photo it had never seen. A
-reading it commits to has been right every time so far; it declines the rest
-rather than guessing. Accuracy can stay mediocre and still be useful, because a
-wrong number is expensive and a blank one costs a tap.
+    89% correct overall (99/111)
+    100% precision on what it ACCEPTS (95/95 at score >= 0.91)
+    86% of all tokens auto-filled
+    about 2 taps per board left for the player
 
-Using every example rather than one per value went 5/5 to 6/6 accepted, so the
-trend rewards a larger library — which is what dedicated per-tile photos would
-give. `tools/digit_match_probe.py`.
+**Every accepted error before ink disambiguation was 6-vs-9**, all six of them,
+at margins from +0.000 to +0.014. That is not a defect to tune away: a 6 turned
+180 degrees IS a 9, and rotation-invariant matching cannot separate them by
+shape. Ink colour settles it completely and took precision from 93.7% to 100%.
+The rotation invariance that makes this approach work is exactly what creates
+the one ambiguity, and the fix for it already existed in
+`ocrTokens.disambiguateWithInk`.
+
+**The threshold is a plateau, not a knife-edge**, which is what makes it
+trustworthy. Precision climbs smoothly — 92.5% at 0.80, 96% at 0.85, 97% at
+0.88, 98% at 0.90 — then holds at 100% across 0.91, 0.92 and 0.94, trading only
+coverage (86%, 85%, 81%). A threshold that only worked at one value would be a
+coincidence.
+
+**The score is honest, and that is the part that matters.** Cause 4 was
+"confidence was a lie" — nineteen tiles confident, fourteen wrong. This one
+declines rather than guessing, and a declined token costs a tap while a wrong one
+is expensive and invisible. `tools/digit_match_probe.py`, corners and ground
+truth in `tools/board_shots.py`.
+
+**Caveat, and it is a real one.** All seven captures are of the SAME physical
+board. This is validated across photos — different angles, distances, lighting
+and glare — but NOT across Catan sets. A different printing may need its own
+examples, which is the argument for a "teach it your board" step rather than a
+library shipped in the app.
 
 **Even with all four fixed, blob counting reads 9 of 18.** That is roughly its
 ceiling: the pips are a few pixels across and no amount of tuning recovers them.
