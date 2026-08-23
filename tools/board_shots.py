@@ -35,3 +35,23 @@ SHOTS = {
  'a56c00ec': ('tools/captures/a56c00ec-cb8c-4353-b5b4-3ac2f5572b4a.jpg',
    [(0.343,0.326),(0.589,0.312),(0.600,0.639),(0.354,0.647)]),
 }
+
+
+#: A capture the reader does BADLY on, kept deliberately as a regression case.
+#:
+#: Dimmer and warmer than the seven above, and every RED token (the two 6s and
+#: the two 8s, hexes 2/10/16/17) reads as nothing at all. The sampled disc
+#: overruns the face onto the tile, mid-green tile comes in under the Otsu cut
+#: and forms a crescent of "ink", the digit touches the crescent, and the merged
+#: blob reaches the disc boundary and is rejected.
+#:
+#: In the game this was captured from, that made the deck solver guess between
+#: two 6s and two 8s with no evidence, and it got two of the four wrong — which
+#: the player reported as "it mixed up 6 and 8". It was not a misread. Nothing
+#: was read at all.
+#:
+#: NOT in the bundled library on purpose: it is the held-out test. Anything
+#: claiming to fix red-token sampling has to move `HARD_CASE` without moving
+#: precision on SHOTS.
+HARD_CASE = ('tools/captures/956aea63-2b6f-43d3-9791-60535028ca65.jpg',
+   [(0.374,0.320),(0.629,0.316),(0.629,0.654),(0.362,0.658)])

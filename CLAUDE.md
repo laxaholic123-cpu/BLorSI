@@ -166,7 +166,46 @@ correct and unrelated; the genuinely unsure numbers were the ones NOT flagged.
 A vague "needs your attention" that does not say which part of a hex is unsure
 trains people to ignore it.
 
-**6 vs 8 is the pair with no side-signal.** Both are printed red, so ink says
+**The reported "6 vs 8 mix-up" was not a misread — nothing was read at all.**
+Diagnosed from the capture the player saved (`HARD_CASE` in
+`tools/board_shots.py`). All four RED tokens — the two 6s and the two 8s,
+hexes 2/10/16/17 — returned NO shape. The deck solver then had to place two 6s
+and two 8s across four hexes with zero evidence, and got two wrong. That is a
+50/50 guess presenting as a recognition error, and it is why the symptom looked
+like a shape collision when the shape was never sampled.
+
+The mechanism: the sampled disc is sized at `1/CROP_PADDING` of the crop, which
+is right only if the homography scale is exact, and it never is — corners are
+tapped by hand. A few percent generous and the disc overruns the face onto
+tile. Mid-green tile (luminance ~140) falls under the Otsu cut (~163) and
+becomes a crescent of "ink". When the digit touches the crescent they merge
+into one blob that reaches the disc boundary, rim rejection discards it, and
+the token reads as nothing. Black-ink tokens survive because their digit
+usually stays clear of the crescent.
+
+**Five fixes tried, none shippable. Recorded so they are not retried:**
+
+    measure the radius from face pixels   4-7/18   far worse; the face mask is
+                                                   not a clean disc, ink is
+                                                   excluded from it
+    shrink the disc globally              worse at every value; 0.90 is optimal
+    fill the face's holes                 7/126; wrong approach and my flood
+                                                   fill leaked
+    exclude coloured tile from the ink    recovers 2 of 4, but precision falls
+                                          from 100% to 95% — a bad trade when a
+                                          wrong number is expensive and a blank
+                                          costs a tap
+    the same, but only as a FALLBACK      precision preserved at 100%, recovers
+                                          shapes, but every recovered shape
+                                          scores under the accept threshold, so
+                                          it adds no auto-fill at all
+
+The honest read is that face localisation needs to fit an actual circle to the
+face boundary rather than take a centroid and assume a radius. That is real
+work, not a tweak, and four tweaks have now failed at it.
+
+**6 vs 8 is the pair with no side-signal**, which is why losing their shapes is
+worse than losing any other token's.** Both are printed red, so ink says
 nothing; both carry five pips, so pip direction says nothing. Shape alone
 separates them. Hole counting looks like the answer and is not: on clean digit
 masks a 6 shows exactly one loop every time (7/7) but an 8 shows two in only 5
