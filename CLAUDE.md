@@ -239,6 +239,38 @@ It can CONFIRM an 8, never rule one out. Across the seven reference captures
 produced two 6/8 errors, so that margin does not hold everywhere and there is
 no capture of the failure yet.
 
+**Device run, 25 Aug 2026: 17/19 exact, 19/19 terrain, and 16/16 of the
+high-confidence readings correct.** The two errors were hexes 10 and 16, a 6/8
+swap, and BOTH were flagged low — so the player was pointed at exactly the
+tiles that were wrong. That is the whole design working on hardware: precision
+where it commits, and honest silence where it does not.
+
+**The red-token failure is real, not a measurement artifact.** Settled by
+`DEVICE_RUN` in `tools/board_shots.py`, which carries the corners the player
+marked in the app rather than my by-eye estimates. Those corners reproduce the
+device result exactly: 15 of 18 sampled, all 15 accepted and correct, hexes
+10/16/17 declined. Rendering the masks shows why, and it is not about red ink:
+every mask carries a tile crescent, and a token fails when its digit happens to
+TOUCH the crescent, merging into one rim-touching blob that gets rejected. Hex
+2 is also a red 6 and read fine at 0.973 — its digit sat clear of the crescent.
+
+**Eight fixes for that crescent have now been measured, and all are worse than
+shipping nothing.** Measured radius, global disc shrink, hole filling, hue-
+excluded ink, hue as a fallback, circle fit with a global predicate, circle fit
+with an adaptive predicate, and removing a rim annulus before labelling. The
+current sampler is a local optimum. Anyone attacking this again should start by
+questioning the FRAME — the crop, the threshold, the rim-rejection rule as a
+whole — rather than tuning inside it, because the inside has been swept.
+
+**Two screens answering different questions with the same word.** The capture
+screen said "5 tiles came out uncertain" and the next screen said "3 numbers to
+check". Neither was wrong: the first counted `evidenceConfidence` below
+threshold, which is about whether ANOTHER SHOT would help, and the second
+counted solver disagreement, which is about what needs fixing. Nothing was
+broken, which is what made it corrosive — the player cannot tell which number
+to believe. The capture screen now counts what the review screen will flag and
+mentions the thin-evidence count separately.
+
 **Caveat, and it is a real one.** All seven captures are of the SAME physical
 board. This is validated across photos — different angles, distances, lighting
 and glare — but NOT across Catan sets. A different printing may need its own

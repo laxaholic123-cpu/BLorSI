@@ -830,7 +830,25 @@ ${JSON.stringify(payload)}`,
   }
 
   if (phase === 'review') {
-    const unsure = confidences.filter(c => c < CONFIDENCE_THRESHOLD).length;
+    /**
+     * Count what the player will actually be asked to fix.
+     *
+     * This used to count `evidenceConfidence < CONFIDENCE_THRESHOLD`, which
+     * measures how decisive the raw EVIDENCE was before the constraint solver
+     * ran. That is a real quantity and it answers a real question — "would
+     * another shot help?" — but it is not the question this sentence appears to
+     * be answering, and it disagrees with the next screen. Reported from a
+     * real game: "it said 5 tiles came out uncertain, then the review board
+     * said 3 numbers to check."
+     *
+     * Both numbers were right about different things, which is the worst kind
+     * of inconsistency: nothing is broken, so nobody can tell which to believe.
+     * The count now matches the review screen, and the sentence below says
+     * which ones a second shot would help with separately.
+     */
+    const unsure = board.filter(h => h.confidence === 'low').length;
+    /** Hexes where the evidence itself was thin, so another angle may settle it. */
+    const thinEvidence = confidences.filter(c => c < CONFIDENCE_THRESHOLD).length;
     return (
       <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top + (Platform.OS === 'web' ? 60 : 8) }]}>
         <View style={[s.header, { borderBottomColor: colors.border }]}>
@@ -847,7 +865,7 @@ ${JSON.stringify(payload)}`,
           <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'left' }]}>
             {unsure === 0
               ? `Read all 19 tiles from ${shots} shot${shots === 1 ? '' : 's'}. Check it over — you can correct anything on the next screen.`
-              : `${unsure} tile${unsure === 1 ? '' : 's'} came out uncertain. Another shot from a different angle usually settles them, or you can correct them on the next screen.`}
+              : `${unsure} tile${unsure === 1 ? '' : 's'} need${unsure === 1 ? 's' : ''} checking on the next screen.${thinEvidence > unsure ? ` Another shot from a different angle would firm up ${thinEvidence} of them.` : ' Another shot from a different angle may help.'}`}
           </Text>
 
           <View style={[s.card, { backgroundColor: colors.card, borderColor: colors.border }]}>

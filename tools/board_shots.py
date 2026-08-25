@@ -55,3 +55,22 @@ SHOTS = {
 #: precision on SHOTS.
 HARD_CASE = ('tools/captures/956aea63-2b6f-43d3-9791-60535028ca65.jpg',
    [(0.374,0.320),(0.629,0.316),(0.629,0.654),(0.362,0.658)])
+
+
+#: A real device run, with the corners the PLAYER marked in the app's own UI.
+#:
+#: The most valuable capture in the set, because it settles a question the
+#: hand-marked ones could not: whether the red-token failure was real or an
+#: artifact of my by-eye corner estimates. It is real. Run through the shipped
+#: reader these corners reproduce the device result exactly — 15 of 18 sampled,
+#: all 15 correct and accepted, hexes 10/16/17 declined.
+#:
+#: What happened in the game: those three declined, the deck solver placed the
+#: remaining {6, 8, 8} across them, and swapped hexes 10 and 16. All three were
+#: flagged low confidence, so the player was pointed at the two wrong ones —
+#: which is the confidence fix working as designed on real hardware.
+DEVICE_RUN = ('tools/captures/05a0df0c-740a-4189-903a-c731c4939180.jpg',
+   [(0.3718845199367447, 0.3147354295518663),
+    (0.6657661412209779, 0.2969728064158606),
+    (0.6601292996088799, 0.6844223700629339),
+    (0.35632224933923157, 0.6901777188740078)])
