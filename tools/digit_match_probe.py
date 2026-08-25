@@ -60,7 +60,10 @@ def locate_sat(rgb, size):
     mx = a.max(2)
     mn = a.min(2)
     sat = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1e-6), 0)
-    mask = (sat < 0.30) & (mx > 0.50)
+    # 0.45, not 0.30: the printed cream sits at 0.33-0.37 saturation, so a
+    # 0.30 cut excluded the face itself and the centroid was computed over
+    # stray pixels. Must match FACE_MAX_SATURATION in digitSample.ts.
+    mask = (sat < 0.45) & (mx > 0.50)
     yy, xx = np.mgrid[0:size, 0:size]
     c = (size - 1) / 2.0
     # Just wide enough for the face, so pale tile borders stay out of it.

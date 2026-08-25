@@ -254,8 +254,35 @@ every mask carries a tile crescent, and a token fails when its digit happens to
 TOUCH the crescent, merging into one rim-touching blob that gets rejected. Hex
 2 is also a red 6 and read fine at 0.973 — its digit sat clear of the crescent.
 
-**Eight fixes for that crescent have now been measured, and all are worse than
-shipping nothing.** Measured radius, global disc shrink, hole filling, hue-
+**THE CRESCENT WAS A SYMPTOM. The face predicate never matched the face.**
+Found by rendering the pipeline stage by stage for a player who asked to see it,
+then checking the one number nobody had checked: how much of each crop actually
+passes the face test. Answer: **1-2.5%**. The printed cream measures 0.33-0.37
+saturation across all eight captures — warm paper under warm light, not neutral
+grey — and the cut was `sat < 0.30`. The face failed its own test on every
+photo ever taken. `locateFaceBySaturation` was returning the centroid of
+whatever stray pixels did pass, which on one token sat 95px from the token in a
+323px crop. The "crescent" was simply a disc centred on nothing in particular.
+
+It still read 15 of 18, which is exactly why it survived: the disc was large
+enough to catch the digit anyway most of the time. A token failed only when the
+misplacement happened to leave the digit touching the disc edge.
+
+Moving the cut to 0.45 (tiles sit at 0.53 median, so they still fail):
+
+    sampled     111/126 -> 126/126, and 18/18 on both the device run and HARD
+    overall     89% -> 96%
+    coverage    86% -> 94%
+    precision   100% -> 100%
+
+Every one of the eight "fixes" below was tuning the geometry of a disc that was
+in the wrong place. **Before optimising a stage, verify its input predicate
+actually fires.** This is the third time in this file that a silent
+never-matches predicate has cost weeks — `locateBrightDisc` found 5 of 18 faces,
+`decodeToken` called everything confident, and now this.
+
+**Eight fixes for that crescent were measured before the real cause was found,
+and all were worse than shipping nothing.** Measured radius, global disc shrink, hole filling, hue-
 excluded ink, hue as a fallback, circle fit with a global predicate, circle fit
 with an adaptive predicate, and removing a rim annulus before labelling. The
 current sampler is a local optimum. Anyone attacking this again should start by

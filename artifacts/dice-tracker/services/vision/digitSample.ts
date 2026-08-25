@@ -63,6 +63,29 @@ const RIM_REACH = 0.99;
 /** A pip is smaller than this fraction of the largest blob. */
 const PIP_SIZE_CUT = 0.5;
 
+/**
+ * Saturation below which a bright pixel counts as token FACE rather than tile.
+ *
+ * This was 0.30 and the face never passed it. Measured across eight captures,
+ * the printed cream sits at 0.33-0.37 saturation — it is warm paper under warm
+ * light, not neutral grey — so the predicate excluded the very thing it was
+ * meant to find. It passed 1-2.5% of each crop, all of it stray pixels, and
+ * `locateFaceBySaturation` returned the centroid of THAT. The disc was landing
+ * up to 95px from the token in a 323px crop, and the "tile crescent" that cost
+ * so much effort was simply a disc centred on nothing in particular.
+ *
+ * It still read 15 of 18 tokens, which is why this survived so long: the disc
+ * was big enough to catch the digit anyway most of the time. Tokens failed when
+ * the misplacement happened to put the digit against the disc edge.
+ *
+ * At 0.45 the face passes (96% of its pixels) and tiles still do not (they sit
+ * at 0.53 median). Measured end to end, this alone took every capture to 18/18
+ * sampled, references 111/126 -> 126/126, and coverage 86% -> 94% with
+ * precision unchanged at 100%. Anything from 0.40 to 0.55 gives the same, so
+ * this sits mid-plateau.
+ */
+const FACE_MAX_SATURATION = 0.45;
+
 export interface SampledDigit {
   /** Packed polar shape, ready for `matchDigit`. */
   bits: Uint32Array;
@@ -106,7 +129,7 @@ export function locateFaceBySaturation(
       const max = Math.max(r, g, b);
       if (max <= 127) continue;
       const min = Math.min(r, g, b);
-      if ((max - min) / max >= 0.3) continue;
+      if ((max - min) / max >= FACE_MAX_SATURATION) continue;
       sumX += x;
       sumY += y;
       count++;
