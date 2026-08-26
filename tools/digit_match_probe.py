@@ -49,7 +49,7 @@ FACE_FRACTION = 1.0 / CROP_PADDING
 RIM_REACH = 0.99
 #: Commit above this, decline below it. A declined token costs a tap; a wrong
 #: one is expensive and invisible.
-ACCEPT_SCORE = 0.91
+ACCEPT_SCORE = 0.88
 #: Use ink colour to settle 6 against 9.
 USE_INK = True
 

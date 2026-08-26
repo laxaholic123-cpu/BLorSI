@@ -74,3 +74,21 @@ DEVICE_RUN = ('tools/captures/05a0df0c-740a-4189-903a-c731c4939180.jpg',
     (0.6657661412209779, 0.2969728064158606),
     (0.6601292996088799, 0.6844223700629339),
     (0.35632224933923157, 0.6901777188740078)])
+
+
+#: A SECOND physical arrangement of the same set — the first time the tokens
+#: have been photographed anywhere other than one fixed layout.
+#:
+#: Its truth was never entered by hand. It was read off the crops and then
+#: VALIDATED against the token bag: exactly one 2, one 12 and two of everything
+#: else, which it matches exactly. A misread would almost certainly break that,
+#: so the bag is a free check on any board whose numbers are all recovered.
+#:
+#: Ground truth is a DIAGNOSTIC feature. Real players never set it, so anything
+#: that depends on it is a measurement tool, not a product path.
+BOARD_B = ('tools/captures/ed077f23-a9a3-4cd9-8d45-11f83544a907.jpg',
+   [(0.3553182772855668, 0.2984845164465526),
+    (0.6707862025652187, 0.2894142562624008),
+    (0.6547219258332814, 0.7083182392423114),
+    (0.35381221866711116, 0.6841307576497395)])
+TRUTH_B = [6, 6, 11, 10, 5, 4, 12, 8, 5, None, 11, 8, 9, 10, 4, 2, 3, 9, 3]

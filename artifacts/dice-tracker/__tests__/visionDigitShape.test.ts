@@ -257,7 +257,11 @@ describe('the bundled library', () => {
   });
 
   it('uses an accept threshold on the measured plateau', () => {
-    expect(ACCEPT_SCORE).toBeGreaterThanOrEqual(0.91);
-    expect(ACCEPT_SCORE).toBeLessThanOrEqual(0.94);
+    // Measured over 180 readings across ten captures of TWO board layouts:
+    // precision is 100% from 0.84 to 0.93 and breaks at 0.80. The bound below
+    // is the plateau, not a preference — moving outside it without re-running
+    // tools/hole_penalty_probe.py trades away the one property that matters.
+    expect(ACCEPT_SCORE).toBeGreaterThanOrEqual(0.84);
+    expect(ACCEPT_SCORE).toBeLessThanOrEqual(0.93);
   });
 });

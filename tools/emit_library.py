@@ -14,7 +14,7 @@ sys.path.insert(0, 'tools')
 import numpy as np
 
 import digit_match_probe as D
-from board_shots import SHOTS, TRUTH
+from board_shots import SHOTS, TRUTH, BOARD_B, TRUTH_B
 
 assert D.SECTORS == 64 and D.RINGS == 12, 'packing assumes 12x64'
 
@@ -33,11 +33,16 @@ def pack(shape):
     return np.array(words, dtype='>u4').tobytes()
 
 
-bank = {n: D.shapes(p, c) for n, (p, c) in SHOTS.items()}
+bank = {n: (D.shapes(p, c), TRUTH) for n, (p, c) in SHOTS.items()}
+# Board B is a different ARRANGEMENT of the same tokens: same digits, different
+# tiles beneath them, different angles and glare. Measured neutral on board A,
+# which is already saturated at ~5 captures — kept because it is the only
+# second-layout evidence there is, and 18 more templates cost ~2ms.
+bank['boardB'] = (D.shapes(BOARD_B[0], BOARD_B[1]), TRUTH_B)
 entries = []
-for name, faces in bank.items():
+for name, (faces, truth) in bank.items():
     for i, (shape, _red) in sorted(faces.items()):
-        entries.append((TRUTH[i], base64.b64encode(pack(shape)).decode(), f'{name} hex{i}'))
+        entries.append((truth[i], base64.b64encode(pack(shape)).decode(), f'{name} hex{i}'))
 entries.sort(key=lambda e: (e[0], e[2]))
 
 counts = {}

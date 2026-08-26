@@ -225,13 +225,29 @@ export function matchDigit(
 /**
  * Lowest score worth acting on.
  *
- * Measured leave-one-photo-out over seven captures, precision climbs smoothly
- * with the threshold — 92.5% at 0.80, 96% at 0.85, 97% at 0.88, 98% at 0.90 —
- * and then holds at 100% across 0.91, 0.92 and 0.94, giving up only coverage
- * (86%, 85%, 81%). A plateau rather than a knife-edge, which is what makes it
- * worth trusting; 0.91 sits at its near edge with room on both sides.
+ * Re-measured over 180 readings, leave-one-capture-out across TEN captures of
+ * TWO different board arrangements — the first time this has been calibrated
+ * against more than one physical layout:
+ *
+ *     0.80   98% auto-filled   98.9% precise   <- breaks
+ *     0.84   97%               100%
+ *     0.88   97%               100%
+ *     0.90   95%               100%
+ *     0.91   94%               100%
+ *
+ * 0.88 sits at the top of the 100% plateau: it keeps every point of coverage
+ * the lower cuts buy while staying 0.08 clear of the value where precision
+ * actually fails. It was 0.91, which was costing about half a tap per board
+ * for nothing — two correct readings on an unseen board were declined at 0.884
+ * and 0.896.
+ *
+ * Precision is the property being protected, not accuracy. A wrong number is
+ * invisible and skews the stats; a declined one costs one tap. Do not lower
+ * this without re-running `tools/hole_penalty_probe.py`, and note it is
+ * calibrated against the LOCATOR — it moved once already when face location
+ * was fixed.
  */
-export const ACCEPT_SCORE = 0.91;
+export const ACCEPT_SCORE = 0.88;
 
 /**
  * Deliberately ignores `margin`, and that is not an oversight.
