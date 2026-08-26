@@ -21,6 +21,7 @@ import {
   validateBoardComposition,
   type HexEvidence,
 } from '@/services/boardConstraints';
+import { getBuildingStatesAtTurn } from '@/services/catanStats';
 import type { ResourceType } from '@/types/models';
 
 const decisive = { grain: 2, wool: 30, lumber: 28, brick: 26, ore: 24, desert: 22 };
@@ -298,5 +299,53 @@ describe('confidence tells the player which numbers to check', () => {
     const { hexes } = reconcileBoardFromEvidence(evidenceWithTokensOn([]));
     const desert = hexes.find(h => h.resource === 'desert');
     expect(desert?.confidence).toBe('high');
+  });
+});
+
+describe('two buildings on the same hex are two buildings', () => {
+  /**
+   * The bug this pins understated a player's production by half.
+   *
+   * `getBuildingStatesAtTurn` keys buildings by `hexIdentifiers[0]` and keeps
+   * only the latest event per key. The scan screen used to write
+   * `hexIndices.map(String)`, making the key the settlement's LOWEST hex index
+   * — and the 54 intersections collapse onto only 19 such keys. Two settlements
+   * on different corners of one hex, which is legal and a common opening, then
+   * shared a key and the second erased the first: expectation computed from one
+   * building instead of two, which INFLATES apparent luck.
+   */
+  const base = {
+    sessionId: 's', playerId: 'p1', eventType: 'initialSettlement' as const,
+    turnNumber: 0, timestamp: '2026-08-25T00:00:00.000Z',
+    productionWeight: 1, robberBlocked: false,
+  };
+
+  it('keeps both when their ids differ', () => {
+    const states = getBuildingStatesAtTurn('p1', 0, [
+      { ...base, id: 'a', hexIdentifiers: ['loc-a', '3', '4', '7'], affectedNumbers: [5, 9] },
+      { ...base, id: 'b', hexIdentifiers: ['loc-b', '3', '6', '10'], affectedNumbers: [8, 4] },
+    ]);
+    expect(states).toHaveLength(2);
+  });
+
+  it('collapses them when the key is only the shared hex — the old behaviour', () => {
+    // Kept as a statement of WHY the id must lead, not as desired behaviour.
+    const states = getBuildingStatesAtTurn('p1', 0, [
+      { ...base, id: 'a', hexIdentifiers: ['3', '4', '7'], affectedNumbers: [5, 9] },
+      { ...base, id: 'b', hexIdentifiers: ['3', '6', '10'], affectedNumbers: [8, 4] },
+    ]);
+    expect(states).toHaveLength(1);
+  });
+
+  it('still lets a city upgrade REPLACE its settlement rather than add one', () => {
+    // The same keying that must separate two buildings must also join a
+    // settlement to its own upgrade.
+    const states = getBuildingStatesAtTurn('p1', 5, [
+      { ...base, id: 'a', hexIdentifiers: ['loc-a', '3'], affectedNumbers: [5] },
+      { ...base, id: 'b', eventType: 'cityUpgrade', turnNumber: 5,
+        hexIdentifiers: ['loc-a', '3'], affectedNumbers: [5], productionWeight: 2 },
+    ]);
+    expect(states).toHaveLength(1);
+    expect(states[0]!.productionWeight).toBe(2);
   });
 });

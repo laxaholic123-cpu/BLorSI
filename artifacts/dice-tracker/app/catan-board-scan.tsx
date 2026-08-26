@@ -549,7 +549,25 @@ export default function CatanBoardScanScreen() {
             turnNumber: 0,
             timestamp: new Date().toISOString(),
             affectedNumbers,
-            hexIdentifiers: settlement.hexIndices.map(String),
+            /**
+             * The unique settlement id FIRST, then the hexes it touches.
+             *
+             * `getBuildingStatesAtTurn` keys buildings by `hexIdentifiers[0]`
+             * and keeps only the latest event per key. This used to write
+             * `hexIndices.map(String)`, so the key was the settlement's LOWEST
+             * hex index — and 54 intersections collapse onto just 19 such keys.
+             * Two settlements on different corners of the same hex, which is
+             * legal and a common opening, therefore shared a key and the second
+             * silently erased the first. That player's expected production was
+             * computed from one building instead of two, which understates
+             * expectation and inflates their apparent luck — corrupting exactly
+             * the claim this app exists to make.
+             *
+             * `settlement.locationId` was already a unique id and was already
+             * on the object; it simply was not used. Only element [0] is ever
+             * read, so the hex indices stay for anything that wants them.
+             */
+            hexIdentifiers: [settlement.locationId, ...settlement.hexIndices.map(String)],
             productionWeight: 1,
             resourceType: primaryResource,
             robberBlocked: false,
