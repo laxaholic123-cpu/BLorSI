@@ -870,7 +870,19 @@ ${JSON.stringify(payload)}`,
 
           <View style={[s.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
             {board.map((hex, i) => {
-              const sure = confidences[i]! >= CONFIDENCE_THRESHOLD;
+              /**
+               * The SAME measure the count above uses, and the same one the
+               * next screen flags amber.
+               *
+               * This row used to test `evidenceConfidence >= CONFIDENCE_THRESHOLD`
+               * while the count tested solver agreement, so a board read
+               * perfectly could say "Read all 19 tiles" and still show question
+               * marks beside several of them — reported from a real 19/19 run.
+               * Thin evidence is worth knowing ("another shot would help") but
+               * it is not the same claim as "this reading needs checking", and
+               * a row icon is read as the second.
+               */
+              const sure = hex.confidence !== 'low';
               return (
                 <View
                   key={hex.index}
