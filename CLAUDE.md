@@ -298,6 +298,40 @@ broken, which is what made it corrosive — the player cannot tell which number
 to believe. The capture screen now counts what the review screen will flag and
 mentions the thin-evidence count separately.
 
+**THE TOKEN BAG FINISHES THE JOB. 180/180 tokens, 10/10 boards perfect.**
+Measured leave-one-capture-out across ten captures of two layouts. The reader
+alone gets 174/180 accepted at 100% precision; the six it declines are then
+FORCED by the bag, because the deck is fixed — one 2, one 12, two of everything
+else — so every committed number removes a possibility from the ones it did not.
+
+This only works because at most ONE token is declined per board. One empty slot
+leaves exactly one value, so nothing is guessed. That is why lowering the accept
+threshold mattered more than the coverage number suggests: 94% -> 97% is what
+keeps declines to one. The device run that swapped a 6 and an 8 had THREE
+declines with {6,8,8} left over — the bag could not force that, so it guessed.
+
+Coverage is therefore not a comfort metric. It is what makes the constraint
+solver exact rather than probabilistic.
+
+**Pip COUNT is still bad, and this is the interesting contrast with holes.**
+Both were dismissed early through the broken face predicate, so both deserved
+re-measuring. Only one recovered:
+
+    hole count   198/200  (99%)   was "an 8 shows both loops 5 times in 9"
+    pip count     58/144  (40%)   was "9 of 18, and that is its ceiling"
+
+The pip ceiling was REAL, not a measurement artifact. And note pip DIRECTION
+works at 98% while pip COUNT sits at 40% — direction needs only the centroid of
+whichever pips were found, count needs every one of them exactly. When
+re-testing an abandoned signal, ask which property of it you actually need.
+
+**Dead code with live tests.** `tokenDecode.ts` and six binaryOps helpers —
+`countHoles`, `splitGlyphsAndPips`, `filterNoise`, `locateBrightDisc`,
+`fallbackDisc`, `maskToDisc` — have no callers outside their own module, and 55
+tests still cover them. Passing tests on unused code are worse than plain dead
+code: they make it look supported. `locateBrightDisc` is the specific hazard,
+being the brightness-based face locator whose silent failure cost weeks.
+
 **Caveat, and it is a real one.** All seven captures are of the SAME physical
 board. This is validated across photos — different angles, distances, lighting
 and glare — but NOT across Catan sets. A different printing may need its own
