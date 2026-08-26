@@ -1,7 +1,7 @@
 /**
  * Turn recognised text into number tokens, one per hex.
  *
- * WHY OCR AT ALL, given `tokenDecode.ts` deliberately avoids it
+ * WHY OCR AT ALL, given the pip decoder deliberately avoided it
  * ------------------------------------------------------------
  * Counting pips, glyphs and holes is rotation-invariant, which OCR is not, and
  * that was a good reason to prefer it. But it needs the small features to
@@ -140,7 +140,7 @@ export function mapOcrToHexes(
  * Measured on a real board it found four items in a whole photo — two token
  * digits, both on UPRIGHT tokens, plus a parcel label in the background. Every
  * upside-down token was missed, and Catan tokens sit at every rotation, which
- * is exactly the property `tokenDecode.ts` was built to sidestep and OCR throws
+ * is exactly the property the pip decoder was built to sidestep and OCR throws
  * away. So the board is read at several angles and each pass is mapped back
  * here.
  *

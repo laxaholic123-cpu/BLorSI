@@ -1,10 +1,15 @@
 /**
- * Binary-image primitives: thresholding, connected components, hole counting.
+ * Binary primitives for reading a token crop.
  *
- * Pure — operates on plain arrays, no image decoding and no React Native, so
- * every one of these is unit-testable against hand-drawn bitmaps.
+ * Once a much larger module. Everything that supported the pip/glyph/hole
+ * decoder was removed when that approach was replaced by digit-shape matching
+ * — including `locateBrightDisc`, which found the token face by BRIGHTNESS and
+ * silently failed on bright tiles for weeks before anyone counted how often it
+ * matched. It is gone rather than deprecated so it cannot be reached for again.
  *
- * These are what turn a token crop into the three counts tokenDecode needs.
+ * What remains is what `digitSample` actually uses: an Otsu cut measured inside
+ * the token's disc rather than across the square crop, and connected-component
+ * labelling to separate the numeral from the tile around it.
  */
 
 export interface BinaryMask {
@@ -62,14 +67,6 @@ export function otsuThreshold(image: GrayImage): number {
   return best;
 }
 
-/** Threshold a grayscale image into ink/background. Ink is assumed darker. */
-export function threshold(image: GrayImage, cut?: number): BinaryMask {
-  const level = cut ?? otsuThreshold(image);
-  const size = image.width * image.height;
-  const data = new Array<boolean>(size);
-  for (let i = 0; i < size; i++) data[i] = (image.data[i]! & 0xff) <= level;
-  return { data, width: image.width, height: image.height };
-}
 
 /** A located disc within a crop, in crop pixel coordinates. */
 export interface Disc {
@@ -78,68 +75,7 @@ export interface Disc {
   radius: number;
 }
 
-/**
- * Find the token's bright face inside a crop.
- *
- * The decoder used to assume the face was centred and filled the crop. Measured
- * on a real capture, neither holds: the face is about 64% of the assumed radius
- * and sits up to half a radius off centre, because tokens are dropped on tiles
- * by hand and the crop is sized from a canonical constant rather than the
- * board in front of you.
- *
- * The cost of assuming was severe. Thresholding a crop that is mostly TILE
- * marks the tile as ink, hands the decoder one enormous blob as the "glyph",
- * and demotes the real digits to pips — which is why glyph counting sat at
- * chance and every two-digit token failed.
- *
- * Returns null rather than guessing when what it finds is not disc-like, runs
- * off the crop edge, or is an implausible size. A bright tile can look like a
- * face, and a wrong face is worse than no face.
- */
-export function locateBrightDisc(image: GrayImage): Disc | null {
-  const cut = otsuThreshold(image);
-  const size = image.width * image.height;
-  const bright = new Array<boolean>(size);
-  for (let i = 0; i < size; i++) bright[i] = (image.data[i]! & 0xff) > cut;
 
-  const comps = connectedComponents(
-    { data: bright, width: image.width, height: image.height },
-    true,
-  );
-  if (comps.length === 0) return null;
-
-  let big = comps[0]!;
-  for (const c of comps) if (c.size > big.size) big = c;
-
-  const w = big.maxX - big.minX + 1;
-  const h = big.maxY - big.minY + 1;
-  // A face is round. Anything markedly oblong is scenery.
-  if (Math.min(w, h) / Math.max(w, h) < 0.72) return null;
-  // Touching the edge means the bright region continued into the tile.
-  if (big.minX <= 0 || big.minY <= 0 ||
-      big.maxX >= image.width - 1 || big.maxY >= image.height - 1) return null;
-
-  const half = Math.min(image.width, image.height) / 2;
-  const radius = Math.max(w, h) / 2;
-  if (radius < half * 0.30 || radius > half * 0.98) return null;
-
-  return { cx: (big.minX + big.maxX) / 2, cy: (big.minY + big.maxY) / 2, radius };
-}
-
-/** Clear everything outside a given disc. */
-export function maskToDisc(mask: BinaryMask, disc: Disc): BinaryMask {
-  const r2 = disc.radius * disc.radius;
-  const data = new Array<boolean>(mask.data.length);
-  for (let y = 0; y < mask.height; y++) {
-    for (let x = 0; x < mask.width; x++) {
-      const i = y * mask.width + x;
-      const dx = x - disc.cx;
-      const dy = y - disc.cy;
-      data[i] = dx * dx + dy * dy <= r2 ? mask.data[i]! : false;
-    }
-  }
-  return { data, width: mask.width, height: mask.height };
-}
 
 /**
  * Otsu over one disc only.
@@ -162,11 +98,6 @@ export function otsuThresholdInDisc(image: GrayImage, disc: Disc): number {
   return otsuThreshold({ data: Uint8Array.from(inside), width: inside.length, height: 1 });
 }
 
-/** The centred disc to fall back on when the face cannot be found. */
-export function fallbackDisc(size: number): Disc {
-  // 0.65 rather than 1.0: measured, the face is about 64% of the assumed radius.
-  return { cx: (size - 1) / 2, cy: (size - 1) / 2, radius: (size / 2) * 0.65 };
-}
 
 export interface Component {
   /** Pixel indices belonging to this component. */
@@ -252,46 +183,5 @@ export function connectedComponents(mask: BinaryMask, target = true): Component[
   return components;
 }
 
-/**
- * Count enclosed background regions — the holes in the ink.
- *
- * Background touching the image border is the outside world, not a hole, so it
- * is excluded. That single rule is what makes this the Euler number: 5 has no
- * enclosed region, 6 and 9 and 0 have one, 8 has two.
- */
-export function countHoles(mask: BinaryMask): number {
-  const background = connectedComponents(mask, false);
-  return background.filter(
-    c => c.minX > 0 && c.minY > 0 && c.maxX < mask.width - 1 && c.maxY < mask.height - 1,
-  ).length;
-}
 
-/**
- * Drop components too small to be real ink — speckle from sensor noise, JPEG
- * artefacts, or the printed texture of the token itself.
- */
-export function filterNoise(components: Component[], minSize: number): Component[] {
-  return components.filter(c => c.size >= minSize);
-}
 
-/**
- * Split a token's ink into the digits and the pips beneath them.
- *
- * Pips are markedly smaller than digits, so a size cut separates them cleanly
- * without needing to know which way up the token is: the split is on area, not
- * position. Returned as-is when the caller wants to inspect them.
- */
-export function splitGlyphsAndPips(
-  components: Component[],
-): { glyphs: Component[]; pips: Component[] } {
-  if (components.length === 0) return { glyphs: [], pips: [] };
-
-  const largest = Math.max(...components.map(c => c.size));
-  // A pip is a solid dot roughly a tenth the area of a digit. Half the largest
-  // component is a wide margin that still separates them reliably.
-  const cut = largest * 0.5;
-  return {
-    glyphs: components.filter(c => c.size >= cut),
-    pips: components.filter(c => c.size < cut),
-  };
-}

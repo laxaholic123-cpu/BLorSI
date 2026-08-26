@@ -325,12 +325,18 @@ works at 98% while pip COUNT sits at 40% — direction needs only the centroid o
 whichever pips were found, count needs every one of them exactly. When
 re-testing an abandoned signal, ask which property of it you actually need.
 
-**Dead code with live tests.** `tokenDecode.ts` and six binaryOps helpers —
-`countHoles`, `splitGlyphsAndPips`, `filterNoise`, `locateBrightDisc`,
-`fallbackDisc`, `maskToDisc` — have no callers outside their own module, and 55
-tests still cover them. Passing tests on unused code are worse than plain dead
-code: they make it look supported. `locateBrightDisc` is the specific hazard,
-being the brightness-based face locator whose silent failure cost weeks.
+**The pip decoder and its primitives are DELETED, not deprecated.**
+`tokenDecode.ts` is gone, and with it `countHoles`, `splitGlyphsAndPips`,
+`filterNoise`, `locateBrightDisc`, `fallbackDisc`, `maskToDisc` and
+`threshold`. They had no callers left but 55 tests still covered them, which is
+worse than plain dead code — passing tests make unused code look supported.
+
+`locateBrightDisc` was the reason to delete rather than deprecate: it finds the
+token face by BRIGHTNESS, it silently failed on bright tiles for weeks, and it
+is exactly the kind of thing a future reader reaches for because the name
+sounds right. binaryOps is now 187 lines from 300, and everything remaining has
+a live caller: `otsuThreshold`, `otsuThresholdInDisc`, `connectedComponents`
+and their types, all used by `digitSample`.
 
 **Caveat, and it is a real one.** All seven captures are of the SAME physical
 board. This is validated across photos — different angles, distances, lighting

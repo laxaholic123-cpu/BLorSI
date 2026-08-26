@@ -192,7 +192,7 @@ function boardRect(corners: readonly { x: number; y: number }[]) {
  *
  * **It only reads upright text.** The two digits it did find — 9 and 10 — were
  * on upright tokens; every upside-down one was missed. Catan tokens sit at
- * every rotation, which is precisely the property `tokenDecode.ts` was designed
+ * every rotation, which is precisely the property the pip decoder was designed
  * to sidestep and OCR discards. So the crop is read four times, a quarter-turn
  * apart, and the passes are merged.
  *
