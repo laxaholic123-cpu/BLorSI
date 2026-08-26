@@ -88,7 +88,10 @@ def ink_is_red(rgb, mask, inside):
         return None
     a = rgb.astype(np.float32)
     warmth = lambda m: a[..., 0][m].mean() - (a[..., 1][m].mean() + a[..., 2][m].mean()) / 2
-    return bool(warmth(mask) - warmth(face) > 18)
+    # 40, not 18: measured over 162 tokens, red ink sits at 58.9+ and black
+    # reaches 25.1, so 18 was inside the black class. Must match
+    # INK_RED_WARMTH in digitSample.ts.
+    return bool(warmth(mask) - warmth(face) > 40)
 
 
 def digit_shape(rgb, gray, size):

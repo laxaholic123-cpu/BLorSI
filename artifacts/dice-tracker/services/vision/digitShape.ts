@@ -64,8 +64,7 @@ export interface DigitMatch {
   /**
    * How far ahead the winner is of the best DIFFERENT value, 0-1.
    *
-   * The useful signal, and the one blob counting never had: a face matching a 6
-   * at 0.81 and an 8 at 0.80 has said almost nothing, however high 0.81 looks.
+   * DIAGNOSTIC ONLY. Do NOT gate on this — see `isTrustworthy`.
    */
   margin: number;
   /** Sectors of rotation at the best alignment. */
@@ -234,6 +233,27 @@ export function matchDigit(
  */
 export const ACCEPT_SCORE = 0.91;
 
+/**
+ * Deliberately ignores `margin`, and that is not an oversight.
+ *
+ * Margin looks like it should be the safety check — a face matching two values
+ * equally has said nothing — and it was originally documented that way. But
+ * measured over 126 readings, margin is STRUCTURALLY ZERO for exactly one pair:
+ *
+ *     6   median margin 0.004   (rival: 9)
+ *     9   median margin 0.004   (rival: 6)
+ *     every other value          0.10 to 0.21
+ *
+ * Of course it is. A 6 turned 180 degrees IS a 9, so both templates match a 6
+ * equally well and the margin between them is noise. `resolveSixNine` settles
+ * that pair afterwards using ink colour and pip direction, which is the whole
+ * reason it exists.
+ *
+ * So a margin gate would reject essentially every 6 and 9 on the board while
+ * appearing to be a prudent safety check. Measured: requiring margin >= 0.02
+ * drops 27 of 118 accepted readings — 22 of them 6s and 9s — and improves
+ * precision by nothing, because precision is already 100%.
+ */
 export function isTrustworthy(match: DigitMatch, minScore = ACCEPT_SCORE): boolean {
   return match.score >= minScore;
 }

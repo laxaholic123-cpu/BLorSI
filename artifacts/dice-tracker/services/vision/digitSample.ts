@@ -86,6 +86,22 @@ const PIP_SIZE_CUT = 0.5;
  */
 const FACE_MAX_SATURATION = 0.45;
 
+/**
+ * How much warmer than the face the ink must be to count as RED.
+ *
+ * Measured over 162 tokens: red ink (the 6s and 8s) sits at 58.9 and above,
+ * black ink reaches 25.1 at its warmest. A clean gap of 33.8 separates them, so
+ * this belongs in the middle of it.
+ *
+ * It was 18 — inside the BLACK range, not between the classes — and two tokens
+ * already read as red because of it. Both happened to be a "2", where the
+ * colour changes nothing, so it never showed up. A black 9 landing at 20 would
+ * have been silently turned into a 6 by `resolveSixNine`, which is precisely
+ * the failure this signal exists to prevent. A latent version of the bug it was
+ * meant to fix.
+ */
+const INK_RED_WARMTH = 40;
+
 export interface SampledDigit {
   /** Packed polar shape, ready for `matchDigit`. */
   bits: Uint32Array;
@@ -198,9 +214,8 @@ function measureInkWarmth(
   if (inkN < 12 || faceN < 12) return undefined;
   const warmth = (r: number, g: number, b: number, n: number) =>
     r / n - (g / n + b / n) / 2;
-  // Generous margin: a false "red" pushes a token towards 6 or 8, and being
-  // wrong here is worse than staying silent.
-  return warmth(inkR, inkG, inkB, inkN) - warmth(faceR, faceG, faceB, faceN) > 18;
+  return warmth(inkR, inkG, inkB, inkN) - warmth(faceR, faceG, faceB, faceN)
+    > INK_RED_WARMTH;
 }
 
 /**
