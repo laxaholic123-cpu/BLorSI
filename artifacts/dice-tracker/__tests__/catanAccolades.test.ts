@@ -45,7 +45,11 @@ function player(
 function profile(id: string, over: Partial<PlayerRollProfile> = {}): PlayerRollProfile {
   return {
     playerId: id, rolls: 20, sevens: 3, mean: 7, longestRepeat: 2,
-    gaveToOthers: 30, keptForSelf: 10, twos: 1, twelves: 1, ...over,
+    gaveToOthers: 30, keptForSelf: 10, twos: 1, twelves: 1, doubles: 2,
+    draws: 3, knights: 2, vpCards: 1, actionCards: 0,
+    vpDrawLuck: 0.4, knightDrawLuck: 0.3,
+    bestTurn: 6, longestDrought: 4, earlyProduction: 20, lateProduction: 30,
+    firstCityTurn: 8, expansions: 2, ...over,
   };
 }
 
@@ -211,5 +215,112 @@ describe('profileRolls', () => {
     }];
     const p = profileRolls(players, [roll('a', 7, 0)], exposure);
     expect(p.get('a')!.gaveToOthers).toBe(0);
+  });
+});
+
+describe('the wider catalogue', () => {
+  it('never reports a strength above 1', () => {
+    // The tie-break weights multiply past 1 internally; the published value is
+    // documented as 0-1 and callers may scale a bar off it.
+    const withProfiles = new Map(FOUR.map(p => [p.playerId, profile(p.playerId)]));
+    for (const a of assignAccolades(FOUR, withProfiles)) {
+      expect(a.strength).toBeGreaterThan(0);
+      expect(a.strength).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('stays silent about the deck when nobody bought a card', () => {
+    // Reporting "drew 0 of 0, 1st of 4" would be a badge about nothing.
+    const none = new Map(FOUR.map(p => [p.playerId, profile(p.playerId, {
+      draws: 0, knights: 0, vpCards: 0, actionCards: 0,
+      vpDrawLuck: 0, knightDrawLuck: 0,
+    })]));
+    for (const a of assignAccolades(FOUR, none)) {
+      expect(a.kind).not.toBe('vp_draw_luck');
+    }
+  });
+
+  it('stays silent about doubles when the dice were not recorded', () => {
+    // recordIndividualDice is off by default, so most sessions have no dice
+    // detail at all — better to skip the axis than print a table of zeroes.
+    const none = new Map(FOUR.map(p => [p.playerId, profile(p.playerId, { doubles: 0 })]));
+    for (const a of assignAccolades(FOUR, none)) {
+      expect(a.kind).not.toBe('doubles');
+    }
+  });
+
+  it('ranks the earliest city first, not last', () => {
+    // first_city is the one axis where a LOW number is the good one.
+    const profiles = new Map([
+      ['a', profile('a', { firstCityTurn: 4 })],
+      ['b', profile('b', { firstCityTurn: 9 })],
+      ['c', profile('c', { firstCityTurn: 14 })],
+      ['d', profile('d', { firstCityTurn: 19 })],
+    ]);
+    const out = assignAccolades(FOUR, profiles).find(a => a.kind === 'first_city');
+    if (out) {
+      const turns: Record<string, number> = { a: 4, b: 9, c: 14, d: 19 };
+      const mine = turns[out.playerId]!;
+      const earlier = Object.values(turns).filter(t => t < mine).length;
+      expect(out.rank).toBe(earlier + 1);
+    }
+  });
+});
+
+describe('profileRolls — the shape of a game', () => {
+  const players = [{ id: 'a' }];
+  const roll = (value: number, seq: number, turn = 1): RollEvent => ({
+    id: `r${seq}`, sessionId: 's', playerId: 'a', value,
+    turnNumber: turn, sequenceNumber: seq,
+    timestamp: '2026-08-26T00:00:00.000Z', source: 'touchscreen',
+  });
+  const holds = (numbers: number[]): CatanPlayerExposureEvent[] => [{
+    id: 'e1', sessionId: 's', playerId: 'a', eventType: 'initialSettlement',
+    turnNumber: 0, timestamp: '2026-08-26T00:00:00.000Z',
+    hexIdentifiers: ['loc-a'], affectedNumbers: numbers,
+    productionWeight: 1, robberBlocked: false,
+  }];
+
+  it('counts the longest run of rolls that paid nothing', () => {
+    // Two players can finish on identical production having had completely
+    // different games. This is what tells them apart.
+    const p = profileRolls(players, [
+      roll(8, 0), roll(3, 1), roll(4, 2), roll(5, 3), roll(8, 4),
+    ], holds([8]));
+    expect(p.get('a')!.longestDrought).toBe(3);
+  });
+
+  it('splits the game in half to find a late surge', () => {
+    const p = profileRolls(players, [
+      roll(2, 0), roll(2, 1), roll(8, 2), roll(8, 3),
+    ], holds([8]));
+    const me = p.get('a')!;
+    expect(me.earlyProduction).toBe(0);
+    expect(me.lateProduction).toBeGreaterThan(0);
+  });
+
+  it('measures deck draws against what the deck owed', () => {
+    // 5 of 25 cards are victory points, so five draws owe exactly one.
+    const draws = ['victoryPoint', 'victoryPoint', 'knight', 'knight', 'knight']
+      .map((cardType, i) => ({
+        id: `d${i}`, sessionId: 's', playerId: 'a',
+        cardType: cardType as 'victoryPoint' | 'knight',
+        turnNumber: 5, sequenceNumber: i, timestamp: '2026-08-26T00:00:00.000Z',
+      }));
+    const me = profileRolls(players, [], [], draws).get('a')!;
+    expect(me.draws).toBe(5);
+    expect(me.vpCards).toBe(2);
+    expect(me.vpDrawLuck).toBeCloseTo(1, 5);
+  });
+
+  it('ignores an undone draw', () => {
+    const draws = [
+      { id: 'd0', sessionId: 's', playerId: 'a', cardType: 'knight' as const,
+        turnNumber: 5, sequenceNumber: 0, timestamp: '2026-08-26T00:00:00.000Z' },
+      { id: 'd1', sessionId: 's', playerId: 'a', cardType: 'knight' as const,
+        turnNumber: 5, sequenceNumber: 1, timestamp: '2026-08-26T00:00:00.000Z',
+        deletedAt: '2026-08-26T00:02:00.000Z' },
+    ];
+    expect(profileRolls(players, [], [], draws).get('a')!.knights).toBe(1);
   });
 });

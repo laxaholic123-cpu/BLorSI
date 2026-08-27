@@ -42,7 +42,12 @@ import {
   getBuildingStatesAtTurn,
   netWeightForNumber,
 } from '@/services/catanStats';
-import type { CatanPlayerExposureEvent, RollEvent } from '@/types/models';
+import { DEV_DECK_COMPOSITION, DEV_DECK_SIZE } from '@/services/devCards';
+import type {
+  CatanDevCardEvent,
+  CatanPlayerExposureEvent,
+  RollEvent,
+} from '@/types/models';
 import type { CatanPlayerProductionStats } from '@/types/catanStats';
 
 /**
@@ -69,6 +74,39 @@ export interface PlayerRollProfile {
   /** Times they threw the table's rarest outcomes. */
   twos: number;
   twelves: number;
+  /** Throws that showed the same value on both dice, when dice were recorded. */
+  doubles: number;
+
+  // ── What the deck gave them ───────────────────────────────────────────────
+  /** Development cards drawn, ignoring undone draws. */
+  draws: number;
+  knights: number;
+  /** Victory-point cards: the deck's scarcest prize at 5 of 25. */
+  vpCards: number;
+  /** Monopoly, Year of Plenty and Road Building together. */
+  actionCards: number;
+  /**
+   * VP cards drawn minus the number a fair deck owed them, in cards.
+   *
+   * The dev deck is fixed and known — 14 knights, 5 victory points, 2 each of
+   * the rest — so draw luck is measurable against expectation in exactly the
+   * way production luck is, rather than being a vibe.
+   */
+  vpDrawLuck: number;
+  knightDrawLuck: number;
+
+  // ── How the game actually went ────────────────────────────────────────────
+  /** Most production taken from a single roll. */
+  bestTurn: number;
+  /** Longest run of consecutive rolls that paid them nothing at all. */
+  longestDrought: number;
+  /** Production in the first half of the game, and in the second. */
+  earlyProduction: number;
+  lateProduction: number;
+  /** Turn of their first city, or null if they never built one. */
+  firstCityTurn: number | null;
+  /** Buildings added after the opening placement. */
+  expansions: number;
 }
 
 export type AccoladeKind = string;
@@ -290,6 +328,120 @@ const AXES: Axis[] = [
     value: (p, c) => prof(p, c)?.rolls ?? null,
     detail: (p, c, r, n) => `Threw the dice ${prof(p, c)!.rolls} times, ${place(r, n)}.`,
   },
+  // ── What the development deck gave them ───────────────────────────────────
+  //
+  // The deck is fixed and known — 14 knights, 5 victory points, 2 each of the
+  // rest — so draw luck is measurable against expectation exactly the way
+  // production luck is, instead of being a feeling about whether the cards
+  // were kind.
+  {
+    kind: 'vp_draw_luck',
+    weight: 1.025,
+    titles: ['Deck Darling', 'Fair Draws', 'Nothing But Knights'],
+    value: (p, c) => {
+      const pr = prof(p, c);
+      return pr && pr.draws > 0 ? pr.vpDrawLuck : null;
+    },
+    detail: (p, c, r, n) => {
+      const pr = prof(p, c)!;
+      const owed = pr.draws * 0.2;
+      return `Drew ${pr.vpCards} victory point ${pr.vpCards === 1 ? 'card' : 'cards'} `
+        + `from ${pr.draws}, against ${owed.toFixed(1)} a fair deck owed them — ${place(r, n)}.`;
+    },
+  },
+  {
+    kind: 'knights',
+    weight: 1.015,
+    titles: ['Standing Army', 'Some Muscle', 'Pacifist'],
+    value: (p, c) => prof(p, c)?.knights ?? null,
+    detail: (p, c, r, n) => `Pulled ${prof(p, c)!.knights} `
+      + `${prof(p, c)!.knights === 1 ? 'knight' : 'knights'} out of the deck, ${place(r, n)}.`,
+  },
+  {
+    kind: 'action_cards',
+    weight: 1.02,
+    titles: ['Trick Deck', 'A Card Or Two', 'Straight Bat'],
+    value: (p, c) => prof(p, c)?.actionCards ?? null,
+    detail: (p, c, r, n) => `Drew ${prof(p, c)!.actionCards} of the six scheming cards — `
+      + `monopoly, year of plenty, road building — ${place(r, n)}.`,
+  },
+  {
+    kind: 'draws',
+    weight: 0.99,
+    titles: ['Deck Diver', 'Bought A Few', 'Never Bought In'],
+    value: (p, c) => prof(p, c)?.draws ?? null,
+    detail: (p, c, r, n) => `Bought ${prof(p, c)!.draws} development `
+      + `${prof(p, c)!.draws === 1 ? 'card' : 'cards'}, ${place(r, n)}.`,
+  },
+  // ── The shape of their game, not just its total ───────────────────────────
+  //
+  // Two players can finish on the same production having had completely
+  // different games. Totals cannot tell them apart; these can.
+  {
+    kind: 'longest_drought',
+    weight: 1.03,
+    titles: ['Wandered The Desert', 'Some Dry Spells', 'Never Went Hungry'],
+    value: (p, c) => prof(p, c)?.longestDrought ?? null,
+    detail: (p, c, r, n) => `Went ${prof(p, c)!.longestDrought} consecutive rolls without `
+      + `producing anything — ${place(r, n)} longest drought.`,
+  },
+  {
+    kind: 'best_turn',
+    weight: 1.02,
+    titles: ['One Big Score', 'Solid Peak', 'Never Spiked'],
+    value: (p, c) => prof(p, c)?.bestTurn ?? null,
+    detail: (p, c, r, n) => `Best single roll paid them ${prof(p, c)!.bestTurn.toFixed(0)} `
+      + `production, ${place(r, n)}.`,
+  },
+  {
+    kind: 'late_surge',
+    weight: 1.025,
+    titles: ['Strong Finisher', 'Even Throughout', 'Faded Late'],
+    // Positive means the back half paid better than the front half.
+    value: (p, c) => {
+      const pr = prof(p, c);
+      return pr ? pr.lateProduction - pr.earlyProduction : null;
+    },
+    detail: (p, c, r, n) => {
+      const pr = prof(p, c)!;
+      const d = pr.lateProduction - pr.earlyProduction;
+      return `${pr.earlyProduction.toFixed(0)} production in the first half, `
+        + `${pr.lateProduction.toFixed(0)} in the second — `
+        + `${d >= 0 ? 'grew into' : 'faded out of'} the game, ${place(r, n)}.`;
+    },
+  },
+  {
+    kind: 'first_city',
+    weight: 1.01,
+    titles: ['First To Build Up', 'Upgraded In Time', 'Slow To Build'],
+    // Earlier is better, so the ranking runs the other way.
+    lowIsInteresting: true,
+    value: (p, c) => prof(p, c)?.firstCityTurn ?? null,
+    detail: (p, c, r, n) => `First city on turn ${prof(p, c)!.firstCityTurn}, ${place(r, n)} `
+      + `to upgrade.`,
+  },
+  {
+    kind: 'expansions',
+    weight: 1.0,
+    titles: ['Kept Building', 'Grew A Little', 'Stood Still'],
+    value: (p, c) => prof(p, c)?.expansions ?? null,
+    detail: (p, c, r, n) => `Added ${prof(p, c)!.expansions} `
+      + `${prof(p, c)!.expansions === 1 ? 'building' : 'buildings'} after the opening, `
+      + `${place(r, n)}.`,
+  },
+  {
+    kind: 'doubles',
+    weight: 1.01,
+    titles: ['Seeing Double', 'The Odd Pair', 'Never Doubles'],
+    // Only speaks when the player recorded both dice; that setting is off by
+    // default, so most sessions skip this axis entirely rather than report a
+    // table of zeroes.
+    value: (p, c) => {
+      const pr = prof(p, c);
+      return pr && pr.doubles > 0 ? pr.doubles : null;
+    },
+    detail: (p, c, r, n) => `Threw ${prof(p, c)!.doubles} doubles, ${place(r, n)}.`,
+  },
 ];
 
 /**
@@ -316,6 +468,7 @@ export function profileRolls(
   players: readonly { id: string }[],
   rollEvents: readonly RollEvent[],
   exposureEvents: readonly CatanPlayerExposureEvent[],
+  devCardEvents: readonly CatanDevCardEvent[] = [],
 ): Map<string, PlayerRollProfile> {
   const live = rollEvents.filter(r => !r.deletedAt);
   const out = new Map<string, PlayerRollProfile>();
@@ -331,6 +484,10 @@ export function profileRolls(
       previous = r.value;
       if (run > longest) longest = run;
     }
+    const draws = devCardEvents.filter(d => d.playerId === player.id && !d.deletedAt);
+    const knights = draws.filter(d => d.cardType === 'knight').length;
+    const vp = draws.filter(d => d.cardType === 'victoryPoint').length;
+
     out.set(player.id, {
       playerId: player.id,
       rolls: mine.length,
@@ -339,26 +496,93 @@ export function profileRolls(
       longestRepeat: longest,
       twos: mine.filter(r => r.value === 2).length,
       twelves: mine.filter(r => r.value === 12).length,
+      // Only counted when the player recorded both dice; the setting is off by
+      // default, so this axis simply does not speak for most sessions.
+      doubles: mine.filter(r => r.individualDiceValues?.length === 2
+        && r.individualDiceValues[0] === r.individualDiceValues[1]).length,
+      draws: draws.length,
+      knights,
+      vpCards: vp,
+      actionCards: draws.length - knights - vp,
+      // Against what the known 25-card deck owed them for that many draws.
+      vpDrawLuck: vp - draws.length * (DEV_DECK_COMPOSITION.victoryPoint / DEV_DECK_SIZE),
+      knightDrawLuck: knights - draws.length * (DEV_DECK_COMPOSITION.knight / DEV_DECK_SIZE),
       gaveToOthers: 0,
       keptForSelf: 0,
+      bestTurn: 0,
+      longestDrought: 0,
+      earlyProduction: 0,
+      lateProduction: 0,
+      firstCityTurn: null,
+      expansions: 0,
     });
   }
 
+  // When did each player first build a city, and how much did they expand?
+  for (const player of players) {
+    const theirs = exposureEvents
+      .filter(e => e.playerId === player.id)
+      .sort((a, b) => a.turnNumber - b.turnNumber);
+    const firstCity = theirs.find(e => e.eventType === 'cityUpgrade');
+    const p = out.get(player.id)!;
+    p.firstCityTurn = firstCity ? firstCity.turnNumber : null;
+    p.expansions = theirs.filter(
+      e => e.eventType === 'settlementBuilt' || e.eventType === 'cityUpgrade',
+    ).length;
+  }
+
+  /**
+   * Per-player production, roll by roll, so the SHAPE of their game is visible
+   * and not just its total.
+   *
+   * A player who took 60 production in three enormous turns and nothing in
+   * between had a completely different game from one who took 60 evenly, and
+   * the totals cannot tell them apart. This is what droughts and big turns are
+   * read from.
+   */
+  const timeline = new Map<string, number[]>(players.map(p => [p.id, []]));
+
   // Who did each throw actually pay? Walk every roll once and credit the
   // thrower for what it produced, split between them and the rest of the table.
-  for (const roll of live) {
-    if (roll.value === 7) continue;
+  const ordered = [...live].sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+  for (const roll of ordered) {
     for (const player of players) {
+      if (roll.value === 7) {
+        timeline.get(player.id)!.push(0);
+        continue;
+      }
       const buildings = getBuildingStatesAtTurn(player.id, roll.turnNumber, exposureEvents as CatanPlayerExposureEvent[]);
       if (buildings.length === 0) continue;
       const blocked = getActiveRobberBlockedNumbers(player.id, roll.turnNumber, exposureEvents as CatanPlayerExposureEvent[]);
-      const paid = netWeightForNumber(buildings, roll.value, blocked);
+      const paid = buildings.length === 0
+        ? 0 : netWeightForNumber(buildings, roll.value, blocked);
+      timeline.get(player.id)!.push(paid);
       if (paid <= 0) continue;
       const thrower = out.get(roll.playerId);
       if (!thrower) continue;
       if (player.id === roll.playerId) thrower.keptForSelf += paid;
       else thrower.gaveToOthers += paid;
     }
+  }
+
+  for (const player of players) {
+    const series = timeline.get(player.id)!;
+    const p = out.get(player.id)!;
+    let drought = 0;
+    let worst = 0;
+    for (const amount of series) {
+      if (amount > 0) {
+        drought = 0;
+      } else {
+        drought += 1;
+        if (drought > worst) worst = drought;
+      }
+      if (amount > p.bestTurn) p.bestTurn = amount;
+    }
+    p.longestDrought = worst;
+    const half = Math.floor(series.length / 2);
+    p.earlyProduction = series.slice(0, half).reduce((a, b) => a + b, 0);
+    p.lateProduction = series.slice(half).reduce((a, b) => a + b, 0);
   }
   return out;
 }
@@ -465,7 +689,7 @@ export function assignAccolades(
       detail: axis.detail(p, ctx, r, outOf),
       rank: r,
       outOf,
-      strength: interest(row, col),
+      strength: Math.min(1, interest(row, col)),
     };
   });
 }

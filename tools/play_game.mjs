@@ -308,7 +308,32 @@ console.log(`  -> ${named.size}/${PLAYERS.length} players could be named from da
 import { assignAccolades, profileRolls, ACCOLADE_COUNT, ACCOLADE_CATALOGUE }
   from '../artifacts/dice-tracker/dist-game/catanAccolades.js';
 
-const profiles = profileRolls(PLAYERS, rolls, exposure);
+// Development cards, drawn from a real 25-card deck so draw luck is honest.
+const DECK = [];
+for (const [type, n] of Object.entries({ knight: 14, victoryPoint: 5,
+                                         roadBuilding: 2, yearOfPlenty: 2, monopoly: 2 }))
+  for (let i = 0; i < n; i++) DECK.push(type);
+for (let i = DECK.length - 1; i > 0; i--) {
+  const j = Math.floor(rng() * (i + 1));
+  [DECK[i], DECK[j]] = [DECK[j], DECK[i]];
+}
+const devCards = [];
+let drawn = 0;
+for (let turn = 5; turn <= TURNS && drawn < 14; turn++) {
+  for (const player of PLAYERS) {
+    if (rng() < 0.18 && drawn < DECK.length) {
+      devCards.push({
+        id: `d${drawn}`, sessionId: session.id, playerId: player.id,
+        cardType: DECK[drawn], turnNumber: turn, sequenceNumber: drawn,
+        timestamp: session.startedAt,
+      });
+      drawn++;
+    }
+  }
+}
+const profiles = profileRolls(PLAYERS, rolls, exposure, devCards);
+console.log(`
+(${devCards.length} development cards drawn from a 25-card deck)`);
 console.log(`
 ACCOLADES  (${ACCOLADE_COUNT} possible, from ${ACCOLADE_CATALOGUE.length} axes)`);
 for (const a of assignAccolades(stats.playerStats, profiles)) {
