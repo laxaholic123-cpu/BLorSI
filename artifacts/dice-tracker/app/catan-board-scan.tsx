@@ -16,7 +16,7 @@
  * Board layouts can be saved by name and reloaded for future games.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -39,6 +39,18 @@ import { useGame } from '@/context/GameContext';
 import { useSettings } from '@/context/SettingsContext';
 import { CatanHexGrid } from '@/components/CatanHexGrid';
 import {
+  clearSlot,
+  legalRoads,
+  legalSettlements,
+  openingOrder,
+  placeRoad,
+  placeSettlement,
+  placementProgress,
+  settlementProblem,
+  toExposureEvents,
+  type PlacementSlot,
+} from '@/services/catanPlacement';
+import {
   deleteBoardLayout,
   loadBoardLayouts,
   makeEmptyLayout,
@@ -49,23 +61,27 @@ import { clearGroundTruth, saveGroundTruth } from '@/services/storage';
 import { getLinkedBuildingEventCount, mergeEditedSettlements } from '@/services/editSettlements';
 import { normalizePieces, type DetectedPiece } from '@/utils/normalizePieces';
 import { describeChange, reconcileBoard, type BoardChange } from '@/services/boardConstraints';
-import { matchPieceToPlayer } from '@/utils/matchPieceToPlayer';
 import type { CatanBoardLayout, CatanHexDef, ResourceType } from '@/types/models';
-import { generateId } from '@/types/models';
 import type { CatanPlayerExposureEvent } from '@/types/models';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type ScanPhase = 'entry' | 'analyzing' | 'review' | 'placement';
 
-interface Settlement {
-  locationId: string;
-  hexIndices: number[];
-}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const CATAN_NUMBERS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12];
+
+/**
+ * Colours a player can take, chosen HERE rather than during setup.
+ *
+ * Picking a colour is only meaningful once the board is on screen and you can
+ * see whose pieces are whose, and it is the moment people actually argue about
+ * it. The five are widely separated in hue so a settlement dot stays legible
+ * against any terrain, and none of them is the cream of a number token.
+ */
+const PLAYER_COLORS = ['#F5A623', '#4A90D9', '#7ED321', '#D0021B', '#9013FE'];
 
 const RESOURCES: ResourceType[] = ['grain', 'ore', 'lumber', 'brick', 'wool', 'desert'];
 
@@ -104,7 +120,7 @@ function formatSavedDate(iso: string): string {
 export default function CatanBoardScanScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { activeSession, persistExposureEvents, exposureEvents } = useGame();
+  const { activeSession, persistExposureEvents, exposureEvents, updateSession } = useGame();
   const { settings } = useSettings();
 
   // ── Edit-mode: editPlayerId is set when launched from an active game ────────
@@ -155,14 +171,23 @@ export default function CatanBoardScanScreen() {
 
   // ── Placement ──────────────────────────────────────────────────────────────
   const [currentPlayerIdx, setCurrentPlayerIdx] = useState(0);
-  const [currentHexSelection, setCurrentHexSelection] = useState<number[]>([]);
-  const [playerSetups, setPlayerSetups] = useState<Settlement[][]>([]);
+
+  /**
+   * The opening as a SEQUENCE of turns, not a loop over players.
+   *
+   * A real opening is a snake draft — out along the seats and back — so the
+   * last player places twice in a row and the first player also places last.
+   * Every slot is addressable, so any turn can be revisited without disturbing
+   * another, which is the thing whose absence forced a full restart before.
+   */
+  const [slots, setSlots] = useState<PlacementSlot[]>([]);
+  const [activeSlot, setActiveSlot] = useState(0);
+  /** Colours chosen here rather than at setup, where the board is not visible. */
+  const [colorOverrides, setColorOverrides] = useState<Record<string, string>>({});
   const [isSavingGame, setIsSavingGame] = useState(false);
   const [placementError, setPlacementError] = useState<string | null>(null);
 
   // ── AI piece detection ─────────────────────────────────────────────────────
-  const [detectedPieces, setDetectedPieces] = useState<DetectedPiece[]>([]);
-  const [photoDetectedCount, setPhotoDetectedCount] = useState(0);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const allPlayers = activeSession?.players ?? [];
@@ -171,7 +196,14 @@ export default function CatanBoardScanScreen() {
     ? allPlayers.filter(p => p.id === editPlayerId)
     : allPlayers;
   const currentPlayer = players[currentPlayerIdx];
-  const isLastPlayer = currentPlayerIdx === players.length - 1;
+
+  const colorOf = useCallback(
+    (playerId: string) =>
+      colorOverrides[playerId]
+      ?? players.find(p => p.id === playerId)?.color
+      ?? '#F5A623',
+    [colorOverrides, players],
+  );
   const lowConfIndices = hexes.map((h, i) => (h.confidence === 'low' ? i : -1)).filter(i => i >= 0);
 
   /**
@@ -285,7 +317,6 @@ export default function CatanBoardScanScreen() {
     }
 
     setAnalysisError(null);
-    setDetectedPieces([]);
     setPhase('analyzing');
 
     try {
@@ -326,7 +357,16 @@ export default function CatanBoardScanScreen() {
       const { hexes: reconciled, changes } = reconcileBoard(merged);
       setHexes(reconciled);
       setBoardCorrections(changes);
-      setDetectedPieces(normalizePieces(Array.isArray(data.pieces) ? data.pieces : []));
+      /**
+       * Detected pieces are no longer stored.
+       *
+       * They only ever fed the placement pre-fill, which recorded a settlement
+       * as touching the ONE hex the piece sat on — when a real settlement sits
+       * on a corner and touches up to three. Every pre-filled placement
+       * therefore understated its owner's exposure. The scan still returns
+       * them; nothing needs them until something can resolve a piece to a
+       * corner rather than a tile.
+       */
       setPhase('review');
     } catch (err) {
       // TypeError = network-level failure (device can't reach server).
@@ -433,146 +473,136 @@ export default function CatanBoardScanScreen() {
       }
     }
     setCurrentPlayerIdx(0);
-    setCurrentHexSelection([]);
     setPlacementError(null);
-
-    // Pre-fill settlement positions from AI-detected piece colors (non-edit mode only)
-    if (!isEditMode && detectedPieces.length > 0) {
-      const prefilledSetups: Settlement[][] = players.map(() => []);
-      let matchedCount = 0;
-      for (const piece of detectedPieces) {
-        // Settlements on desert produce nothing — skip if AI misidentified the hex
-        if (hexes[piece.hexIndex]?.resource === 'desert') continue;
-        const matched = matchPieceToPlayer(piece.color, players);
-        if (matched) {
-          const playerIdx = players.findIndex(p => p.id === matched.id);
-          if (playerIdx >= 0) {
-            prefilledSetups[playerIdx]!.push({
-              locationId: generateId(),
-              hexIndices: [piece.hexIndex],
-            });
-            matchedCount++;
-          }
-        }
-      }
-      setPlayerSetups(prefilledSetups);
-      setPhotoDetectedCount(matchedCount);
-    } else {
-      setPlayerSetups(players.map(() => []));
-      setPhotoDetectedCount(0);
-    }
-
+    /**
+     * Photo-detected pieces no longer pre-fill placements, and that is a
+     * correctness fix rather than a loss.
+     *
+     * A detected piece is located on a HEX, and the old flow recorded it as a
+     * settlement touching that one hex. A real settlement sits on a CORNER and
+     * touches up to three — so every pre-filled placement understated its
+     * owner's exposure, which understates expected production and inflates
+     * their apparent luck. There is no way to recover which of a hex's six
+     * corners a piece is on from the hex alone, so the honest move is to let
+     * the player tap it.
+     */
+    beginPlacement();
     setPhase('placement');
   };
 
-  const toggleHexSelection = (hexIndex: number) => {
-    const hex = hexes[hexIndex];
-    // Desert hexes produce no numbers — skip them in settlement selection
-    if (hex?.resource === 'desert') {
-      haptic(Haptics.ImpactFeedbackStyle.Heavy);
+  // ── Opening placement ──────────────────────────────────────────────────────
+
+  /** Seed the snake draft when placement starts, preserving anything already set. */
+  const beginPlacement = useCallback(() => {
+    setSlots(prev => (prev.length === players.length * 2
+      ? prev
+      : openingOrder(players.map(p => p.id))));
+    setActiveSlot(0);
+    setPlacementError(null);
+  }, [players]);
+
+  const active = slots[activeSlot];
+  /**
+   * A turn is placed in two taps: the corner, then one of the two or three
+   * roads leading off it. Which one we are waiting for decides what the board
+   * offers, and only LEGAL targets are drawn — a mis-tap here does not look
+   * like an error, it silently records production the player never had.
+   */
+  const awaitingRoad = Boolean(active?.settlement && !active?.road);
+
+  const onCornerTap = (cornerId: string) => {
+    if (!active) return;
+    const result = placeSettlement(slots, active.index, cornerId);
+    if (result.problem) {
+      haptic(Haptics.ImpactFeedbackStyle.Medium);
+      setPlacementError(
+        result.problem === 'occupied' ? 'Someone is already on that corner.'
+        : result.problem === 'too_close' ? 'Too close — settlements need a gap of at least one corner.'
+        : 'That corner cannot be used.',
+      );
       return;
     }
     haptic();
-    setCurrentHexSelection(prev => {
-      if (prev.includes(hexIndex)) return prev.filter(i => i !== hexIndex);
-      if (prev.length >= 3) {
-        haptic(Haptics.ImpactFeedbackStyle.Heavy);
-        return prev;
-      }
-      return [...prev, hexIndex];
-    });
-  };
-
-  const addSettlement = () => {
-    if (currentHexSelection.length === 0) return;
-    haptic();
-    setPlayerSetups(prev => {
-      const next = [...prev];
-      const settlement: Settlement = { locationId: generateId(), hexIndices: [...currentHexSelection] };
-      next[currentPlayerIdx] = [...(next[currentPlayerIdx] ?? []), settlement];
-      return next;
-    });
-    setCurrentHexSelection([]);
     setPlacementError(null);
+    setSlots(result.slots);
   };
 
-  const removeSettlement = (settlementIdx: number) => {
+  const onRoadTap = (edgeId: string) => {
+    if (!active) return;
+    const result = placeRoad(slots, active.index, edgeId);
+    if (result.problem) {
+      haptic(Haptics.ImpactFeedbackStyle.Medium);
+      setPlacementError('That road cannot be built there.');
+      return;
+    }
+    haptic();
+    setPlacementError(null);
+    const next = result.slots;
+    setSlots(next);
+    // Move on to whatever is still outstanding, which after a clean run is the
+    // next slot in the snake. Advisory only — the strip below stays tappable.
+    const suggestion = placementProgress(next).suggested;
+    if (suggestion !== null) setActiveSlot(suggestion);
+  };
+
+  const onClearSlot = (index: number) => {
     haptic(Haptics.ImpactFeedbackStyle.Medium);
-    setPlayerSetups(prev => {
-      const next = [...prev];
-      next[currentPlayerIdx] = (next[currentPlayerIdx] ?? []).filter((_, i) => i !== settlementIdx);
-      return next;
-    });
+    setSlots(prev => clearSlot(prev, index));
+    setActiveSlot(index);
+    setPlacementError(null);
   };
 
-  const handlePlayerDone = () => {
-    // Auto-add any pending selection first
-    if (currentHexSelection.length > 0) {
-      addSettlement();
-      return; // useEffect or next tap will call done — here we just save
+  /** Corners already built on, by anyone, in that player's colour. */
+  const settlementMarks = useMemo(() => {
+    const marks: Record<string, string> = {};
+    for (const slot of slots) {
+      if (slot.settlement) marks[slot.settlement] = colorOf(slot.playerId);
     }
-    const settlements = playerSetups[currentPlayerIdx] ?? [];
-    if (settlements.length === 0) {
-      setPlacementError('Add at least one settlement before continuing.');
-      return;
+    return marks;
+  }, [slots, colorOf]);
+
+  const roadMarks = useMemo(() => {
+    const marks: Record<string, string> = {};
+    for (const slot of slots) {
+      if (slot.road) marks[slot.road] = colorOf(slot.playerId);
     }
-    setPlacementError(null);
-    if (isLastPlayer) {
-      void handleStartGame();
-    } else {
-      setCurrentPlayerIdx(i => i + 1);
-      setCurrentHexSelection([]);
-    }
-  };
+    return marks;
+  }, [slots, colorOf]);
+
+  /** Only what the active turn may legally take. Recomputed as the board fills. */
+  const offeredCorners = useMemo(
+    () => (active && !awaitingRoad ? legalSettlements(slots, active.index) : []),
+    [slots, active, awaitingRoad],
+  );
+  const offeredRoads = useMemo(
+    () => (active && awaitingRoad ? legalRoads(slots, active.index) : []),
+    [slots, active, awaitingRoad],
+  );
 
   const handleStartGame = async () => {
     if (isSavingGame) return;
     setIsSavingGame(true);
     try {
-      const newEvents: CatanPlayerExposureEvent[] = [];
-      for (let pi = 0; pi < players.length; pi++) {
-        const player = players[pi]!;
-        const setups = playerSetups[pi] ?? [];
-        for (const settlement of setups) {
-          const selectedHexes = settlement.hexIndices.map(i => hexes[i]);
-          const affectedNumbers = selectedHexes
-            .map(h => h?.number)
-            .filter((n): n is number => n != null);
-          const primaryResource = selectedHexes
-            .find(h => h?.resource && h.resource !== 'desert' && h.resource !== null)
-            ?.resource ?? undefined;
-          newEvents.push({
-            id: generateId(),
-            sessionId: activeSession.id,
-            playerId: player.id,
-            eventType: 'initialSettlement',
-            turnNumber: 0,
-            timestamp: new Date().toISOString(),
-            affectedNumbers,
-            /**
-             * The unique settlement id FIRST, then the hexes it touches.
-             *
-             * `getBuildingStatesAtTurn` keys buildings by `hexIdentifiers[0]`
-             * and keeps only the latest event per key. This used to write
-             * `hexIndices.map(String)`, so the key was the settlement's LOWEST
-             * hex index — and 54 intersections collapse onto just 19 such keys.
-             * Two settlements on different corners of the same hex, which is
-             * legal and a common opening, therefore shared a key and the second
-             * silently erased the first. That player's expected production was
-             * computed from one building instead of two, which understates
-             * expectation and inflates their apparent luck — corrupting exactly
-             * the claim this app exists to make.
-             *
-             * `settlement.locationId` was already a unique id and was already
-             * on the object; it simply was not used. Only element [0] is ever
-             * read, so the hex indices stay for anything that wants them.
-             */
-            hexIdentifiers: [settlement.locationId, ...settlement.hexIndices.map(String)],
-            productionWeight: 1,
-            resourceType: primaryResource,
-            robberBlocked: false,
-          });
-        }
+      /**
+       * One conversion, in the service, so the corner id leads every location
+       * key. Building these by hand from hex indices is what collapsed 54
+       * corners onto 19 keys and silently erased one of a player's two
+       * settlements — understating their expected production and inflating
+       * their apparent luck.
+       *
+       * Roads are not emitted: exposure describes what a position PRODUCES and
+       * a road produces nothing. They stay in `slots` for a future Longest Road.
+       */
+      const newEvents = toExposureEvents(slots, activeSession.id, hexes);
+
+      // Colours were chosen on this screen, so they have to go back onto the
+      // session or the game screen shows the setup defaults instead.
+      if (Object.keys(colorOverrides).length > 0) {
+        await updateSession({
+          ...activeSession,
+          players: activeSession.players.map(p =>
+            colorOverrides[p.id] ? { ...p, color: colorOverrides[p.id]! } : p),
+        });
       }
 
       if (isEditMode && editPlayerId) {
@@ -809,114 +839,137 @@ export default function CatanBoardScanScreen() {
   };
 
   const renderPlacement = () => {
-    const playerSetup = playerSetups[currentPlayerIdx] ?? [];
-    const playerColor = currentPlayer?.color ?? colors.primary;
-
-    // Build display for added settlements
-    const settlementSummaries = playerSetup.map(st => {
-      const nums = st.hexIndices
-        .map(i => hexes[i]?.number)
-        .filter((n): n is number => n != null);
-      return nums.length > 0 ? nums.join(', ') : '–';
-    });
+    if (slots.length === 0) return null;
+    const slot = active;
+    const playerId = slot?.playerId ?? players[0]?.id ?? '';
+    const player = players.find(p => p.id === playerId);
+    const tint = colorOf(playerId);
+    const progress = placementProgress(slots);
 
     return (
       <ScrollView contentContainerStyle={s.placementScroll} showsVerticalScrollIndicator={false}>
-        {/* Player indicator */}
-        <View style={[s.playerBar, { backgroundColor: colors.card, borderColor: playerColor, borderLeftColor: playerColor }]}>
-          <View style={[s.playerDot, { backgroundColor: playerColor }]} />
-          <View>
+        {/* Whose turn, and what the board is waiting for. */}
+        <View style={[s.playerBar, { backgroundColor: colors.card, borderColor: tint, borderLeftColor: tint }]}>
+          <View style={[s.playerDot, { backgroundColor: tint }]} />
+          <View style={{ flex: 1 }}>
             <Text style={[s.playerName, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
-              {currentPlayer?.displayName ?? `Player ${currentPlayerIdx + 1}`}
+              {player?.displayName ?? 'Player'}
+              <Text style={{ color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }}>
+                {'  '}settlement {slot?.round ?? 1} of 2
+              </Text>
             </Text>
             <Text style={[s.playerSub, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-              {playerSetup.length === 0
-                ? 'Tap 1–3 hexes to select your first settlement position'
-                : `${playerSetup.length} settlement${playerSetup.length === 1 ? '' : 's'} added — tap more hexes or press Done`}
+              {awaitingRoad
+                ? 'Now tap a road leading off it.'
+                : 'Tap a corner where three tiles meet.'}
             </Text>
           </View>
         </View>
 
-        {/* AI detection notice (shown when settlements were pre-filled from photo) */}
-        {photoDetectedCount > 0 && (
-          <View style={[s.detectionBanner, { backgroundColor: colors.primary + '18', borderColor: colors.primary + '40' }]}>
-            <Ionicons name="scan-outline" size={15} color={colors.primary} />
-            <Text style={[s.detectionBannerText, { color: colors.primary, fontFamily: 'Inter_400Regular' }]}>
-              Detected {photoDetectedCount} settlement{photoDetectedCount === 1 ? '' : 's'} from photo — tap any hex to adjust
-            </Text>
-          </View>
-        )}
+        {/* Colour, chosen here where the board is actually visible. */}
+        <View style={s.swatchRow}>
+          {PLAYER_COLORS.map(c => (
+            <TouchableOpacity
+              key={c}
+              onPress={() => {
+                haptic();
+                setColorOverrides(prev => ({ ...prev, [playerId]: c }));
+              }}
+              style={[
+                s.swatch,
+                { backgroundColor: c, borderColor: c === tint ? colors.foreground : 'transparent' },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`Use this colour for ${player?.displayName ?? 'this player'}`}
+            />
+          ))}
+        </View>
 
-        {/* Hex grid in selection mode */}
         <CatanHexGrid
           hexes={hexes}
-          onHexPress={toggleHexSelection}
-          selectedIndices={currentHexSelection}
-          selectionColor={playerColor}
+          showIntersections
+          legalIntersections={awaitingRoad ? [] : offeredCorners}
+          intersectionMarks={settlementMarks}
+          onIntersectionPress={onCornerTap}
+          showRoads={awaitingRoad}
+          legalRoads={offeredRoads}
+          roadMarks={roadMarks}
+          onRoadPress={onRoadTap}
           style={{ marginVertical: 8 }}
         />
 
-        {/* Selection hint */}
-        {currentHexSelection.length > 0 && (
-          <Text style={[s.selHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-            Selected {currentHexSelection.length}/3 hex{currentHexSelection.length === 1 ? '' : 'es'}.
-            Tap again to deselect.
-          </Text>
-        )}
-
-        {/* Add Settlement button */}
-        {currentHexSelection.length > 0 && (
-          <TouchableOpacity
-            style={[s.addBtn, { borderColor: playerColor, backgroundColor: playerColor + '18' }]}
-            onPress={addSettlement}
-          >
-            <Ionicons name="add-circle-outline" size={18} color={playerColor} />
-            <Text style={[s.addBtnText, { color: playerColor, fontFamily: 'Inter_600SemiBold' }]}>
-              Confirm Settlement
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {/* Added settlements list */}
-        {settlementSummaries.length > 0 && (
-          <View style={[s.settlementsCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[s.settlementsLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
-              ADDED SETTLEMENTS
-            </Text>
-            {settlementSummaries.map((summary, si) => (
-              <View key={si} style={s.settlementRow}>
-                <Text style={[s.settlementText, { color: colors.foreground, fontFamily: 'Inter_400Regular' }]}>
-                  Settlement {si + 1}: <Text style={{ fontFamily: 'Inter_600SemiBold' }}>{summary}</Text>
-                </Text>
-                <TouchableOpacity onPress={() => removeSettlement(si)} hitSlop={8}>
-                  <Ionicons name="trash-outline" size={16} color={colors.destructive} />
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
-        )}
-
-        {/* Error */}
         {placementError && (
           <Text style={[s.placementError, { color: colors.destructive, fontFamily: 'Inter_400Regular' }]}>
             {placementError}
           </Text>
         )}
 
-        {/* Done button */}
+        {/*
+          The turn strip: the whole opening at a glance, and every turn
+          reachable. Tapping a slot goes there; the trash clears just that one.
+          This is what replaces "walk the whole flow backwards and lose
+          everybody else's placements".
+        */}
+        <View style={[s.stripCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[s.settlementsLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+            OPENING ORDER · {progress.settlementsPlaced}/{progress.total} placed
+          </Text>
+          <View style={s.stripRow}>
+            {slots.map(sl => {
+              const isActive = sl.index === activeSlot;
+              const done = Boolean(sl.settlement && sl.road);
+              const part = Boolean(sl.settlement) !== Boolean(sl.road);
+              return (
+                <TouchableOpacity
+                  key={sl.index}
+                  onPress={() => { haptic(); setActiveSlot(sl.index); setPlacementError(null); }}
+                  onLongPress={() => onClearSlot(sl.index)}
+                  style={[
+                    s.stripChip,
+                    {
+                      borderColor: isActive ? colors.foreground : colorOf(sl.playerId),
+                      backgroundColor: done
+                        ? colorOf(sl.playerId)
+                        : part ? colorOf(sl.playerId) + '55' : 'transparent',
+                      borderWidth: isActive ? 2 : 1,
+                    },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    `${players.find(p => p.id === sl.playerId)?.displayName ?? 'Player'}, `
+                    + `settlement ${sl.round} of 2, `
+                    + `${done ? 'placed' : part ? 'half placed' : 'not placed'}`}
+                  accessibilityHint="Tap to go to this turn, long-press to clear it"
+                >
+                  <Text style={[s.stripChipText, {
+                    color: done ? '#FFFFFF' : colors.foreground,
+                    fontFamily: 'Inter_600SemiBold',
+                  }]}>
+                    {(players.find(p => p.id === sl.playerId)?.displayName ?? '?').slice(0, 2)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <Text style={[s.stripHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+            Tap any turn to go back to it · long-press to clear just that one
+          </Text>
+        </View>
+
         <TouchableOpacity
-          style={[s.doneBtn, { backgroundColor: isSavingGame ? colors.muted : colors.primary }]}
-          onPress={handlePlayerDone}
-          disabled={isSavingGame}
+          style={[s.doneBtn, {
+            backgroundColor: progress.complete && !isSavingGame ? colors.primary : colors.muted,
+          }]}
+          onPress={() => { if (progress.complete) void handleStartGame(); }}
+          disabled={!progress.complete || isSavingGame}
           activeOpacity={0.85}
         >
-          <Ionicons
-            name={isLastPlayer ? 'play' : 'arrow-forward'}
-            size={20}
-            color={colors.primaryForeground}
-          />
+          <Ionicons name="play" size={20} color={colors.primaryForeground} />
           <Text style={[s.doneBtnText, { color: colors.primaryForeground, fontFamily: 'Inter_700Bold' }]}>
-            {isSavingGame ? 'Starting…' : isLastPlayer ? 'Start Game' : `Next: ${players[currentPlayerIdx + 1]?.displayName ?? ''}`}
+            {isSavingGame ? 'Starting…'
+              : progress.complete ? 'Start Game'
+              : `${progress.total - progress.settlementsPlaced} settlements, `
+                + `${progress.total - progress.roadsPlaced} roads to go`}
           </Text>
         </TouchableOpacity>
       </ScrollView>
@@ -1082,7 +1135,7 @@ export default function CatanBoardScanScreen() {
     review: 'Review Board',
     placement: isEditMode
       ? `Edit: ${currentPlayer?.displayName ?? 'Player'}`
-      : `Place Settlements — ${currentPlayerIdx + 1}/${players.length}`,
+      : `Opening — turn ${activeSlot + 1} of ${slots.length || players.length * 2}`,
   };
 
   const hasModalOpen = correctionIdx !== null || showSaveModal || showLoadModal;
@@ -1220,6 +1273,14 @@ const s = StyleSheet.create({
   secondaryBtnText: { fontSize: 14 },
 
   // Placement phase
+  swatchRow: { flexDirection: 'row', gap: 10, justifyContent: 'center', paddingVertical: 4 },
+  swatch: { width: 30, height: 30, borderRadius: 15, borderWidth: 3 },
+  stripCard: { borderWidth: 1, borderRadius: 12, padding: 12, gap: 8 },
+  stripRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
+  /** 44 keeps the turn chips at a real finger target; they are also undo. */
+  stripChip: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  stripChipText: { fontSize: 13 },
+  stripHint: { fontSize: 11, textAlign: 'center' },
   placementScroll: { padding: 16, gap: 10, paddingBottom: 40 },
   playerBar: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 12, borderRadius: 12, borderWidth: 1, borderLeftWidth: 4 },
   playerDot: { width: 12, height: 12, borderRadius: 6, marginTop: 3, flexShrink: 0 },

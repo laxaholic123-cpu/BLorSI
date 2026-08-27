@@ -108,6 +108,44 @@ const INTERSECTION_POINTS: ReadonlyMap<string, { x: number; y: number }> = (() =
   return map;
 })();
 
+/**
+ * Screen position of every ROAD, keyed by the same edge id the placement
+ * service uses: the two corner ids, sorted, joined by a pipe.
+ *
+ * Derived from the corner points rather than recomputed, so a road can never
+ * draw somewhere its own endpoints are not.
+ */
+const EDGE_SEGMENTS: ReadonlyMap<string, { x1: number; y1: number; x2: number; y2: number;
+                                           mx: number; my: number }> = (() => {
+  const map = new Map<string, { x1: number; y1: number; x2: number; y2: number;
+                                mx: number; my: number }>();
+  HEX_POS.forEach((_pos, hexIndex) => {
+    for (let vertex = 0; vertex < 6; vertex++) {
+      const a = intersectionIdAt(hexIndex, vertex);
+      const b = intersectionIdAt(hexIndex, (vertex + 1) % 6);
+      const [lo, hi] = a < b ? [a, b] : [b, a];
+      const id = `${lo}|${hi}`;
+      if (map.has(id)) continue;
+      const pa = INTERSECTION_POINTS.get(lo);
+      const pb = INTERSECTION_POINTS.get(hi);
+      if (!pa || !pb) continue;
+      map.set(id, { x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y,
+                    mx: (pa.x + pb.x) / 2, my: (pa.y + pb.y) / 2 });
+    }
+  });
+  return map;
+})();
+
+/**
+ * Touch radius for a road.
+ *
+ * A CIRCLE at the edge midpoint rather than a thick transparent line, because
+ * a Circle is the primitive already proven to receive taps on Android in this
+ * component and a transparent stroke is not. Two edges meeting at a corner put
+ * their midpoints about 0.87 x HEX_R apart, so 14 keeps them disjoint.
+ */
+const ROAD_HIT_R = 14;
+
 /** Pointy-top hexagon SVG points string for the given centre and radius. */
 function hexPoints(cx: number, cy: number, r: number): string {
   const ANGLES = [-90, -30, 30, 90, 150, 210];
@@ -164,6 +202,24 @@ export interface CatanHexGridProps {
   onIntersectionPress?: (intersectionId: string) => void;
   /** Corner ids to mark as taken, with the colour to mark them in. */
   intersectionMarks?: Record<string, string>;
+  /**
+   * When given, ONLY these corners are drawn and tappable.
+   *
+   * Restricting to the legal set is the single biggest thing that reduces
+   * mis-taps here: 54 corners at a ~28px target is dense, and a mis-tap does
+   * not look like an error — it silently records production the player never
+   * had. Showing six legal corners instead of fifty-four makes the wrong tap
+   * mostly unreachable rather than merely discouraged.
+   */
+  legalIntersections?: readonly string[];
+  /** Show tappable roads along the hex edges. */
+  showRoads?: boolean;
+  /** Called with the edge id when a road is tapped. */
+  onRoadPress?: (edgeId: string) => void;
+  /** Edge ids to draw as built, with the colour to draw them in. */
+  roadMarks?: Record<string, string>;
+  /** When given, ONLY these roads are drawn and tappable. */
+  legalRoads?: readonly string[];
   style?: StyleProp<ViewStyle>;
 }
 
@@ -178,6 +234,11 @@ export function CatanHexGrid({
   showIntersections = false,
   onIntersectionPress,
   intersectionMarks,
+  legalIntersections,
+  showRoads = false,
+  onRoadPress,
+  roadMarks,
+  legalRoads,
   style,
 }: CatanHexGridProps) {
   const pad = ports && ports.length > 0 ? PORT_PAD : 0;
@@ -306,9 +367,47 @@ export function CatanHexGrid({
       {/* Settlement corners. Drawn above the hexes so the touch target is not
           swallowed by the hex polygons beneath, and as concrete <Circle>s
           rather than a <G> — Android only dispatches events on real shapes. */}
+      {/* Roads. Drawn before the corners so that where a road's hit circle
+          and a corner's hit circle overlap, the CORNER wins — settlements are
+          placed first and are the more consequential of the two. */}
+      {(showRoads || roadMarks) &&
+        [...EDGE_SEGMENTS.entries()].map(([id, seg]) => {
+          const mark = roadMarks?.[id];
+          const offerable = showRoads && (!legalRoads || legalRoads.includes(id));
+          if (!mark && !offerable) return null;
+          return (
+            <G key={`rd-${id}`}>
+              <Line
+                x1={seg.x1}
+                y1={seg.y1}
+                x2={seg.x2}
+                y2={seg.y2}
+                stroke={mark ?? '#7B8FA8'}
+                strokeWidth={mark ? 7 : 4}
+                strokeLinecap="round"
+                opacity={mark ? 1 : 0.5}
+                pointerEvents="none"
+              />
+              {offerable && (
+                <Circle
+                  cx={seg.mx}
+                  cy={seg.my}
+                  r={ROAD_HIT_R}
+                  fill="transparent"
+                  onPress={onRoadPress ? () => onRoadPress(id) : undefined}
+                />
+              )}
+            </G>
+          );
+        })}
+
       {showIntersections &&
         [...INTERSECTION_POINTS.entries()].map(([id, pt]) => {
           const mark = intersectionMarks?.[id];
+          // A corner outside the legal set is not drawn at all, so it cannot be
+          // tapped by accident — but one already BUILT on stays visible,
+          // because the board should show what is there.
+          if (!mark && legalIntersections && !legalIntersections.includes(id)) return null;
           return (
             <G key={`ix-${id}`}>
               {/* The dot people see. Decorative: pointerEvents="none" so it
