@@ -560,6 +560,17 @@ ${JSON.stringify(payload)}`,
         PanResponder.create({
           onStartShouldSetPanResponder: () => true,
           onMoveShouldSetPanResponder: () => true,
+          /**
+           * Do not surrender the gesture once it has started.
+           *
+           * These handles sit inside a ScrollView, and the default answer to a
+           * termination request is YES — so a mostly-vertical drag gets claimed
+           * by the scroll container part way through. The handle stops tracking
+           * the finger and the page scrolls under it instead, which is reported
+           * as "the corner shoots back to where it was".
+           */
+          onPanResponderTerminationRequest: () => false,
+          onShouldBlockNativeResponder: () => true,
           // Read the live position from the ref, so the responder never has to
           // be rebuilt mid-drag just because the point moved.
           onPanResponderGrant: () => {
@@ -688,7 +699,22 @@ ${JSON.stringify(payload)}`,
 
           <View
             style={{ width: '100%', aspectRatio: shotAspect, marginVertical: 12 }}
-            onLayout={e => setBoxSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
+            onLayout={e => {
+              /**
+               * Only update when the size actually CHANGED.
+               *
+               * A fresh object on every layout pass changes `boxSize`'s
+               * identity, which re-runs the useMemo that builds the four
+               * PanResponders — replacing the responder instance mid-drag and
+               * killing the gesture. Android fires layout during scrolling, so
+               * this happened exactly when a drag was in progress.
+               */
+              const { width: w, height: h } = e.nativeEvent.layout;
+              setBoxSize(prev =>
+                prev && Math.abs(prev.w - w) < 0.5 && Math.abs(prev.h - h) < 0.5
+                  ? prev
+                  : { w, h });
+            }}
           >
             <Image
               source={{ uri: lastShotUri }}
