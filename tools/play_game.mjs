@@ -303,3 +303,16 @@ say.push(`hottest number: ${hot[0]} came up ${hot[1]} times in ${stats.totalRoll
 for (const s of say) console.log('  * ' + s);
 const named = new Set(say.flatMap(s => PLAYERS.filter(p => s.includes(p.displayName)).map(p => p.displayName)));
 console.log(`  -> ${named.size}/${PLAYERS.length} players could be named from data already computed`);
+
+// ── The accolades ────────────────────────────────────────────────────────────
+import { assignAccolades, profileRolls, ACCOLADE_COUNT, ACCOLADE_CATALOGUE }
+  from '../artifacts/dice-tracker/dist-game/catanAccolades.js';
+
+const profiles = profileRolls(PLAYERS, rolls, exposure);
+console.log(`
+ACCOLADES  (${ACCOLADE_COUNT} possible, from ${ACCOLADE_CATALOGUE.length} axes)`);
+for (const a of assignAccolades(stats.playerStats, profiles)) {
+  console.log(`  ${a.displayName.padEnd(6)} ${a.title.padEnd(24)} `
+    + `${a.rank}/${a.outOf} ${a.kind}  [${a.strength.toFixed(2)}]`);
+  console.log(`  ${''.padEnd(6)} ${a.detail}`);
+}
