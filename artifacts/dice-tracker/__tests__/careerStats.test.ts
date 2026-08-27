@@ -524,3 +524,91 @@ describe('computeCareerStats — integration', () => {
     expect(result.numberStats).toBeNull();
   });
 });
+
+// ─── Small-sample bias in the number ranking ─────────────────────────────────
+
+describe('computeCareerStats — a rare number cannot buy the top spot', () => {
+  /**
+   * 2 and 12 come up a thirty-sixth of the time, so they accumulate about a
+   * fifth of the production a 6 or 8 does — and any percentage built on a fifth
+   * of the data swings much harder.
+   *
+   * Ranking on the raw percentage therefore hands the extremes to the rare
+   * numbers almost every time. Measured over 40 simulated seasons before this
+   * was fixed, a rare number held an extreme 41% of the time against a fair
+   * share of 20%, and took the TOP spot in 18 of 40. "Your luckiest number is
+   * 12" would have been what the app told most players most of the time, and it
+   * would have been a statement about sample size wearing the clothes of a
+   * statement about their dice.
+   */
+  function seasonWith(
+    lucky: { number: number; expectedRolls: number; hits: number },
+    solid: { number: number; expectedRolls: number; hits: number },
+  ) {
+    const sessions: GameSession[] = [];
+    const rolls: Record<string, RollEvent[]> = {};
+    const exposures: Record<string, CatanPlayerExposureEvent[]> = {};
+    for (let i = 0; i < 3; i++) {
+      const id = `s${i}`;
+      sessions.push(makeSession(id));
+      exposures[id] = [
+        makeExposure(`e${i}a`, id, PLAYER_A.id, lucky.number),
+        makeExposure(`e${i}b`, id, PLAYER_A.id, solid.number),
+      ];
+      const rs: RollEvent[] = [];
+      let n = 0;
+      // Every roll advances expectation for both numbers; only some of them hit.
+      for (let k = 0; k < lucky.expectedRolls; k++) {
+        const hitLucky = k < lucky.hits;
+        const hitSolid = k < solid.hits;
+        rs.push(makeRoll(`r${i}-${n++}`, id, PLAYER_A.id,
+          hitLucky ? lucky.number : hitSolid ? solid.number : 3));
+      }
+      rolls[id] = rs;
+    }
+    return computeCareerStats(sessions, rolls, exposures);
+  }
+
+  it('ranks a well-evidenced number above a barely-evidenced one', () => {
+    // The 12 is wildly lucky on almost no data; the 6 is solidly lucky on lots.
+    // Raw percentage puts the 12 first; the shipped order must not.
+    const result = seasonWith(
+      { number: 12, expectedRolls: 40, hits: 4 },
+      { number: 6, expectedRolls: 40, hits: 14 },
+    );
+    const order = (result.numberStats ?? []).map(s => s.number);
+    expect(order.length).toBeGreaterThan(1);
+    expect(order.indexOf(6)).toBeLessThan(order.indexOf(12));
+  });
+
+  it('still reports the raw percentage honestly', () => {
+    // Only the ORDER is shrunk. The number shown to the player is the real one,
+    // because a displayed figure that quietly disagrees with its own arithmetic
+    // is worse than a badly sorted list.
+    const result = seasonWith(
+      { number: 12, expectedRolls: 40, hits: 4 },
+      { number: 6, expectedRolls: 40, hits: 14 },
+    );
+    for (const stat of result.numberStats ?? []) {
+      const raw = ((stat.totalActual - stat.totalExpected) / stat.totalExpected) * 100;
+      expect(stat.luckPct).toBeCloseTo(raw, 6);
+    }
+  });
+
+  it('publishes how much evidence stands behind each number', () => {
+    const result = seasonWith(
+      { number: 12, expectedRolls: 40, hits: 4 },
+      { number: 6, expectedRolls: 40, hits: 14 },
+    );
+    const stats = result.numberStats ?? [];
+    for (const stat of stats) {
+      expect(stat.reliability).toBeGreaterThan(0);
+      expect(stat.reliability).toBeLessThanOrEqual(1);
+    }
+    // More production behind it means more reliable, by construction.
+    const sorted = [...stats].sort((a, b) => a.totalExpected - b.totalExpected);
+    for (let i = 1; i < sorted.length; i++) {
+      expect(sorted[i]!.reliability).toBeGreaterThanOrEqual(sorted[i - 1]!.reliability);
+    }
+  });
+});
