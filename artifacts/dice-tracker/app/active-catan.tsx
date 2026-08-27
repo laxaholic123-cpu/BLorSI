@@ -870,7 +870,12 @@ const styles = StyleSheet.create({
   topScroll: { flex: 1 },
   topScrollContent: { paddingBottom: 8 },
   // The dice pad is OUTSIDE the scroll view so it is always visible and reachable.
-  gridWrapper: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6, gap: 10 },
+  /**
+   * Never shrinks. The ScrollView above it has flex:1 and will give way; the
+   * roll pad is the one thing on this screen that must always be fully
+   * reachable, since the whole screen exists to record a roll.
+   */
+  gridWrapper: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6, gap: 10, flexShrink: 0 },
 
   sevenBtn: {
     width: '100%',
@@ -885,7 +890,14 @@ const styles = StyleSheet.create({
   sevenBtnNumber: { fontSize: 28 },
   sevenBtnLabel: { fontSize: 14, letterSpacing: 1.5 },
 
-  numGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center', flex: 1 },
+  /**
+   * No flex:1. It used to have it, inside a wrapper that deliberately has none
+   * — so the grid was told to fill a parent that was sizing itself to the
+   * grid. The ten buttons wrap onto two rows; that circularity collapsed it to
+   * one, and the build-pill row below drew over the remainder. Reported from a
+   * device as "most of the numbers cannot be tapped".
+   */
+  numGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
   numBtn: { width: '18%', aspectRatio: 1, borderRadius: 12, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', gap: 2, minHeight: 52 },
   numBtnValue: { fontSize: 20 },
   numBtnPips: { fontSize: 9, letterSpacing: 1 },
