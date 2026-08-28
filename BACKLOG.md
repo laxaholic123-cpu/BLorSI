@@ -52,12 +52,31 @@ may be more or less done than it looks.
 
 **Deferred — worth doing on a quiet day**
 
-- **Settlement distance rule in board-mode exposure entry.** Settlements must be
-  two edges apart; the app blocks occupied corners but not adjacent ones. Agreed
-  as low priority: at a real table the other players enforce it, so a violating
-  placement is unlikely to be entered in the first place. Worth adding as a
-  non-blocking warning (not a block) when there is time — it would catch a
-  mis-tap, which is the realistic failure, rather than an illegal placement.
+- ~~**Settlement distance rule in board-mode exposure entry.**~~ Done. Enforced
+  in `catanPlacement.settlementProblem`, and it turned out to be free rather
+  than a chore: once placement moved to CORNERS, an illegal corner is simply
+  not offered. The reasoning that deferred it was right about tables and wrong
+  about the failure — the realistic error is a mis-tap, not a rules dispute.
+
+**Untested on a device — the current risk, in one place**
+
+Everything below was built and verified offline (typecheck, 863 tests, bundle)
+and has never run on hardware. Grouped because they are one testing session,
+not five:
+
+- The rebuilt opening placement: corner taps, road taps, the turn strip,
+  long-press to clear one turn, colour picking.
+- Mid-game road building from the new Road pill.
+- Accolade cards on the results screen.
+- The roll-pad fix — `numGrid` had `flex: 1` inside a wrapper with none, which
+  collapsed ten buttons to one row. Reported as "most of the numbers cannot be
+  tapped" and never confirmed fixed.
+- The corner-handle drag fix (ScrollView stealing the gesture, and PanResponders
+  being rebuilt mid-drag by an `onLayout` that allocated a new object every pass).
+
+The SVG hit targets are the ones to watch. Android touch dispatch has broken
+this project three times — long-press correction, corner handles, and the roll
+pad — and every one of them worked on web.
 
 **Lower**
 
@@ -330,10 +349,14 @@ may be more or less done than it looks.
     touch targets, which is precisely where Android SVG dispatch has bitten this
     project before — web clicks prove the handler wiring, not the touch target.
 
-    **Deliberately not done:** the two-edges-apart distance rule is not enforced.
-    Occupied corners are blocked because that is unambiguous, but this is a
-    recording tool, not a referee, and a mis-tap is visible in the settlement
-    list.
+    **Superseded 26 Aug 2026.** The whole screen was rebuilt on
+    `catanPlacement` after device feedback: corners instead of three-hex
+    selection, snake draft with free navigation, roads, colour picking,
+    per-turn clearing, and the distance rule enforced by only offering legal
+    corners. Photo-detected pre-fill was removed as a correctness fix — a piece
+    is detected on a HEX and was recorded as touching that one hex, when a
+    settlement sits on a CORNER and touches up to three, so every pre-filled
+    placement understated its owner's exposure.
 
 12. ~~**Hardening pass before real-life testing.**~~ Done — five issues, four
     of them found by trying to force edge cases rather than by anything failing
