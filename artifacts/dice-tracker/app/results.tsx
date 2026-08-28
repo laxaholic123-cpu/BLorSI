@@ -27,6 +27,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { useGame } from '@/context/GameContext';
+import { assignAccolades, profileRolls } from '@/services/catanAccolades';
 import { useSettings } from '@/context/SettingsContext';
 import { computeAllStats, formatDuration } from '@/services/stats';
 import { computeCatanGameStats } from '@/services/catanStats';
@@ -67,6 +68,23 @@ export default function ResultsScreen() {
         ? computeCatanGameStats(activeSession, rollEvents, exposureEvents, { simulate: true })
         : null,
     [activeSession, rollEvents, exposureEvents],
+  );
+
+  /**
+   * One accolade per player, on a distinct axis, with their place stated.
+   *
+   * Needs the roll and dev-card logs as well as the production stats, because
+   * half the axes are about what a player's own DICE and DRAWS did — which
+   * nothing else on this screen looks at.
+   */
+  const accolades = useMemo(
+    () => {
+      if (!activeSession || !catanStats) return [];
+      const profiles = profileRolls(
+        activeSession.players, rollEvents, exposureEvents, devCardEvents);
+      return assignAccolades(catanStats.playerStats, profiles);
+    },
+    [activeSession, catanStats, rollEvents, exposureEvents, devCardEvents],
   );
 
   const devCardStats = useMemo(
@@ -711,6 +729,49 @@ export default function ResultsScreen() {
               </>
             )}
 
+            {/* One accolade per player, on a distinct axis, with their place. */}
+            {accolades.length > 0 && (
+              <>
+                <SectionLabel text="THE TABLE" colors={colors} />
+                <View style={{ gap: 8 }}>
+                  {accolades.map(a => {
+                    const player = activeSession?.players.find(p => p.id === a.playerId);
+                    const tint = player?.color ?? colors.primary;
+                    return (
+                      <View
+                        key={a.playerId}
+                        style={[styles.accoladeCard, {
+                          backgroundColor: colors.muted,
+                          borderColor: colors.border,
+                          borderLeftColor: tint,
+                        }]}
+                      >
+                        <View style={styles.accoladeHead}>
+                          <View style={[styles.accoladeDot, { backgroundColor: tint }]} />
+                          <Text style={[styles.accoladeName, {
+                            color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+                            {player?.displayName ?? 'Player'}
+                          </Text>
+                          <Text style={[styles.accoladeRank, {
+                            color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                            {a.rank}/{a.outOf}
+                          </Text>
+                        </View>
+                        <Text style={[styles.accoladeTitle, {
+                          color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+                          {a.title}
+                        </Text>
+                        <Text style={[styles.accoladeDetail, {
+                          color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                          {a.detail}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              </>
+            )}
+
             {/* Catan verdict */}
             {catanStats.findings && (
               <>
@@ -853,6 +914,14 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 12 },
 
   // Verdict
+  /** Left-edged in the player's colour, so the table is scannable by colour. */
+  accoladeCard: { borderWidth: 1, borderLeftWidth: 4, borderRadius: 10, padding: 12, gap: 3 },
+  accoladeHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  accoladeDot: { width: 8, height: 8, borderRadius: 4 },
+  accoladeName: { fontSize: 11, letterSpacing: 0.8, flex: 1 },
+  accoladeRank: { fontSize: 11 },
+  accoladeTitle: { fontSize: 17 },
+  accoladeDetail: { fontSize: 13, lineHeight: 18 },
   verdictCard: { borderRadius: 12, borderWidth: 1, padding: 16, gap: 8, marginBottom: 4 },
   verdictHeadline: { fontSize: 18 },
   verdictBody: { fontSize: 14, lineHeight: 22 },

@@ -15,7 +15,7 @@
  * City upgrades are non-retroactive: weight 2 applies only from this turn forward.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   Alert,
   Platform,
@@ -33,16 +33,21 @@ import { useColors } from '@/hooks/useColors';
 import { useGame } from '@/context/GameContext';
 import { useSettings } from '@/context/SettingsContext';
 import { getBuildingStatesAtTurn, getActiveRobberBlockedNumbers } from '@/services/catanStats';
+import { allRoads, buildProblem, roadEvent, roadsOf } from '@/services/catanRoads';
+import { CatanHexGrid } from '@/components/CatanHexGrid';
+import { allEdges } from '@/services/catanPlacement';
+import { loadActiveBoard, type ActiveBoard } from '@/services/storage';
 import { generateId } from '@/types/models';
 import type { CatanPlayerExposureEvent } from '@/types/models';
 
 const CATAN_NUMBERS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12];
 const PIPS: Record<number, number> = { 2:1,3:2,4:3,5:4,6:5,8:5,9:4,10:3,11:2,12:1 };
 
-type ActionType = 'add_settlement' | 'upgrade_city' | 'remove_building' | 'start_robber' | 'end_robber' | 'correct_exposure' | null;
+type ActionType = 'add_settlement' | 'build_road' | 'upgrade_city' | 'remove_building' | 'start_robber' | 'end_robber' | 'correct_exposure' | null;
 
 const ACTIONS: Array<{ type: ActionType; label: string; desc: string; icon: string; destructive?: boolean }> = [
   { type: 'add_settlement', label: 'Add Settlement', desc: 'Record a new settlement placed this turn', icon: 'home-outline' },
+  { type: 'build_road', label: 'Build Road', desc: 'Record a road — decides Longest Road', icon: 'git-branch-outline' },
   { type: 'upgrade_city', label: 'Upgrade to City', desc: 'Doubles production from this turn forward (non-retroactive)', icon: 'business-outline' },
   { type: 'remove_building', label: 'Remove Building', desc: 'Mark a building as no longer producing', icon: 'trash-outline', destructive: true },
   { type: 'start_robber', label: 'Start Robber Block', desc: 'Block production from a number for a player', icon: 'ban-outline', destructive: true },
@@ -58,9 +63,23 @@ export default function CatanDevelopmentScreen() {
   const webTop = Platform.OS === 'web' ? 67 : 0;
 
   const { action: actionParam } = useLocalSearchParams<{ action?: string }>();
+
+  /**
+   * The board, needed only to draw the road picker.
+   *
+   * Loaded lazily rather than held by the context: every other action on this
+   * screen works from numbers alone, and a road is the first thing that needs
+   * to know what the island looks like.
+   */
+  const [board, setBoard] = useState<ActiveBoard | null>(null);
+  const [selectedRoad, setSelectedRoad] = useState<string | null>(null);
+  useEffect(() => { void loadActiveBoard().then(setBoard); }, []);
   const initialAction = (ACTIONS.find(a => a.type === actionParam)?.type ?? null) as ActionType;
   const [selectedAction, setSelectedAction] = useState<ActionType>(initialAction);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
+  // A road chosen for one player is meaningless for another, and a stale
+  // selection would be saved against whoever is picked next.
+  useEffect(() => { setSelectedRoad(null); }, [selectedPlayerId, selectedAction]);
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [selectedNumbers, setSelectedNumbers] = useState<number[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -150,6 +169,20 @@ export default function CatanDevelopmentScreen() {
           affectedNumbers: selectedNumbers,
           hexIdentifiers: [generateId()],
           productionWeight: 1,
+        };
+      } else if (selectedAction === 'build_road') {
+        if (!selectedRoad) {
+          Alert.alert('Select a road', 'Tap one of the highlighted edges.');
+          return;
+        }
+        newEvent = {
+          ...baseEvent,
+          eventType: 'roadBuilt',
+          hexIdentifiers: [selectedRoad],
+          // A road produces nothing. Both of these must stay empty, or roads
+          // would inflate expected production for everyone who builds one.
+          affectedNumbers: [],
+          productionWeight: 0,
         };
       } else if (selectedAction === 'upgrade_city') {
         if (!selectedLocationId) {
@@ -361,6 +394,61 @@ export default function CatanDevelopmentScreen() {
     </View>
   );
 
+  /**
+   * The road picker: the board, with only edges this player may legally build
+   * on offered.
+   *
+   * Legality is the whole interface here. A road must touch one of the
+   * player's own roads or own buildings, and there are 72 edges — offering all
+   * of them and complaining afterwards would make the rule something the
+   * player discovers by being told off. Showing three tappable edges makes it
+   * something they never have to think about.
+   */
+  const renderRoadPicker = () => {
+    if (!board || !selectedPlayerId || !activeSession) return null;
+
+    const mine = roadsOf(exposureEvents, selectedPlayerId);
+    const taken = new Set(allRoads(exposureEvents, activeSession.players.map(p => p.id)).keys());
+    const myCorners = new Set(
+      getBuildingStatesAtTurn(selectedPlayerId, Number.MAX_SAFE_INTEGER, exposureEvents)
+        .map(b => b.locationId),
+    );
+    const offerable = allEdges()
+      .map(e => e.id)
+      .filter(id => buildProblem(id, mine, myCorners, taken) === null);
+
+    const marks: Record<string, string> = {};
+    for (const [edgeId, ownerId] of allRoads(
+      exposureEvents, activeSession.players.map(p => p.id))) {
+      marks[edgeId] = activeSession.players.find(p => p.id === ownerId)?.color ?? '#888';
+    }
+    if (selectedRoad) {
+      marks[selectedRoad] =
+        activeSession.players.find(p => p.id === selectedPlayerId)?.color ?? colors.primary;
+    }
+
+    return (
+      <View style={{ gap: 8 }}>
+        <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+          {offerable.length === 0
+            ? 'NO LEGAL ROADS — A ROAD MUST TOUCH YOUR OWN ROAD OR BUILDING'
+            : `TAP A ROAD · ${offerable.length} LEGAL`}
+        </Text>
+        <CatanHexGrid
+          hexes={board.hexes}
+          ports={board.ports}
+          showRoads
+          legalRoads={offerable}
+          roadMarks={marks}
+          onRoadPress={id => {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setSelectedRoad(id);
+          }}
+        />
+      </View>
+    );
+  };
+
   const renderActionForm = () => {
     if (!selectedAction) return null;
     const needsPlayer = true;
@@ -378,6 +466,7 @@ export default function CatanDevelopmentScreen() {
           'SELECT BUILDING TO CORRECT',
         )}
         {selectedPlayerId && showRobberEndPicker && renderRobberBlockPicker()}
+        {selectedPlayerId && selectedAction === 'build_road' && renderRoadPicker()}
         {selectedPlayerId && showNumberPicker && renderNumberPicker(
           selectedAction === 'start_robber' ? 'NUMBER(S) BEING BLOCKED' :
           selectedAction === 'correct_exposure' ? 'CORRECTED NUMBER(S)' :

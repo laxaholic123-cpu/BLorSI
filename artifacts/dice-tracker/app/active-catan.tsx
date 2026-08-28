@@ -629,6 +629,14 @@ export default function ActiveCatanScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
+          onPress={() => router.push('/catan-development?action=build_road' as any)}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="git-branch-outline" size={14} color={colors.primary} />
+          <Text style={[styles.buildPillText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>Road</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
           onPress={() => router.push('/catan-development?action=upgrade_city' as any)}
           activeOpacity={0.8}
         >
