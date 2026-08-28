@@ -23,6 +23,7 @@ import {
   toExposureEvents,
 } from '@/services/catanPlacement';
 import { getAllIntersections } from '@/services/catanBoard';
+import { getBuildingStatesAtTurn } from '@/services/catanStats';
 import type { CatanHexDef } from '@/types/models';
 
 const PLAYERS = ['p1', 'p2', 'p3', 'p4'];
@@ -295,16 +296,39 @@ describe('toExposureEvents', () => {
     expect(toExposureEvents(openingOrder(PLAYERS), 'sess', hexes)).toEqual([]);
   });
 
-  it('does NOT emit roads', () => {
-    // Exposure describes what a position PRODUCES, and a road produces nothing.
-    // Recording one would inflate every player's expected production.
+  it('emits roads that CANNOT affect production', () => {
+    // Roads have to persist for Longest Road, and they ride in the same event
+    // stream as buildings — so the thing that matters is that they carry no
+    // production. A road with a weight or an affected number would inflate
+    // expected production for everyone who built one, which is the quiet kind
+    // of wrong this app exists to avoid.
     const corner = getAllIntersections()[20]!.id;
     const edge = allEdges().find(e => e.a === corner || e.b === corner)!;
     let slots = placeSettlement(openingOrder(PLAYERS), 0, corner).slots;
     slots = placeRoad(slots, 0, edge.id).slots;
     const events = toExposureEvents(slots, 'sess', hexes);
-    expect(events).toHaveLength(1);
-    expect(events[0]!.eventType).toBe('initialSettlement');
+
+    const road = events.find(e => e.eventType === 'roadBuilt')!;
+    expect(road).toBeDefined();
+    expect(road.productionWeight).toBe(0);
+    expect(road.affectedNumbers).toEqual([]);
+    expect(road.hexIdentifiers![0]).toBe(edge.id);
+
+    // And the settlement is still its own event.
+    expect(events.filter(e => e.eventType === 'initialSettlement')).toHaveLength(1);
+  });
+
+  it('is ignored by the building reconstruction that feeds production', () => {
+    // The guarantee behind the one above: getBuildingStatesAtTurn opts IN to
+    // building types, so a road is invisible to it. If that ever became an
+    // opt-out, every road would silently become a building.
+    const corner = getAllIntersections()[20]!.id;
+    const edge = allEdges().find(e => e.a === corner || e.b === corner)!;
+    let slots = placeSettlement(openingOrder(PLAYERS), 0, corner).slots;
+    slots = placeRoad(slots, 0, edge.id).slots;
+    const events = toExposureEvents(slots, 'sess', hexes);
+    const buildings = getBuildingStatesAtTurn(PLAYERS[0]!, 99, events);
+    expect(buildings).toHaveLength(1);
   });
 
   it('carries the numbers the corner actually touches', () => {

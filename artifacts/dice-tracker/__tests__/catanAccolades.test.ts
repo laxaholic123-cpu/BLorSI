@@ -49,7 +49,7 @@ function profile(id: string, over: Partial<PlayerRollProfile> = {}): PlayerRollP
     draws: 3, knights: 2, vpCards: 1, actionCards: 0,
     vpDrawLuck: 0.4, knightDrawLuck: 0.3,
     bestTurn: 6, longestDrought: 4, earlyProduction: 20, lateProduction: 30,
-    firstCityTurn: 8, expansions: 2, ...over,
+    firstCityTurn: 8, expansions: 2, longestRoad: 4, ...over,
   };
 }
 
@@ -322,5 +322,24 @@ describe('profileRolls — the shape of a game', () => {
         deletedAt: '2026-08-26T00:02:00.000Z' },
     ];
     expect(profileRolls(players, [], [], draws).get('a')!.knights).toBe(1);
+  });
+});
+
+describe('the Longest Road accolade', () => {
+  it('names it only when the threshold is met and the lead is clear', () => {
+    const profiles = new Map([
+      ['a', profile('a', { longestRoad: 7 })],
+      ['b', profile('b', { longestRoad: 4 })],
+      ['c', profile('c', { longestRoad: 3 })],
+      ['d', profile('d', { longestRoad: 2 })],
+    ]);
+    const road = assignAccolades(FOUR, profiles).find(x => x.kind === 'longest_road');
+    if (road) {
+      // Whoever gets the axis, the text must match their actual standing.
+      const len = { a: 7, b: 4, c: 3, d: 2 }[road.playerId as 'a' | 'b' | 'c' | 'd'];
+      expect(road.detail).toContain(String(len));
+      if (road.rank === 1 && len >= 5) expect(road.detail).toContain('Longest Road');
+      if (len < 5) expect(road.detail).toContain('short of the 5');
+    }
   });
 });

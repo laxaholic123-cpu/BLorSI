@@ -43,6 +43,7 @@ import {
   netWeightForNumber,
 } from '@/services/catanStats';
 import { DEV_DECK_COMPOSITION, DEV_DECK_SIZE } from '@/services/devCards';
+import { LONGEST_ROAD_MINIMUM, longestRoadByPlayer } from '@/services/catanRoads';
 import type {
   CatanDevCardEvent,
   CatanPlayerExposureEvent,
@@ -107,6 +108,14 @@ export interface PlayerRollProfile {
   firstCityTurn: number | null;
   /** Buildings added after the opening placement. */
   expansions: number;
+  /**
+   * Longest continuous run of their road, with opponents' buildings cutting it.
+   *
+   * The only part of a Catan score that is a graph problem rather than a count,
+   * and the only accolade here that another player can take away from you by
+   * placing a settlement.
+   */
+  longestRoad: number;
 }
 
 export type AccoladeKind = string;
@@ -430,6 +439,21 @@ const AXES: Axis[] = [
       + `${place(r, n)}.`,
   },
   {
+    kind: 'longest_road',
+    weight: 1.02,
+    titles: ['Road Warrior', 'Some Track Laid', 'Went Nowhere'],
+    value: (p, c) => prof(p, c)?.longestRoad ?? null,
+    detail: (p, c, r, n) => {
+      const len = prof(p, c)!.longestRoad;
+      return `${len} road${len === 1 ? '' : 's'} in one continuous run, ${place(r, n)}`
+        + (r === 1 && len >= LONGEST_ROAD_MINIMUM
+          ? ' — Longest Road.'
+          : len < LONGEST_ROAD_MINIMUM
+            ? `, short of the ${LONGEST_ROAD_MINIMUM} needed to claim it.`
+            : '.');
+    },
+  },
+  {
     kind: 'doubles',
     weight: 1.01,
     titles: ['Seeing Double', 'The Odd Pair', 'Never Doubles'],
@@ -515,7 +539,28 @@ export function profileRolls(
       lateProduction: 0,
       firstCityTurn: null,
       expansions: 0,
+      longestRoad: 0,
     });
+  }
+
+  // Longest Road, with every OTHER player's buildings cutting each network.
+  const cornersByPlayer = new Map<string, Set<string>>();
+  for (const player of players) {
+    const corners = new Set<string>();
+    for (const e of exposureEvents) {
+      if (e.playerId !== player.id) continue;
+      if (e.eventType !== 'initialSettlement'
+        && e.eventType !== 'settlementBuilt'
+        && e.eventType !== 'cityUpgrade') continue;
+      const corner = e.hexIdentifiers?.[0];
+      if (corner) corners.add(corner);
+    }
+    cornersByPlayer.set(player.id, corners);
+  }
+  const roadLengths = longestRoadByPlayer(
+    exposureEvents, players.map(p => p.id), cornersByPlayer);
+  for (const player of players) {
+    out.get(player.id)!.longestRoad = roadLengths.get(player.id) ?? 0;
   }
 
   // When did each player first build a city, and how much did they expand?

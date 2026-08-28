@@ -316,10 +316,13 @@ export function placementProgress(slots: readonly PlacementSlot[]): PlacementPro
  * Turn finished placements into the exposure events the stats path already
  * understands.
  *
- * Roads are deliberately NOT emitted. Exposure events describe what a position
- * PRODUCES, and a road produces nothing — recording one as exposure would
- * inflate every player's expected production. They stay in the placement state,
- * where a future Longest Road feature can find them.
+ * Roads ARE emitted, as `roadBuilt` — but with `productionWeight` 0 and no
+ * affected numbers, because a road produces nothing. That is safe only because
+ * every consumer of this stream opts IN to the types it cares about rather
+ * than treating anything unrecognised as a building; were it the other way
+ * round, roads would inflate expected production for everyone who built one.
+ *
+ * They need to persist so Longest Road can be computed from a finished game.
  */
 export function toExposureEvents(
   slots: readonly PlacementSlot[],
@@ -329,6 +332,20 @@ export function toExposureEvents(
 ): CatanPlayerExposureEvent[] {
   const events: CatanPlayerExposureEvent[] = [];
   for (const slot of slots) {
+    if (slot.road) {
+      events.push({
+        id: `${sessionId}-openroad-${slot.index}`,
+        sessionId,
+        playerId: slot.playerId,
+        eventType: 'roadBuilt',
+        turnNumber: 0,
+        timestamp: now,
+        hexIdentifiers: [slot.road],
+        affectedNumbers: [],
+        productionWeight: 0,
+        robberBlocked: false,
+      });
+    }
     if (!slot.settlement) continue;
     const hexIndices = hexesForIntersectionId(slot.settlement);
     const touched = hexIndices.map(i => hexes[i]).filter(Boolean) as CatanHexDef[];

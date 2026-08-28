@@ -48,6 +48,19 @@ export type CatanExposureEventType =
   | 'settlementBuilt'
   | 'cityUpgrade'
   | 'buildingRemoved'
+  /**
+   * A road. Rides in the same event stream as buildings but is NOT a building:
+   * `hexIdentifiers[0]` is an edge id, `productionWeight` is 0 and
+   * `affectedNumbers` is empty, because a road produces nothing.
+   *
+   * Safe to add because every consumer opts IN to the types it cares about —
+   * `BUILDING_TYPES.includes(...)`, `=== 'initialSettlement'` — rather than
+   * treating everything unrecognised as a building. Were any of them written
+   * the other way round, roads would silently inflate expected production for
+   * every player.
+   */
+  | 'roadBuilt'
+  | 'roadRemoved'
   | 'robberBlockStarted'
   | 'robberBlockEnded'
   | 'manualCorrection';
