@@ -36,6 +36,12 @@ import { getBuildingStatesAtTurn, getActiveRobberBlockedNumbers } from '@/servic
 import { allRoads, buildProblem, roadEvent, roadsOf } from '@/services/catanRoads';
 import { CatanHexGrid } from '@/components/CatanHexGrid';
 import { allEdges } from '@/services/catanPlacement';
+import {
+  boardStateAtTurn,
+  legalMidGameCorners,
+  midGameSettlementProblem,
+  numbersAtCorner,
+} from '@/services/catanBoardState';
 import { loadActiveBoard, type ActiveBoard } from '@/services/storage';
 import { generateId } from '@/types/models';
 import type { CatanPlayerExposureEvent } from '@/types/models';
@@ -73,13 +79,26 @@ export default function CatanDevelopmentScreen() {
    */
   const [board, setBoard] = useState<ActiveBoard | null>(null);
   const [selectedRoad, setSelectedRoad] = useState<string | null>(null);
+  /**
+   * Corner chosen for a new settlement, when the board is known.
+   *
+   * This is the whole point of the mid-game rework. A settlement used to be
+   * recorded as a list of NUMBERS with a random id, so it produced correctly
+   * and existed nowhere — it could not be drawn, and its exposure was whatever
+   * the player said it was. Tapping a corner derives the numbers instead, and
+   * the placement becomes a real board position like the opening ones.
+   */
+  const [selectedCorner, setSelectedCorner] = useState<string | null>(null);
   useEffect(() => { void loadActiveBoard().then(setBoard); }, []);
   const initialAction = (ACTIONS.find(a => a.type === actionParam)?.type ?? null) as ActionType;
   const [selectedAction, setSelectedAction] = useState<ActionType>(initialAction);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   // A road chosen for one player is meaningless for another, and a stale
   // selection would be saved against whoever is picked next.
-  useEffect(() => { setSelectedRoad(null); }, [selectedPlayerId, selectedAction]);
+  useEffect(() => {
+    setSelectedRoad(null);
+    setSelectedCorner(null);
+  }, [selectedPlayerId, selectedAction]);
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [selectedNumbers, setSelectedNumbers] = useState<number[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -98,6 +117,37 @@ export default function CatanDevelopmentScreen() {
     if (!selectedPlayerId) return [];
     return getBuildingStatesAtTurn(selectedPlayerId, currentTurn, exposureEvents);
   }, [selectedPlayerId, currentTurn, exposureEvents]);
+
+  /**
+   * The board as it stands, for everybody.
+   *
+   * Hooks here MUST stay above the `!activeSession` return below — this screen
+   * has already been broken once by a hook added after an early return, which
+   * changes the hook count between renders and swaps the whole screen for the
+   * error boundary. See CLAUDE.md.
+   */
+  const snapshot = useMemo(
+    () => boardStateAtTurn(
+      exposureEvents,
+      (activeSession?.players ?? []).map(p => p.id),
+      currentTurn,
+    ),
+    [exposureEvents, activeSession, currentTurn],
+  );
+
+  /** Corners a new settlement could legally take — occupancy and distance. */
+  const offeredCorners = useMemo(
+    () => (board ? legalMidGameCorners(snapshot) : []),
+    [board, snapshot],
+  );
+
+  /** What the chosen corner produces, derived from the board rather than typed. */
+  const cornerNumbers = useMemo(
+    () => (selectedCorner && board
+      ? numbersAtCorner(selectedCorner, board.hexes.map(h => h.number ?? null))
+      : []),
+    [selectedCorner, board],
+  );
 
   // Active robber blocks for selected player
   const activeRobberBlocks = useMemo(() => {
@@ -159,17 +209,49 @@ export default function CatanDevelopmentScreen() {
       };
 
       if (selectedAction === 'add_settlement') {
-        if (selectedNumbers.length === 0) {
-          Alert.alert('Select numbers', 'Tap at least one hex number for this settlement.');
-          return;
+        /**
+         * Two ways in, and they are not equal.
+         *
+         * A corner tap gives a real board POSITION and derives the numbers
+         * from the board, so exposure is exact and the settlement can be
+         * drawn. The number pad gives numbers only and a random id — correct
+         * for production, invisible on the board. The pad stays because a
+         * scanned or hand-entered game may have no board at all, but the
+         * corner is preferred whenever one is available.
+         */
+        if (selectedCorner) {
+          const problem = midGameSettlementProblem(selectedCorner, snapshot);
+          if (problem) {
+            Alert.alert(
+              'Cannot build there',
+              problem === 'occupied'
+                ? 'Someone already holds that corner.'
+                : problem === 'too_close'
+                  ? 'Too close — settlements need a gap of at least one corner.'
+                  : 'That corner cannot be used.',
+            );
+            return;
+          }
+          newEvent = {
+            ...baseEvent,
+            eventType: 'settlementBuilt',
+            affectedNumbers: cornerNumbers,
+            hexIdentifiers: [selectedCorner],
+            productionWeight: 1,
+          };
+        } else {
+          if (selectedNumbers.length === 0) {
+            Alert.alert('Select numbers', 'Tap at least one hex number for this settlement.');
+            return;
+          }
+          newEvent = {
+            ...baseEvent,
+            eventType: 'settlementBuilt',
+            affectedNumbers: selectedNumbers,
+            hexIdentifiers: [generateId()],
+            productionWeight: 1,
+          };
         }
-        newEvent = {
-          ...baseEvent,
-          eventType: 'settlementBuilt',
-          affectedNumbers: selectedNumbers,
-          hexIdentifiers: [generateId()],
-          productionWeight: 1,
-        };
       } else if (selectedAction === 'build_road') {
         if (!selectedRoad) {
           Alert.alert('Select a road', 'Tap one of the highlighted edges.');
@@ -449,11 +531,73 @@ export default function CatanDevelopmentScreen() {
     );
   };
 
+  /**
+   * The corner picker: the board, with only legal corners offered.
+   *
+   * Same reasoning as the road picker — restricting to the legal set is what
+   * makes a mis-tap unreachable rather than merely discouraged, which matters
+   * more here than anywhere else because a mis-tapped corner does not look
+   * like an error. It silently records production the player never had.
+   *
+   * Existing buildings stay drawn, in their owner's colour, so the picker
+   * doubles as the confirmation that the app agrees with the table.
+   */
+  const renderCornerPicker = () => {
+    if (!board || !selectedPlayerId || !activeSession) return null;
+
+    const marks: Record<string, string> = {};
+    const cities: string[] = [];
+    for (const [cornerId, b] of snapshot.buildings) {
+      marks[cornerId] = activeSession.players.find(p => p.id === b.playerId)?.color ?? '#888';
+      if (b.weight >= 2) cities.push(cornerId);
+    }
+    const mine = activeSession.players.find(p => p.id === selectedPlayerId)?.color ?? colors.primary;
+    if (selectedCorner) marks[selectedCorner] = mine;
+
+    return (
+      <View style={{ gap: 8 }}>
+        <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+          {selectedCorner
+            ? `CORNER SELECTED · PRODUCES ${cornerNumbers.length ? cornerNumbers.join(', ') : 'NOTHING'}`
+            : `TAP A CORNER · ${offeredCorners.length} LEGAL`}
+        </Text>
+        <CatanHexGrid
+          hexes={board.hexes}
+          ports={board.ports}
+          showIntersections
+          legalIntersections={offeredCorners}
+          intersectionMarks={marks}
+          cityIntersections={cities}
+          onIntersectionPress={id => {
+            haptic();
+            setSelectedCorner(prev => (prev === id ? null : id));
+          }}
+        />
+        {selectedCorner ? (
+          <Text style={[styles.buildingBtnSub, { color: colors.mutedForeground, textAlign: 'center' }]}>
+            Numbers are read from the board, not typed. Tap the corner again to clear it.
+          </Text>
+        ) : (
+          <Text style={[styles.buildingBtnSub, { color: colors.mutedForeground, textAlign: 'center' }]}>
+            Or skip this and enter the numbers by hand below.
+          </Text>
+        )}
+      </View>
+    );
+  };
+
   const renderActionForm = () => {
     if (!selectedAction) return null;
     const needsPlayer = true;
     const showPlayerPicker = needsPlayer;
-    const showNumberPicker = ['add_settlement', 'start_robber', 'correct_exposure'].includes(selectedAction);
+    /**
+     * The number pad is HIDDEN for a settlement once a corner is chosen —
+     * having both live at once invites entering numbers that contradict the
+     * board, and the corner's numbers are the trustworthy ones.
+     */
+    const showNumberPicker =
+      (selectedAction === 'add_settlement' && !selectedCorner) ||
+      ['start_robber', 'correct_exposure'].includes(selectedAction);
     const showBuildingPicker = ['upgrade_city', 'remove_building', 'correct_exposure'].includes(selectedAction);
     const showRobberEndPicker = selectedAction === 'end_robber';
 
@@ -467,6 +611,7 @@ export default function CatanDevelopmentScreen() {
         )}
         {selectedPlayerId && showRobberEndPicker && renderRobberBlockPicker()}
         {selectedPlayerId && selectedAction === 'build_road' && renderRoadPicker()}
+        {selectedPlayerId && selectedAction === 'add_settlement' && renderCornerPicker()}
         {selectedPlayerId && showNumberPicker && renderNumberPicker(
           selectedAction === 'start_robber' ? 'NUMBER(S) BEING BLOCKED' :
           selectedAction === 'correct_exposure' ? 'CORRECTED NUMBER(S)' :

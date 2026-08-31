@@ -173,7 +173,16 @@ export function getLandIntersections(): LandIntersection[] {
  * exposure entry needs all of them.
  */
 export interface Intersection {
-  /** Stable id: the touching hex indices, ascending, joined by '-'. */
+  /**
+   * Stable POSITIONAL id — the lowest hex touching the corner and the vertex
+   * on it, e.g. `4v2`.
+   *
+   * It was once the touching hex indices joined by '-', which is unique only
+   * for the 24 INTERIOR corners: hex 0's three outer vertices all reduce to
+   * "0", and 54 corners collapsed to 48. Nothing threw — two players on
+   * different shore corners were told the spot was taken and their exposure
+   * quietly merged.
+   */
   id: string;
   /** One to three hexes, ascending. */
   hexIndices: number[];

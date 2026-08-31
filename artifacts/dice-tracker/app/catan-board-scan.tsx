@@ -1,16 +1,23 @@
 /**
  * Catan Board Scan Screen
  *
- * Lets the user photograph the Catan board, have it analysed by AI,
- * correct any low-confidence hexes manually, then tap hexes to record
- * each player's settlement positions — producing the same
- * CatanPlayerExposureEvent records as the existing quick/detailed setup.
+ * Lets the user photograph the Catan board, have it read on-device (the AI
+ * call backs that up when it fails), correct any low-confidence hexes, then
+ * walk the opening placement — producing the same CatanPlayerExposureEvent
+ * records as the existing quick/detailed setup.
  *
  * Phases:
  *   entry       → choose how to set up the board
- *   analyzing   → AI is reading the photo
+ *   analyzing   → the reader is working on the photo
  *   review      → inspect / correct the detected hex layout
- *   placement   → per-player settlement placement (hex-tap)
+ *   placement   → the opening snake draft, on CORNERS and EDGES
+ *
+ * Placement is per TURN, not per player: `catanPlacement.openingOrder` builds
+ * the snake, each turn takes a settlement then a road touching it, and the
+ * turn strip below the board makes every turn reachable without walking the
+ * flow backwards. Corners, not hexes — a settlement touches up to three hexes,
+ * and the earlier hex-tap version understated every owner's exposure because
+ * of it.
  *
  * Long-press any hex in the review phase to open the inline correction panel.
  * Board layouts can be saved by name and reloaded for future games.
@@ -53,11 +60,13 @@ import {
 import {
   deleteBoardLayout,
   loadBoardLayouts,
+  makeDefaultPorts,
   makeEmptyLayout,
   saveBoardLayout,
 } from '@/services/boardLayouts';
 import { getBoardScanApiUrl } from '@/services/boardScanApi';
-import { clearGroundTruth, saveGroundTruth } from '@/services/storage';
+import { clearGroundTruth, saveActiveBoard, saveGroundTruth } from '@/services/storage';
+import { ROTATION_STEPS, rotatePortLayout } from '@/services/catanPorts';
 import { getLinkedBuildingEventCount, mergeEditedSettlements } from '@/services/editSettlements';
 import { normalizePieces, type DetectedPiece } from '@/utils/normalizePieces';
 import { describeChange, reconcileBoard, type BoardChange } from '@/services/boardConstraints';
@@ -153,6 +162,25 @@ export default function CatanBoardScanScreen() {
 
   // ── Board hexes ────────────────────────────────────────────────────────────
   const [hexes, setHexes] = useState<CatanHexDef[]>(() => handedOver ?? makeEmptyLayout());
+  /**
+   * How far the harbour ring is turned, in 60-degree steps.
+   *
+   * The reader does NOT read harbours, and the stored ring is anchored to one
+   * photographed board — but the frame stays assembled while the tiles are
+   * reshuffled, so its rotation relative to the app's hex numbering is
+   * arbitrary from game to game. Measured against two captures, the stored
+   * anchoring was wrong for both and a 60-degree turn fitted at 0.23 hex radii
+   * against 1.50 (`tools/port_probe.py`).
+   *
+   * So the ring is presented as something to TURN until it matches the table,
+   * rather than asserted. One control fixes the whole ring, because every
+   * harbour is correct relative to the others.
+   */
+  const [portRotation, setPortRotation] = useState(0);
+  const ports = useMemo(
+    () => rotatePortLayout(makeDefaultPorts(), portRotation),
+    [portRotation],
+  );
   /** Repairs the constraint solver made to the scan, shown in review. */
   const [boardCorrections, setBoardCorrections] = useState<BoardChange[]>([]);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
@@ -486,6 +514,16 @@ export default function CatanBoardScanScreen() {
      * corners a piece is on from the hex alone, so the honest move is to let
      * the player tap it.
      */
+    /**
+     * Hand the reviewed board downstream.
+     *
+     * Only the GENERATOR used to do this, so a scanned game had no board saved
+     * anywhere — which meant the live board view, the results board and the
+     * mid-game corner picker all silently did nothing for the main photo path.
+     * `new-game/catan.tsx` clears the active board on the way in, so this
+     * overwrites nothing it should not.
+     */
+    void saveActiveBoard({ hexes, ports });
     beginPlacement();
     setPhase('placement');
   };
@@ -748,6 +786,7 @@ export default function CatanBoardScanScreen() {
 
         <CatanHexGrid
           hexes={hexes}
+          ports={ports}
           onHexLongPress={openCorrection}
           lowConfidenceIndices={lowConfIndices}
           style={{ marginVertical: 8 }}
@@ -757,6 +796,48 @@ export default function CatanBoardScanScreen() {
           Long-press any hex to correct its resource or number.
           {unknownCount > 0 ? ` ${unknownCount} hex${unknownCount === 1 ? '' : 'es'} still unknown.` : ' All hexes set ✓'}
         </Text>
+
+        {/* ── The harbour ring ────────────────────────────────────────────────
+            Stated as an assumption to check, not a reading. The camera never
+            looked at the harbours; this ring comes from one photographed board,
+            and the frame's rotation relative to the tiles is arbitrary. */}
+        <View style={[s.hintBanner, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+          <Ionicons name="boat-outline" size={16} color={colors.mutedForeground} />
+          <View style={{ flex: 1, gap: 8 }}>
+            <Text style={[s.hintText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+              Harbours are not read from the photo. Turn the ring until it matches
+              your board — the nine are always in the same order, so one of the six
+              positions will line up. Harbours affect trade only, never production
+              or luck.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity
+                style={[s.secondaryBtn, { borderColor: colors.border, flex: 1 }]}
+                onPress={() => {
+                  haptic();
+                  setPortRotation(r => (r + ROTATION_STEPS - 1) % ROTATION_STEPS);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Turn the harbour ring anticlockwise"
+              >
+                <Ionicons name="arrow-undo-outline" size={15} color={colors.foreground} />
+                <Text style={[s.secondaryBtnText, { color: colors.foreground }]}>Turn</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.secondaryBtn, { borderColor: colors.border, flex: 1 }]}
+                onPress={() => {
+                  haptic();
+                  setPortRotation(r => (r + 1) % ROTATION_STEPS);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Turn the harbour ring clockwise"
+              >
+                <Ionicons name="arrow-redo-outline" size={15} color={colors.foreground} />
+                <Text style={[s.secondaryBtnText, { color: colors.foreground }]}>Turn</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
 
         {/* Diagnostics. Temporary — see services/vision/diagnostics.ts.
             This screen is where a board gets corrected until it is right, which
@@ -885,12 +966,23 @@ export default function CatanBoardScanScreen() {
           ))}
         </View>
 
+        {/*
+          Corners go INERT while a road is owed. Every offerable road touches
+          the settlement just placed, whose marker is drawn on top of it and
+          covers 25.1% of its hit disc — the quarter nearest the settlement,
+          which is exactly where "tap a road leading off it" points. A tap
+          landing there re-placed the same settlement: `occupiedCorners`
+          ignores the active slot, so it succeeded as a no-op, fired the
+          SUCCESS haptic, cleared the error line and left the road unplaced.
+          A positive haptic on a tap that did nothing is the worst signature
+          this codebase has.
+        */}
         <CatanHexGrid
           hexes={hexes}
           showIntersections
           legalIntersections={awaitingRoad ? [] : offeredCorners}
           intersectionMarks={settlementMarks}
-          onIntersectionPress={onCornerTap}
+          onIntersectionPress={awaitingRoad ? undefined : onCornerTap}
           showRoads={awaitingRoad}
           legalRoads={offeredRoads}
           roadMarks={roadMarks}

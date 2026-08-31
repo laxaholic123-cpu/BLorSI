@@ -60,14 +60,20 @@ may be more or less done than it looks.
 
 **Untested on a device — the current risk, in one place**
 
-Everything below was built and verified offline (typecheck, 863 tests, bundle)
-and has never run on hardware. Grouped because they are one testing session,
-not five:
+Everything below was built and verified offline (typecheck, 926 tests) and has
+never run on hardware. Grouped because they are one testing session, not five:
 
 - The rebuilt opening placement: corner taps, road taps, the turn strip,
   long-press to clear one turn, colour picking.
 - Mid-game road building from the new Road pill.
 - Accolade cards on the results screen.
+- **The mid-game corner picker** (`catan-development`) — another SVG hit
+  target, and the one that most needs a real finger.
+- **The board panel** on the active screen and on results.
+- **The live callout line**, which sits between the scroll area and the roll
+  pad. It is one line of fixed height for exactly that reason; check the pad
+  still has its two rows.
+- **The harbour rotation control** in board review.
 - The roll-pad fix — `numGrid` had `flex: 1` inside a wrapper with none, which
   collapsed ten buttons to one row. Reported as "most of the numbers cannot be
   tapped" and never confirmed fixed.
@@ -77,6 +83,35 @@ not five:
 The SVG hit targets are the ones to watch. Android touch dispatch has broken
 this project three times — long-press correction, corner handles, and the roll
 pad — and every one of them worked on web.
+
+**One of them was found and fixed BEFORE the device session, by counting.**
+The corner hit radius (16) had been checked against other corners and the road
+radius (14) against other roads; nobody compared the two families. An edge
+midpoint sits exactly 20 from each endpoint and 16 + 14 = 30, so **a corner
+covers 25.1% of each touching road's hit disc**, and corners are drawn last so
+they win it. During the opening road phase every offerable road touches the
+settlement just placed, so the quarter of the road nearest it dispatched to the
+corner instead — and because `occupiedCorners` ignores the active slot, that
+re-placed the same settlement, returned no problem, fired the **success** haptic
+and changed nothing.
+
+This one would NOT have been caught by the usual "works on web, broken on
+Android" split: Android's `RenderableView.hitTest` walks children in reverse
+draw order and tests the geometric fill region (so `fill="transparent"` is fully
+tappable, and only `pointerEvents="none"` opts out), and the web path renders
+real DOM SVG where `visiblePainted` hit-tests any fill that is not `none`. Both
+platforms behaved identically and both were wrong.
+
+Fixed structurally, not by tuning a radius: `CatanHexGrid` renders the invisible
+corner target only when an `onIntersectionPress` handler exists, and the
+placement screen passes `undefined` while a road is owed. Mid-game road building
+was checked and is unaffected — that screen renders no corners at all.
+
+**Still to prove on hardware:** whether a transparent SVG `<Circle>` receives
+taps on Android in this build at all. Corners and roads are the only interactive
+elements in the app with no RN `<Pressable>` fallback (hexes have one), so they
+fail together if it does not. That is the single question the device session
+should answer first.
 
 **Lower**
 
@@ -189,14 +224,16 @@ pad — and every one of them worked on web.
    blobs, and optimisation-based registration. Aiming the camera answers the
    question by construction.
 
-   **Validated on real device captures — and it split in two.** Terrain is
-   solved: **19/19** on a clean overhead capture with the corners marked. Tokens
-   are not: 5/19 in the app, 9/18 at best offline. Four separate causes were
-   found and fixed by measuring (scenery counted as ink, the face neither centred
-   nor as large as assumed, the downscale destroying pip detail, and confidence
-   claiming reliability it did not have) — see `CLAUDE.md` for the order and the
-   numbers. Even with all four fixed, blob counting tops out around half, because
-   pips are a few pixels across on a phone photo of a whole board.
+   **Validated on real device captures — and it split in two, then rejoined.**
+   Terrain was solved first: **19/19** on a clean overhead capture with the
+   corners marked. Tokens lagged badly — 5/19 in the app, 9/18 at best offline —
+   through four causes found by measuring (scenery counted as ink, the face
+   neither centred nor as large as assumed, the downscale destroying pip detail,
+   and confidence claiming reliability it did not have). Even with all four
+   fixed, blob counting topped out around half, because pips are a few pixels
+   across on a phone photo of a whole board. **That approach is now deleted**;
+   the numbers above are history, not current status. See the digit-matching
+   result below and `CLAUDE.md` for the full order of causes.
 
    **OCR went in and failed too**, three ways: the whole photo, the cropped board
    at eight rotations, and one crop per token — 1 of 17 at best. It reads
@@ -236,16 +273,34 @@ pad — and every one of them worked on web.
    frame edge that padded crops run off the photo, which used to fail silently
    and look exactly like unreadable tokens.
 
-   **Next: a device run.** None of this has executed on hardware.
+   **The device run happened, 25 Aug 2026, and it held: 17/19 exact, 19/19
+   terrain, 16/16 of the high-confidence readings correct.** The two errors were
+   a 6/8 swap on hexes 10 and 16, and BOTH were flagged low — the player was
+   pointed at exactly the tiles that were wrong, which is the design working.
+   The corners the player marked are kept as `DEVICE_RUN` in
+   `tools/board_shots.py`, so the run reproduces offline exactly.
 
-   Caveat: all seven captures are the same physical board. Validated across
-   photos, not across Catan sets, so a "teach it your board" step may still be
-   needed for a differently printed set.
+   **Then the real cause of the remaining failures was found**, and it was not
+   red ink or crescent geometry: the face-saturation predicate cut at 0.30 when
+   the printed cream measures 0.33–0.37, so **the face failed its own test on
+   every photo ever taken** and eight geometry "fixes" had been measured against
+   a disc centred on nothing. Moving the cut to 0.45 took sampling from 111/126
+   to 126/126, overall 89% → 96%, coverage 86% → 94%, precision holding at 100%.
 
-   No failing photo was kept, because the capture path decoded and discarded it,
-   so there is nothing to measure. The review screen now has an opt-in "Save this
-   photo" button. **Next step is one saved failing capture plus its ground truth,
-   run through `tools/`** — not a tuning pass.
+   **With the token bag applied that finishes the job: 180/180 tokens, 10/10
+   boards perfect**, measured leave-one-capture-out across ten captures of two
+   layouts. It only works because at most ONE token is declined per board — one
+   empty slot leaves exactly one value, so nothing is guessed. Coverage is not a
+   comfort metric here; it is what makes the constraint solver exact rather than
+   probabilistic.
+
+   **Recognition is therefore closed.** What remains open is the set, not the
+   method — see below.
+
+   Caveat, and it is the live one: all captures are of the same physical board.
+   Validated across photos, not across Catan sets, so a "teach it your board"
+   step may still be needed for a differently printed set. **This is now the
+   only open question on the reader.**
 
    Two things to check in that order: whether the board was aligned to the guide
    (`screenToImage` assumes it was, and off-centre sampling would explain
@@ -391,3 +446,151 @@ pad — and every one of them worked on web.
     that most needs a real finger — web clicks prove wiring, not ergonomics.
 
 13. **Store-release prerequisites**, if that's the goal: privacy policy (a photo leaves the device), `ios.bundleIdentifier`, icon and splash review. `android.package` is now set to `com.laxaholic123.skillcheck` — trivial to change now, impossible after release.
+
+14. **Board tracking during play.** Done — `services/catanBoardState.ts` plus
+    `components/CatanBoardPanel.tsx`, shown on the active screen behind a
+    toggle and on results as "the board at the end".
+
+    **The gap was capture, not rendering.** Roads were already positional and
+    so were opening settlements, but a settlement recorded MID-GAME went in as
+    `hexIdentifiers: [generateId()]` through a number picker — correct for
+    production, invisible on the board, and self-reported rather than derived.
+    `catan-development` now offers a corner picker whenever a board is known
+    and reads the numbers off it; the number pad remains for boards the app
+    does not have, and the two are mutually exclusive on screen.
+
+    **What cannot be drawn is counted.** `BoardSnapshot.unplaceable` carries
+    the per-player count of positionless buildings and the panel prints it,
+    because a board that quietly omits two of your four settlements looks
+    complete while being wrong.
+
+    **Found on the way:** the SCAN path never called `saveActiveBoard`. Only
+    the generator did, so for the main photo path there was no board in storage
+    and all three of these features would have silently done nothing on exactly
+    the games most likely to have a board. The scan screen now hands over the
+    reviewed board.
+
+    **Verified:** 19 new tests in `catanBoardState.test.ts`, full typecheck,
+    and a static check that no screen gained a hook after its early return —
+    the crash this repo has already hit once. **Not verified on a device**, and
+    the corner picker is another SVG hit target, which is where this project's
+    bugs live.
+
+15. **Live callouts.** Done — `services/liveCallouts.ts`, one line above the
+    roll pad on the active screen.
+
+    Descriptive only, and the constraint is the design. Checking after every
+    roll is SEQUENTIAL TESTING, so a live "you're unlucky" is wrong far more
+    often than it looks; luck claims stay on the results screen where the
+    simulation runs. Four rules are enforced rather than trusted: fixed
+    candidate set, one callout per roll, a per-kind cooldown, and a test that
+    asserts no luck/probability/skill word ever appears in emitted text.
+
+    **Measuring caught the fourth instance of this repo's oldest bug.** The
+    "number is back after a long absence" callout used a flat 18-roll gap
+    across eleven outcomes with different frequencies — extraordinary for a 6
+    (expected gap 7.2), routine for a 2 (expected gap 36). It fired once every
+    16 rolls, more than every other kind combined. Scaling to each number's own
+    expected gap took the feature from 14.3% of rolls to 9.4% with no kind
+    dominating. Nothing about the code looked wrong.
+
+    **Verified:** 20 new tests including the rate measurement over 3600 fair
+    rolls and the forbidden-word test. Not run on a device.
+
+16. **Harbours: the layout cannot be static, and now it turns.** Partly done.
+
+    `tools/port_probe.py` locates harbour badges from a photo — they are cream
+    floating in blue sea, which separates far more cleanly than anything on the
+    island, provided blobs are required to be ENCLOSED BY SEA (without that,
+    the three biggest "badges" are the white tablecloth). 8 of 9 on DEVICE_RUN.
+
+    Snapping those to coastal edges produced the finding: **STANDARD_PORT_LAYOUT
+    fits at 60/180/300 degrees and not at 0.** Every harbour is right relative
+    to the others; only the anchoring is wrong — and it is not a transcription
+    error. The frame stays assembled while tiles are reshuffled, and the app's
+    hex numbering comes from whichever corner the player taps first, so the
+    ring's rotation is arbitrary game to game. **No stored layout can be right
+    in general.**
+
+    Shipped: `services/catanPorts.ts` with exact axial rotation, and a "turn
+    the ring" control in board review, which is the fix the measurement
+    actually calls for — one tap instead of nine edits. Harbours now render in
+    review, described as an assumption to check rather than a reading.
+
+    **Not shipped, and recorded as a negative result:** reading a harbour's
+    TYPE off colour. Three attempts, all overlapping; the boat hull and dock
+    timbers read as ink and are larger than a resource icon. Details in
+    `tools/port_probe.py`.
+
+    **Still open:** nothing detects harbours at runtime — the badge locator
+    lives only in `tools/`. The offset that fits is 0.65 hex radii beyond the
+    coastal edge midpoint if anyone wires it up. Ports feed `portAccess` only,
+    so a wrong ring misreports trade access and nothing else.
+
+    **Verified:** 19 new tests in `catanPorts.test.ts`, including that every
+    harbour stays on a coastal edge at all six rotations — an off-by-one in the
+    edge mapping would put one against an inland face.
+
+17. **Settlement Setup could strand you on "Player 5 of 4".** Fixed, and this
+    one was on the critical path of every game.
+
+    `handleNextPlayer` read `isLastPlayer` from the render and then called
+    `setCurrentPlayerIdx(i => i + 1)`. Two taps inside one render cycle both
+    decide "not the last player" and both increment, so the index walks past the
+    end of the roster. The result is a screen showing a player who does not
+    exist, a Next button that names nobody and does nothing, and no way forward.
+
+    This is the SAME read-then-write race that double-placed a settlement on one
+    corner, in a different handler on the same screen, a week after that one was
+    fixed. Treat it as a pattern: on this screen, decide inside the updater or
+    make the repeat idempotent.
+
+    Fixed by `nextSetupPlayerIndex` — a clamped ABSOLUTE index, so a second tap
+    in the same tick sets the same value — plus a ref guard on
+    `handleStartGame`, because `isSaving` is state and two synchronous calls
+    both read it as false. Turn rotation still wraps (`getNextPlayerIndex`);
+    setup deliberately does not.
+
+    **Found and fixed on WEB before any device saw it**, by firing four taps
+    into one tick. Verified: the same burst now advances 1 → 2 instead of
+    1 → "5 of 4". 5 new tests in `activeGameHandlers.test.ts`.
+
+18. **Touch dispatch probe.** `app/touch-probe.tsx` — a diagnostic, reachable
+    only by URL, nothing links to it.
+
+    Seven variants side by side with tap counters: transparent Circle (what
+    corners and roads use today), zero-opacity fill, near-transparent paint,
+    Rect, handler on a `<G>`, an RN `<Pressable>` baseline, and `onLongPress` as
+    the control. Whichever counters move are the primitives that receive touches
+    on that build.
+
+    It exists because "tapping does nothing" has three different causes here —
+    primitive, geometry, wiring — and they are indistinguishable on a real
+    screen. This turns an evening of guessing into a named cause in a minute.
+
+    Measured on web: transparent Circle FIRES, `<G>` fires, `onLongPress` does
+    not. The browser console explains the last one — react-native-svg passes
+    `onLongPress` and every RN responder prop straight to the DOM and React
+    ignores them, so `onClick` is the only surviving handler on web. A second
+    platform independently confirming the Android finding.
+
+    **Run this first tonight.** If F moves and A does not, corners and roads
+    both need a Pressable overlay and everything else on the placement screens
+    is a red herring.
+
+19. **Web verification works again**, which is how 17 was found.
+
+    The preview config pointed at a temp `.bat` in a dead session's scratchpad.
+    Two cwd traps behind it, both now in `CLAUDE.md`: `pnpm --filter … exec`
+    runs from the repo ROOT (Metro then resolves nothing), and babel resolves
+    `babel-preset-expo` from the process cwd, where it is linked only under
+    `artifacts/dice-tracker/node_modules`. Both present as a broken project and
+    neither is one.
+
+    Verified end to end on web this session: generator → exposure by corner tap
+    with numbers derived from the board → game screen. Board panel renders with
+    its honesty line ("4 buildings · 0 roads on the board"), the live callout
+    fires ("3 8s in a row."), and the roll pad shows 7 plus all ten numbers.
+
+    Still unproven anywhere: Android touch dispatch, which is the whole point of
+    the device session.

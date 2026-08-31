@@ -37,11 +37,22 @@ import { computeDevCardStats, DEV_DECK_SIZE } from '@/services/devCards';
 import type { CatanGameStats } from '@/types/catanStats';
 import { selectBestShareCard, CARD_METADATA } from '@/services/shareCard';
 import { RollFrequencyChart } from '@/components/RollFrequencyChart';
+import { CatanBoardPanel } from '@/components/CatanBoardPanel';
+import { loadActiveBoard, type ActiveBoard } from '@/services/storage';
 
 export default function ResultsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { activeSession, rollEvents, exposureEvents, devCardEvents, updateSession, endSession } = useGame();
+  /**
+   * The board this game was played on, if there was one.
+   *
+   * Read once here rather than held in context: results is terminal, and the
+   * board cannot change after the game ends. `loadActiveBoard` swallows its
+   * errors by design — a missing board costs this one panel and nothing else.
+   */
+  const [finalBoard, setFinalBoard] = useState<ActiveBoard | null>(null);
+  useEffect(() => { void loadActiveBoard().then(setFinalBoard); }, []);
   const { settings } = useSettings();
   const webTop = Platform.OS === 'web' ? 67 : 0;
 
@@ -769,6 +780,23 @@ export default function ResultsScreen() {
                     );
                   })}
                 </View>
+              </>
+            )}
+
+            {/* ── The board as it finished ────────────────────────────────────
+                The game's own record. Everything above says what happened in
+                numbers; this says WHERE it happened, and it is the one thing on
+                this screen a player can check against the table they just got
+                up from. */}
+            {finalBoard && activeSession && (
+              <>
+                <SectionLabel text="THE BOARD AT THE END" colors={colors} />
+                <CatanBoardPanel
+                  hexes={finalBoard.hexes}
+                  ports={finalBoard.ports}
+                  events={exposureEvents}
+                  players={activeSession.players}
+                />
               </>
             )}
 

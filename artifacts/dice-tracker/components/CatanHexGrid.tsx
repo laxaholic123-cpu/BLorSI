@@ -12,7 +12,7 @@
 
 import React from 'react';
 import { Pressable, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
-import Svg, { Circle, G, Line, Polygon, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, G, Line, Polygon, Rect, Text as SvgText } from 'react-native-svg';
 import type { CatanHexDef, CatanPortDef, ResourceType } from '@/types/models';
 import { intersectionIdAt } from '@/services/catanBoard';
 
@@ -69,6 +69,16 @@ const APOTHEM = HEX_R * Math.cos(Math.PI / 6);
  * Neighbouring corners sit exactly HEX_R apart (a regular hexagon's side equals
  * its circumradius), so anything under 20 keeps the targets disjoint. 16 leaves
  * margin while roughly doubling the tappable area over the visible dot.
+ *
+ * That disjointness is only WITHIN this family. A corner and a road hit target
+ * DO overlap: an edge midpoint sits exactly 20 from each of its endpoints and
+ * the two radii sum to 30, so a corner covers 25.1% of each touching road's
+ * disc — measured, not estimated. Corners are drawn last and therefore win, on
+ * both platforms: react-native-svg's Android hitTest walks children in reverse
+ * draw order and tests the geometric fill REGION, so `fill="transparent"` is
+ * fully tappable and only `pointerEvents="none"` opts out. That is why an
+ * inert corner must not render a hit target at all — see the intersection
+ * block below.
  */
 const INTERSECTION_HIT_R = 16;
 
@@ -203,6 +213,15 @@ export interface CatanHexGridProps {
   /** Corner ids to mark as taken, with the colour to mark them in. */
   intersectionMarks?: Record<string, string>;
   /**
+   * Of the marked corners, which hold CITIES rather than settlements.
+   *
+   * Drawn as a square rather than a bigger circle. A city produces double, so
+   * a board view that renders both the same way is not showing the board — and
+   * size alone is a weak cue at this scale, where a settlement dot is already
+   * only nine units across.
+   */
+  cityIntersections?: readonly string[];
+  /**
    * When given, ONLY these corners are drawn and tappable.
    *
    * Restricting to the legal set is the single biggest thing that reduces
@@ -234,6 +253,7 @@ export function CatanHexGrid({
   showIntersections = false,
   onIntersectionPress,
   intersectionMarks,
+  cityIntersections,
   legalIntersections,
   showRoads = false,
   onRoadPress,
@@ -408,10 +428,26 @@ export function CatanHexGrid({
           // tapped by accident — but one already BUILT on stays visible,
           // because the board should show what is there.
           if (!mark && legalIntersections && !legalIntersections.includes(id)) return null;
+          const isCity = Boolean(mark) && cityIntersections?.includes(id);
           return (
             <G key={`ix-${id}`}>
-              {/* The dot people see. Decorative: pointerEvents="none" so it
-                  cannot steal the tap from the hit target below it. */}
+              {/* The mark people see. Decorative: pointerEvents="none" so it
+                  cannot steal the tap from the hit target below it.
+                  A city is a SQUARE, not a bigger dot — at nine units across,
+                  size alone does not read. */}
+              {isCity ? (
+                <Rect
+                  x={pt.x - 9}
+                  y={pt.y - 9}
+                  width={18}
+                  height={18}
+                  rx={3}
+                  fill={mark}
+                  stroke="#FFFFFF"
+                  strokeWidth={2}
+                  pointerEvents="none"
+                />
+              ) : (
               <Circle
                 cx={pt.x}
                 cy={pt.y}
@@ -422,6 +458,7 @@ export function CatanHexGrid({
                 strokeWidth={mark ? 2 : 1}
                 pointerEvents="none"
               />
+              )}
               {/* Invisible hit target, drawn last so it sits on top.
                   A 7-unit dot is about 12px across on a phone — less than a
                   third of the 48dp minimum, and finger-sized targets matter
@@ -429,14 +466,22 @@ export function CatanHexGrid({
                   does not look like an error: it silently records production
                   the player never had.
                   r=16 gives a ~28px target while staying inside the 40-unit
-                  gap between neighbouring corners, so no two overlap. */}
-              <Circle
-                cx={pt.x}
-                cy={pt.y}
-                r={INTERSECTION_HIT_R}
-                fill="transparent"
-                onPress={onIntersectionPress ? () => onIntersectionPress(id) : undefined}
-              />
+                  gap between neighbouring corners, so no two overlap.
+
+                  Rendered ONLY when there is a handler. An inert hit target is
+                  not harmless here: it still wins the hit test (the region is
+                  geometric, transparent fill and all) and it sits on top of the
+                  roads, so it would silently eat a quarter of every road tap.
+                  See the note on INTERSECTION_HIT_R. */}
+              {onIntersectionPress && (
+                <Circle
+                  cx={pt.x}
+                  cy={pt.y}
+                  r={INTERSECTION_HIT_R}
+                  fill="transparent"
+                  onPress={() => onIntersectionPress(id)}
+                />
+              )}
             </G>
           );
         })}

@@ -24,7 +24,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
@@ -51,6 +51,15 @@ import {
 import { CATAN_SMALL_SAMPLE_THRESHOLD } from '@/types/catanStats';
 import { CatanProductionLeaderboard } from '@/components/CatanProductionLeaderboard';
 import { CatanRollHeatMap } from '@/components/CatanRollHeatMap';
+import { CatanBoardPanel } from '@/components/CatanBoardPanel';
+import { boardStateAtTurn } from '@/services/catanBoardState';
+import {
+  calloutForLatestRoll,
+  rememberCallout,
+  type Callout,
+  type CalloutKind,
+} from '@/services/liveCallouts';
+import { loadActiveBoard, type ActiveBoard } from '@/services/storage';
 
 // ─── 2D6 number layout (7 first/center for prominence) ───────────────────────
 
@@ -90,6 +99,19 @@ export default function ActiveCatanScreen() {
   const [showEditSettlementspicker, setShowEditSettlementspicker] = useState(false);
   // Heat map starts hidden so the dice pad is always immediately visible
   const [showHeatMap, setShowHeatMap] = useState(false);
+  /**
+   * The board, and whether it is showing.
+   *
+   * Hidden by default for the same reason as the heat map: this screen exists
+   * to record rolls, and anything above the pad that grows pushes the pad off
+   * the bottom — which is exactly how "most of the numbers cannot be tapped"
+   * happened. The board is something you OPEN to check against the table.
+   */
+  const [showBoard, setShowBoard] = useState(false);
+  const [board, setBoard] = useState<ActiveBoard | null>(null);
+  /** Which callout kinds have fired, and when. See services/liveCallouts. */
+  const [calloutSeen, setCalloutSeen] = useState<ReadonlyMap<CalloutKind, number>>(new Map());
+  const [callout, setCallout] = useState<Callout | null>(null);
 
   const webTop = Platform.OS === 'web' ? 67 : 0;
   const webBottom = Platform.OS === 'web' ? 34 : 0;
@@ -171,6 +193,56 @@ export default function ActiveCatanScreen() {
   }, [activeSession, exposureEvents]);
 
   const isSmallSample = totalRolls < CATAN_SMALL_SAMPLE_THRESHOLD;
+
+  /**
+   * The board is read on FOCUS, not on mount.
+   *
+   * This screen stays mounted underneath the development modal, so a
+   * settlement placed there would not appear here until the app restarted if
+   * this were a mount-only effect. That has bitten this repo three times; the
+   * rule is in CLAUDE.md.
+   */
+  useFocusEffect(
+    React.useCallback(() => {
+      void loadActiveBoard().then(setBoard);
+    }, []),
+  );
+
+  const boardSnapshot = useMemo(
+    () => boardStateAtTurn(
+      exposureEvents,
+      (activeSession?.players ?? []).map(p => p.id),
+    ),
+    [exposureEvents, activeSession],
+  );
+
+  /**
+   * One descriptive callout for the latest roll, or nothing.
+   *
+   * Keyed on the newest roll's id so it fires once per roll rather than on
+   * every render. Everything it can say is a statement of fact — no claim
+   * about luck is made anywhere on this screen, because the simulation that
+   * would justify one only runs at the end. See services/liveCallouts.
+   */
+  const latestRollId = activeEvents.at(-1)?.id ?? null;
+  useEffect(() => {
+    if (!latestRollId || !activeSession) return;
+    const next = calloutForLatestRoll({
+      rolls: rollEvents,
+      snapshot: boardSnapshot,
+      blockedByPlayer: activeRobberBlocks,
+      nameOf: id =>
+        activeSession.players.find(p => p.id === id)?.displayName ?? 'Someone',
+      recent: calloutSeen,
+    });
+    if (next) {
+      setCallout(next);
+      setCalloutSeen(prev => rememberCallout(prev, next));
+    }
+    // calloutSeen is deliberately NOT a dependency: including it would re-run
+    // this the moment it updates and re-fire the same callout forever.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestRollId]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -553,7 +625,68 @@ export default function ActiveCatanScreen() {
           colors={colors}
         />
       )}
+
+      {/* ── The board ──────────────────────────────────────────────────────────
+          Only offered when there IS a board — a scanned or hand-entered game
+          without one has nothing to draw, and a button that opens an empty
+          panel is worse than no button. */}
+      {board && (
+        <View style={{ gap: 8, marginTop: 10 }}>
+          <TouchableOpacity
+            style={[styles.boardToggle, { borderColor: colors.border, backgroundColor: colors.card }]}
+            onPress={() => { haptic(); setShowBoard(v => !v); }}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={showBoard ? 'Hide the board' : 'Show the board'}
+          >
+            <Ionicons
+              name={showBoard ? 'chevron-up' : 'map-outline'}
+              size={16}
+              color={colors.mutedForeground}
+            />
+            <Text style={[styles.boardToggleText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
+              {showBoard ? 'Hide the board' : 'Show the board'}
+            </Text>
+          </TouchableOpacity>
+          {showBoard && (
+            <CatanBoardPanel
+              hexes={board.hexes}
+              ports={board.ports}
+              events={exposureEvents}
+              players={activeSession.players}
+              title="WHO IS WHERE"
+            />
+          )}
+        </View>
+      )}
       </ScrollView>
+
+      {/* ── Live callout ────────────────────────────────────────────────────────
+          Sits OUTSIDE the ScrollView so it is seen without scrolling, and is a
+          single line of fixed height so it cannot push the pad off the bottom.
+          Anything here that can grow repeats the roll-pad collapse.
+
+          Everything it says is a statement of fact. No claim about luck is made
+          on this screen — the simulation that would justify one runs once, at
+          the end. See services/liveCallouts. */}
+      {callout && (
+        <TouchableOpacity
+          style={[styles.callout, { backgroundColor: colors.muted, borderColor: colors.border }]}
+          onPress={() => { haptic(); setCallout(null); }}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={`${callout.text}. Tap to dismiss.`}
+        >
+          <Ionicons name="sparkles-outline" size={14} color={colors.mutedForeground} />
+          <Text
+            style={[styles.calloutText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}
+            numberOfLines={1}
+          >
+            {callout.text}
+          </Text>
+          <Ionicons name="close" size={14} color={colors.mutedForeground} />
+        </TouchableOpacity>
+      )}
 
       {/* ── Catan number grid ──────────────────────────────────────────────────── */}
       {/* NOTE: gridWrapper intentionally has NO flex:1 — the ScrollView above   */}
@@ -906,6 +1039,24 @@ const styles = StyleSheet.create({
    * device as "most of the numbers cannot be tapped".
    */
   numGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
+
+  boardToggle: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    borderWidth: 1, borderRadius: 10, paddingVertical: 9,
+  },
+  boardToggleText: { fontSize: 12 },
+
+  /**
+   * One line, fixed height. This sits between the scroll area and the roll pad,
+   * so anything that can wrap to two lines eats the pad's space.
+   */
+  callout: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderWidth: 1, borderRadius: 10,
+    paddingHorizontal: 10, height: 36,
+    marginHorizontal: 12, marginBottom: 6,
+  },
+  calloutText: { flex: 1, fontSize: 12 },
   numBtn: { width: '18%', aspectRatio: 1, borderRadius: 12, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', gap: 2, minHeight: 52 },
   numBtnValue: { fontSize: 20 },
   numBtnPips: { fontSize: 9, letterSpacing: 1 },

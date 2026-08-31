@@ -438,10 +438,50 @@ This is deliberately left open. It cannot reach production, luck or verdicts,
 because ports are a separate axis by design, and closing it needs a straight-down
 photo rather than an angled one.
 
-Still edition-specific: frames differ between printings, and there is **no port
-editor in the app** despite `catanBoard.ts` once implying players could "edit
-it". Ports feed `portAccess` only, which never enters production or luck, so a
-mismatched frame misreports trade access and nothing else.
+**A STATIC LAYOUT CANNOT BE RIGHT, AND MEASURING SHOWED WHY.**
+
+The transcription is a real board, faithfully read, and it was still wrong for
+both captures it was tested against. `tools/port_probe.py` locates the harbour
+badges directly — they are cream and float in blue sea, which separates far more
+cleanly than anything on the island — then snaps them to coastal edges:
+
+    rotation of STANDARD_PORT_LAYOUT   mean distance from detected badges
+      0 deg                              1.50 hex radii
+     60 deg                              0.23
+    120 deg                              1.50
+    180 deg                              0.23
+    240 deg                              1.50
+    300 deg                              0.23
+
+Every harbour is correct RELATIVE TO THE OTHERS. Only the anchoring is off, and
+that is not a transcription error — **the frame stays assembled while the tiles
+are reshuffled, and the app's hex numbering comes from whichever corner the
+player taps first. Nothing ties one to the other.** The ring's rotation is
+arbitrary from game to game, so no stored layout can be correct in general.
+
+The three-way tie at 60/180/300 is expected: the position set has 3-fold
+symmetry, so positions alone cannot pick between them. Types break the tie, and
+a player can see the types.
+
+Hence the fix is a ROTATION control rather than a nine-row editor
+(`services/catanPorts.ts`, offered in the board-review screen): one tap turns
+the whole ring, which is what the measurement says is actually wrong. The badge
+sits 0.65 hex radii beyond its coastal edge midpoint, if anyone wires detection
+up later.
+
+**Reading a harbour's TYPE off colour does not work.** Three attempts, all in
+`tools/port_probe.py` so none is retried: saturated pixels in a window measure
+the SEA (the most saturated thing in frame, so every badge reads cyan); icon as
+bright non-cream discards ore and the lumber log for being dark, which are the
+two most distinctive icons; icon as non-cream inside the cream body's extent is
+the best of the three and still overlaps — generic reaches 0.431 against
+specific falling to 0.292, so two 3:1s outscore two 2:1s. The boat hull and dock
+timbers overlap the badge and are larger than a resource icon. Three tuning
+passes inside one frame is where this repo's own rule says stop.
+
+Ports feed `portAccess` only, which never enters production or luck, so a
+mismatched frame misreports trade access and nothing else. That containment is
+why this survived unnoticed for so long.
 
 ### Reading a board from a photo — a worked example
 
@@ -495,6 +535,31 @@ pnpm --filter @workspace/dice-tracker run dev:tunnel      # any network, slower
 pnpm --filter @workspace/api-server run dev               # port 3000
 ```
 
+**`run`, not `exec`, for anything that starts Metro.** `pnpm --filter … exec
+expo start` does NOT set the working directory to the package — it runs from
+the repo root, and Metro then roots itself there and resolves nothing. The
+symptom is `Unable to resolve module ./index from …/badluck/.`, which reads
+like a broken project and is only a wrong cwd. `run` executes the package
+script with the package as cwd, which is why the commands above use it.
+
+**Running the app on web, which is the only automated verification available
+without a phone:**
+
+```
+cd artifacts/dice-tracker && npx expo start --web --port 8082
+```
+
+cwd is load-bearing twice over. Besides Metro's root, babel resolves
+`babel-preset-expo` from the process cwd, and in this pnpm workspace that
+package is linked under `artifacts/dice-tracker/node_modules` and NOT at the
+repo root. Start it from the wrong place and bundling dies with
+`Cannot find module 'babel-preset-expo'` — which looks like a broken install
+and is not one. Passing the project root as an argument does not fix it;
+only the cwd does.
+
+The first web bundle takes 60-90 seconds. It is worth the wait: driving this
+found a stuck-state bug on the critical path that no test caught.
+
 ---
 
 ## Two rules learned the hard way
@@ -534,7 +599,7 @@ artifacts/dice-tracker/     Expo app (expo-router)
   types/models.ts           core types — mode-agnostic
   types/boardState.ts       BoardExposureEvent, BoardPosition
   types/modes/catan.ts      Catan types (re-exported from models.ts)
-  __tests__/                748 tests, pure logic only
+  __tests__/                926 tests, pure logic only
 artifacts/api-server/       Express — one real route, board-scan AI
 tools/                      Python research harnesses (see below)
 ```
@@ -612,6 +677,26 @@ Accolades come in two tiers. Dice-only ones live in the core and work in any
 game; mode-specific ones are supplied by the mode adapter. A new game gets the
 dice accolades for free and adds its own.
 
+**End-of-game accolades are COMPARATIVE, not rarity claims**, and that is what
+makes them honest without a simulation behind every one. `assignAccolades`
+ranks players against each other on twenty fixed axes and hands out one distinct
+axis each via `hungarian`, stating the rank. "2nd of 4 on harbours" is true
+whatever the dice did. Only `luck_percentile` touches the simulation, and
+simulation-dependent axes are withheld entirely when it did not run.
+
+**Live callouts are DESCRIPTIVE, and the reason is sequential testing.**
+`services/liveCallouts.ts` says things during the game, and none of them may be
+a claim about luck. Checking after every roll is not one test at p<0.05 but
+eighty, so any live probability claim is wrong far more often than it looks.
+"Three 8s in a row" is a fact and survives; "you're running cold" is a verdict
+and belongs on the results screen, where the seeded Monte Carlo actually runs.
+
+Four rules enforce it rather than convention: the candidate set is fixed in
+`CALLOUT_CATALOGUE`; at most one callout per roll, by fixed priority; a kind
+cannot repeat inside a cooldown; and **a test asserts no luck, probability or
+skill word ever appears** in any emitted text. Rate on fair dice is measured,
+not assumed — 9.4% of rolls, about one every eleven.
+
 ---
 
 ## The statistical stance
@@ -625,9 +710,23 @@ and ~1.8σ over 100, so the app was most confident where evidence was weakest.
 Verdicts now come from seeded Monte Carlo percentiles (`services/luckEngine.ts`),
 and chart colouring is standardised by z-score.
 
-This mistake recurred **three times** at different layers — verdicts, chart
-colours, and token ink detection. If you are writing a constant to compare a
-measurement against, stop and ask what it should be relative to.
+This mistake recurred **four times** at different layers — verdicts, chart
+colours, token ink detection, and live callouts. If you are writing a constant
+to compare a measurement against, stop and ask what it should be relative to.
+
+The fourth is the clearest illustration, because it was caught by measuring
+rather than by reasoning. `liveCallouts` flagged a number "back after a long
+absence" at a flat 18 rolls. Eleven outcomes, wildly different frequencies: 18
+rolls without a 6 is genuinely notable (expected gap 7.2) and 18 rolls without
+a 2 is nothing at all (expected gap 36). Measured across 3600 fair rolls, that
+one kind fired once every 16 rolls — more than every other kind combined.
+Scaling the bar to each number's own expected gap (`2.5 / p`) took the whole
+feature from 14.3% of rolls to 9.4% and left no kind dominating.
+
+Nothing about the code looked wrong. It took counting how often each kind
+fired, which is the same move that found `locateBrightDisc` and the face
+predicate. **A threshold that is not relative to something is a bug you cannot
+see by reading.**
 
 **One pre-registered statistic, not many.** Testing eleven numbers at p<0.05
 finds something ~43% of the time on fair dice. Per-number breakdowns are
@@ -710,15 +809,93 @@ corners are exactly HEX_R (40) apart, so 16 is the practical ceiling before two
 targets overlap — about 28dp on a phone. Short of the 48dp guideline, but the
 board's own geometry caps it: corners are ~35px apart at phone width.
 
-**The distance rule is deliberately not enforced.** Settlements must be two
-edges apart, and the app does not check it. Occupied corners are blocked because
-that is unambiguous, but this is a recording tool, not a referee — and a
-mis-tapped corner is visible in the settlement list, where the numbers are shown.
+**Hit targets were checked for overlap within their own family and not across
+families, and that is where the bug was.** The corner radius (16) was justified
+against other corners, the road radius (14) against other roads. Nobody
+compared the two. An edge midpoint sits exactly 20 from each of its endpoints
+and 16 + 14 = 30, so **a corner covers 25.1% of each touching road's hit disc**
+— and corners are drawn last, so they win it.
 
-### Two React traps this screen hit
+That is not cosmetic, because of how react-native-svg hit-tests. Android's
+`RenderableView.hitTest` walks children in REVERSE draw order and tests the
+geometric fill REGION; it never looks at the fill colour, so `fill="transparent"`
+is fully tappable and only `pointerEvents="none"` opts out. The web path renders
+real DOM SVG, where `visiblePainted` hit-tests any fill that is not `none` —
+`transparent` is a paint value, not `none`. Both platforms behave the same, so
+this one would NOT have been caught by "it works on web".
 
-Both were found by trying to force an edge case, not by anything failing in
-normal use — which is why they are written down rather than just fixed.
+The symptom it produced: during the opening road phase every offerable road
+touches the settlement just placed, so the quarter of the road nearest that
+settlement dispatched to the corner instead. `occupiedCorners` ignores the
+active slot, so re-placing your own settlement returned no problem, fired the
+**success** haptic and changed nothing. A positive haptic on a no-op is the
+worst signature in this codebase — it reads as "the app got it" while the road
+stays unplaced.
+
+Fixed structurally rather than by tuning a radius: `CatanHexGrid` renders the
+invisible corner target only when an `onIntersectionPress` handler exists, and
+the placement screen passes `undefined` while a road is owed. An inert corner
+now has nothing to hit-test with.
+
+**Generalise this.** Two hit targets sized independently, each provably disjoint
+from its own kind, is not evidence they are disjoint from each other. Count the
+cross-family distances.
+
+**Why `onLongPress` on an SVG shape fails, confirmed from the web side.** The
+browser console says it outright: `Unknown event handler property onLongPress.
+It will be ignored.` — and the same for every RN responder prop
+(`onStartShouldSetResponder`, `onResponderGrant`, `onResponderRelease`, …).
+react-native-svg passes them straight to the DOM element and React drops them,
+so on web the ONLY surviving handler is `onClick`. That is a second platform
+independently confirming the Android finding, and it means the `<Pressable>`
+overlay used for hexes is not an Android workaround — it is the only way to get
+a long-press on a shape anywhere.
+
+**`app/touch-probe.tsx` settles which primitives work on a given build.** Seven
+variants side by side with counters: transparent Circle (what corners and roads
+use), zero-opacity fill, near-transparent paint, Rect, handler on a `<G>`, an RN
+`<Pressable>` baseline, and `onLongPress` as the control. Reachable by URL only,
+nothing links to it. Measured on web: transparent Circle FIRES, `<G>` fires,
+`onLongPress` does not. Run it on a phone before debugging a screen — it turns
+"tapping does nothing" into a named cause in under a minute, and that symptom
+has cost this project three separate sessions.
+
+**The distance rule IS enforced.** It was deliberately skipped for a long time
+on the grounds that players will not let each other break it at a real table,
+and that reasoning was wrong about the failure mode — the realistic error is a
+mis-tap, not a rules dispute. `catanPlacement.settlementProblem` returns
+`'too_close'`, and it turned out to be free rather than a chore: once placement
+moved to CORNERS, an illegal corner is simply not offered.
+
+### Three React traps this screen hit
+
+All found by trying to force an edge case, not by anything failing in normal
+use — which is why they are written down rather than just fixed. The third
+arrived a week after the first two were fixed, in a DIFFERENT handler on the
+same screen, which is the argument for treating this as a pattern rather than
+three incidents.
+
+**The read-then-write race, again, in the Next button.** `handleNextPlayer`
+decided `isLastPlayer` from the render and then called
+`setCurrentPlayerIdx(i => i + 1)`. Two taps inside one render cycle both decide
+"not the last player" and both increment, so the index walks past the end and
+the screen shows **"Player 5 of 4"** — a nonexistent player, a Next button that
+names nobody and does nothing, and no way forward. Setup is on the critical path
+of every game, so that is a stuck app.
+
+The fix is the same shape as the double-placed settlement: make the repeat
+IDEMPOTENT rather than trying to prevent it. `nextSetupPlayerIndex` returns a
+clamped absolute index, so a second tap in the same tick sets the same value.
+`handleStartGame` additionally takes a ref guard, because `isSaving` is state
+and two synchronous calls both read it as false.
+
+**Turn rotation wraps; setup must not.** `getNextPlayerIndex` is modulo, which
+is right for whose turn it is and wrong for a one-pass setup. They are separate
+functions now for that reason.
+
+Reproduced and fixed on WEB before any device saw it, by firing four taps into
+one tick — worth remembering that this class of bug is reachable from a browser
+even though it presents as a touch problem.
 
 **Hooks must come before `catan-exposure-quick`'s `!activeSession` early
 return.** Adding a `useMemo` after it meant the screen called ten hooks when the
@@ -748,27 +925,55 @@ does reject a wrong-shaped board rather than repairing it, because a malformed
 board is worse than no board — it would put wrong numbers on real settlements.
 
 **Every non-generator path must call `clearActiveBoard`.** `new-game/catan.tsx`
-does it for all destinations; only the generator sets one, on the way out. Miss
-this and a scanned game silently inherits the previous game's generated numbers.
+does it for all destinations. Miss this and a game silently inherits the
+previous game's numbers.
 
-### What the research did and did not settle
+**The SCAN path never saved one, and that quietly disabled three features.**
+Only the generator called `saveActiveBoard`, so for the main photo path there
+was no board in storage — which meant the live board view, the results board and
+the mid-game corner picker all silently did nothing for exactly the games most
+likely to have a board. Found by wiring those features up and asking where the
+board came from, not by anything failing. The scan screen now saves the
+REVIEWED board (hexes plus the rotated harbour ring) on the way into placement.
 
-Confirmed: the base game has **four 3:1 and five 2:1 harbours** (one per
-resource). Several search results claim "5 generic and 4 specialized" — that is
-simply wrong, and it recurs across SEO-farm sites. `PORT_TYPE_COUNTS` is right.
+### The board during play, and the split that made it awkward
 
-**Not settled: the actual fixed harbour positions.** BoardGameGeek returned 403,
-the Catan wiki 402, CatanFusion a certificate error, and the sites that did
-answer are the ones with the harbour-count error. `STANDARD_PORT_LAYOUT`'s own
-disclaimer stands and the generator's "fixed positions" toggle inherits it —
-the UI says so rather than implying an authority that was never established.
-Reading nine positions off a physical box would settle it in two minutes; until
-someone does, treat "traditional" as "the app's standard-style layout".
+`services/catanBoardState.ts` answers "what does the board look like right now",
+which nothing did before: `getBuildingStatesAtTurn` is per-player and
+`allRoads` is per-edge.
 
-Structural facts that *are* established, if a future layout is derived: nine
-harbours over thirty coastal edges spaced 3–4 apart (which is what stops two
-sharing a settlement intersection), and near-alternating generic/specific — with
-five and four around a nine-cycle, exactly one same-type adjacent pair is forced.
+**A `locationId` is only sometimes a place.** Opening settlements placed by
+tapping a corner carry a real intersection id (`4v2`); every road carries a real
+edge id. But a settlement recorded mid-game through the number pad carried
+`generateId()` — the player said which NUMBERS it touched and never said where
+it was. So exposure was exact for the opening and self-reported for everything
+after, and half the board could not be drawn.
+
+Mid-game placement now offers the corner picker whenever a board is known, and
+derives the numbers from it. The number pad stays for boards the app does not
+have, and the two are mutually exclusive on screen — offering both invites
+entering numbers that contradict the board.
+
+**What cannot be drawn must be counted, not dropped.** `BoardSnapshot.unplaceable`
+carries the per-player count of buildings with no position, and the board panel
+prints it. A board that quietly omits two of your four settlements looks
+complete while being wrong, which is the same failure as a reader that declines
+invisibly — the whole value of showing the board is that it can be checked
+against the table.
+
+Ids are validated against the real geometry (`getAllIntersections`, `allEdges`)
+rather than by pattern, because a pattern would accept `9v9`, which is not a
+corner on any board.
+
+### The harbour layout
+
+See "The harbour layout, and what settled it" earlier in this file. It was
+written up twice and the two copies disagreed: this one said the positions were
+unsettled and that "reading nine positions off a physical box would settle it in
+two minutes", which is precisely what someone then did. The transcription from a
+photographed 5th-edition base game is the live account, and one open caveat
+survives — the 3–4 edge spacing was assumed and cross-checked against the photo,
+not measured.
 
 ---
 
@@ -776,11 +981,32 @@ five and four around a nine-cycle, exactly one same-type adjacent pair is forced
 
 Reads a board on-device, no network.
 
-**Terrain works. Tokens do not.** On a clean overhead capture with the corners
-marked, terrain reads **19/19** — the ranking approach genuinely holds up. Tokens
-read 5/19 in the app and 9/18 at best in `tools/`. Those are two different
-features behind one button, and it is worth keeping them apart when reasoning
-about this area.
+**Both halves now work.** This section spent months saying "terrain works,
+tokens do not" and that is no longer true — if you are reading it to decide
+whether tokens need solving, they do not. Terrain reads **19/19** on a clean
+overhead capture with the corners marked. Tokens are read by matching the
+cleaned DIGIT shape (`digitSample.ts` + `digitShape.ts` against the bundled
+`tokenLibrary.ts`), measured leave-one-photo-out:
+
+    overall     96%          (was 89% before the saturation cut moved)
+    precision   100% on what it accepts
+    coverage    94%
+    with the token bag applied:  180/180 tokens, 10/10 boards perfect
+
+Confirmed on hardware, 25 Aug 2026: **17/19 exact, 19/19 terrain, and 16/16 of
+the high-confidence readings correct.** The two errors were a 6/8 swap and both
+were flagged low, so the player was pointed at exactly the tiles that were
+wrong.
+
+They are still two different features behind one button and worth keeping apart
+when reasoning, but the old numbers in this paragraph (5/19 in the app, 9/18 in
+`tools/`) belonged to **blob counting**, which is deleted. The full story of how
+it got here — nine causes, each found by measuring — is at the top of this file.
+
+Read the top section before touching the token path. The short version of its
+lesson: the face-saturation predicate was cut at 0.30 when the printed cream
+measures 0.33–0.37, so the face failed its own test on every photo ever taken,
+and eight geometry "fixes" were measured against a disc centred on nothing.
 
 Three ideas, each measured rather than assumed:
 
@@ -817,19 +1043,29 @@ produced more confident-and-wrong conclusions than the rest of the repo combined
 
 **Well covered:** dice tracking, stats, verdicts, storage and migrations, the
 constraint solver, the mode boundary, the board generator, corner geometry, the
-harbour layout. 712 tests, all pure.
+harbour layout, opening placement and roads, board state and live callouts.
+926 tests across 42 suites, all pure.
 
-The vision pipeline's *logic* is covered too, but coverage is not the issue
-there — see the board reader section. It is internally consistent and wrong on
-real input.
+The vision pipeline's *logic* is covered too. Its recognition is now measured
+rather than merely covered — see the board reader section.
 
-**Never run on a device:** the capture screen, dev card entry, the port selector,
-player exposure setup, the results percentile column, the board generator screen,
-and the harbour and corner rendering in `CatanHexGrid`. ("Exposure" here means a
-player's board exposure — which numbers their settlements touch — not camera
-exposure. The two sit one screen apart, and the collision has already caused one
-misreading.) Every vision measurement used hand-marked geometry on a single
-board — a perfect score on one sample is exactly when to be suspicious.
+**Run on a device and confirmed:** the capture screen and the whole read path
+(25 Aug 2026 — 17/19 exact, 19/19 terrain). The corners the player marked in
+the app are kept as `DEVICE_RUN` in `tools/board_shots.py`, which is what makes
+that run reproducible offline.
+
+**Never run on a device:** dev card entry, the port selector, player exposure
+setup, the results percentile column, the board generator screen, the harbour
+and corner rendering in `CatanHexGrid`, and everything in the "Untested on a
+device" section of `BACKLOG.md` — the rebuilt opening placement, mid-game road
+building, the accolade cards, the roll-pad fix and the corner-handle drag fix.
+("Exposure" here means a player's board exposure — which numbers their
+settlements touch — not camera exposure. The two sit one screen apart, and the
+collision has already caused one misreading.)
+
+Every vision measurement used hand-marked geometry, and all captures are of ONE
+physical board — validated across photos, not across Catan sets. A perfect
+score on one sample is exactly when to be suspicious.
 
 **Known weak points:** glare is unsolved and no global filter helps (measured);
 grey-vs-brown confusions were the last colour errors to fall; navigation has no
