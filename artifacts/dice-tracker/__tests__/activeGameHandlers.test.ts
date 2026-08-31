@@ -16,6 +16,7 @@ import { saveRollEvents, saveSession } from '../services/storage';
 import {
   getNextPlayerIndex,
   getPrevPlayerIndex,
+  nextSetupPlayerIndex,
   recordRoll,
   undoLastRoll,
 } from '../services/rollInput';
@@ -585,5 +586,46 @@ describe('handleNextPlayer — player-advance save fails', () => {
 
     expect(setActiveSession).toHaveBeenCalledTimes(1);
     expect(setActiveSession.mock.calls[0]![0].currentPlayerIndex).toBe(0);
+  });
+});
+
+/**
+ * Setup advance must not wrap, and must survive a double tap.
+ *
+ * Reproduced on web before any device saw it: two taps inside one render cycle
+ * both read "not the last player" and both advanced, walking the index past the
+ * end. The result was a Settlement Setup screen showing "Player 5 of 4" with a
+ * Next button that named nobody, did nothing, and had no way forward — on the
+ * critical path of every game.
+ */
+describe('nextSetupPlayerIndex', () => {
+  it('advances one at a time', () => {
+    expect(nextSetupPlayerIndex(0, 4)).toBe(1);
+    expect(nextSetupPlayerIndex(2, 4)).toBe(3);
+  });
+
+  it('STOPS at the last player instead of wrapping', () => {
+    // getNextPlayerIndex wraps, because turn rotation should. Setup must not.
+    expect(nextSetupPlayerIndex(3, 4)).toBe(3);
+    expect(getNextPlayerIndex(3, 4)).toBe(0);
+  });
+
+  it('is idempotent, which is what makes a double tap harmless', () => {
+    const once = nextSetupPlayerIndex(3, 4);
+    expect(nextSetupPlayerIndex(once, 4)).toBe(once);
+  });
+
+  it('never returns an index outside the roster, from any starting point', () => {
+    for (const total of [1, 2, 3, 4, 6, 8]) {
+      for (let i = -2; i <= total + 3; i++) {
+        const next = nextSetupPlayerIndex(i, total);
+        expect(next).toBeGreaterThanOrEqual(0);
+        expect(next).toBeLessThanOrEqual(total - 1);
+      }
+    }
+  });
+
+  it('handles a single-player game', () => {
+    expect(nextSetupPlayerIndex(0, 1)).toBe(0);
   });
 });

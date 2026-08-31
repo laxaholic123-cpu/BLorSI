@@ -12,7 +12,7 @@
  * GameContext before navigating to the active Catan screen.
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Platform,
@@ -37,6 +37,7 @@ import {
   portForIntersection,
 } from '@/services/catanBoard';
 import { CatanHexGrid } from '@/components/CatanHexGrid';
+import { nextSetupPlayerIndex } from '@/services/rollInput';
 import { loadActiveBoard, type ActiveBoard } from '@/services/storage';
 
 // Settlement numbers (2D6, no 7)
@@ -93,6 +94,8 @@ export default function CatanExposureQuickScreen() {
     (activeSession?.players ?? []).map(() => ({ settlements: [emptySettlement()] })),
   );
   const [currentPlayerIdx, setCurrentPlayerIdx] = useState(0);
+  /** Guards the one-way trip into the game against a double-tap. */
+  const startedRef = useRef(false);
   const [isSaving, setIsSaving] = useState(false);
 
   /**
@@ -389,20 +392,38 @@ export default function CatanExposureQuickScreen() {
       return;
     }
     if (isLastPlayer) {
-      handleStartGame();
+      void handleStartGame();
     } else {
-      setCurrentPlayerIdx(i => i + 1);
+      /**
+       * CLAMPED, not `i => i + 1`.
+       *
+       * `isLastPlayer` is read from this render, so two taps inside one render
+       * cycle both decide "not the last player" and both advance. An
+       * incrementer walks off the end and strands the player on "Player 5 of
+       * 4" — a screen with a Next button that names nobody, does nothing, and
+       * has no way forward. Reproduced on web before a device ever saw it.
+       *
+       * Setting an absolute clamped index makes the second tap idempotent.
+       * Same read-then-write race as the double-placed settlement, same fix.
+       */
+      setCurrentPlayerIdx(nextSetupPlayerIndex(currentPlayerIdx, players.length));
     }
   };
 
   const handleStartGame = async () => {
-    if (isSaving) return;
+    // `isSaving` is state, so two synchronous calls both read false and both
+    // persist. The ref settles it in the same tick.
+    if (isSaving || startedRef.current) return;
+    startedRef.current = true;
     setIsSaving(true);
     try {
       const events = buildAllExposureEvents();
       await persistExposureEvents(activeSession.id, events);
       router.replace('/active-catan' as any);
     } catch {
+      // Released so the player can genuinely retry — the guard exists to stop
+      // a double-tap persisting twice, not to make one failure permanent.
+      startedRef.current = false;
       Alert.alert('Error', 'Could not save exposure data. Please try again.');
     } finally {
       setIsSaving(false);

@@ -89,6 +89,10 @@ function RootLayoutNav() {
         name="settings-info"
         options={{ headerShown: false, presentation: 'modal' }}
       />
+      {/* Touch dispatch probe — a diagnostic, reachable only by URL. Nothing
+          links to it on purpose; it exists to settle which SVG primitives
+          actually receive taps on a given build. See the file header. */}
+      <Stack.Screen name="touch-probe" options={{ headerShown: false }} />
     </Stack>
   );
 }

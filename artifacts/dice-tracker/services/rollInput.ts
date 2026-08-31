@@ -104,6 +104,23 @@ export const getNextPlayerIndex = (current: number, total: number): number =>
 export const getPrevPlayerIndex = (current: number, total: number): number =>
   (current - 1 + total) % total;
 
+/**
+ * Advance through a one-pass SETUP, which must not wrap.
+ *
+ * Turn rotation wraps; setup does not — running off the end of the player list
+ * during setup is how `catan-exposure-quick` stranded a player on "Player 5 of
+ * 4" with a Next button that named nobody and did nothing.
+ *
+ * It is CLAMPED rather than incremented because of how it gets called. The
+ * screen decides "is this the last player?" from the current render, so two
+ * taps inside one render cycle both decide "no" and both advance. An
+ * incrementer walks past the end; a clamped absolute index is idempotent, so
+ * the second tap is harmless. This is the same read-then-write race that
+ * double-placed a settlement on one corner — see CLAUDE.md.
+ */
+export const nextSetupPlayerIndex = (current: number, total: number): number =>
+  Math.max(0, Math.min(current + 1, total - 1));
+
 // ─── Dice value helpers ───────────────────────────────────────────────────────
 
 /** Returns the ordered list of result values for the given dice mode. */
