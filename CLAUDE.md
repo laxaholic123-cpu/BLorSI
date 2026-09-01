@@ -599,7 +599,7 @@ artifacts/dice-tracker/     Expo app (expo-router)
   types/models.ts           core types — mode-agnostic
   types/boardState.ts       BoardExposureEvent, BoardPosition
   types/modes/catan.ts      Catan types (re-exported from models.ts)
-  __tests__/                926 tests, pure logic only
+  __tests__/                965 tests, pure logic only
 artifacts/api-server/       Express — one real route, board-scan AI
 tools/                      Python research harnesses (see below)
 ```
@@ -698,6 +698,77 @@ skill word ever appears** in any emitted text. Rate on fair dice is measured,
 not assumed — 9.4% of rolls, about one every eleven.
 
 ---
+
+## The robber, and a bug that flattered everyone's bad luck
+
+**Blocks never lifted.** Every 7 wrote a `robberBlockStarted` and nothing ever
+wrote the matching end except a manual action buried in the development modal.
+`getActiveRobberBlockedNumbers` unions every block it finds, so a player's
+blocked set only ever GREW — after five sevens, five numbers were treated as
+permanently robbed, for the rest of the game. Production was progressively
+under-counted, silently, in the one direction that makes a player look
+unluckier than they were. On the app whose entire claim is telling real bad
+luck from imagined bad luck.
+
+The robber cannot be in two places. `catanRobber.robberMoveEvents` returns the
+ENDS for whatever was standing plus the STARTS for the new tile, in one array,
+so a move cannot be half-applied.
+
+**It blocked a NUMBER, not a TILE.** Two hexes can carry the same number, so
+blocking "5" blocked both — a player whose second 5 was across the board lost
+production the robber never touched. The prompt now shows the board and takes a
+tile, and who is blocked is DERIVED from the six corners rather than asked for.
+
+That in turn upgraded the stats. `blockedWeightForNumber` used to charge "the
+largest single share" — a deliberate estimate, because capture only recorded
+the number. With the hex recorded it is exact: charge the buildings standing on
+that tile. Both modes still exist, because every block written before the change
+has no hex, and the honest reading of those events is still the estimate.
+
+**The robber also moves on a KNIGHT.** Only the 7 had a path, so a knight-driven
+move could not be recorded at all and the block sat on whatever tile the last
+seven put it on. There is a Robber pill on the build row now.
+
+### Answering "is everything being captured?" with a measurement
+
+`tools/capture_audit.mjs` recomputes the entire production ledger from the raw
+event log — its own building state, its own robber bookkeeping — and compares
+against `computePlayerProductionStats`. Deliberately does NOT reuse
+`getBuildingStatesAtTurn` or `getActiveRobberBlockedNumbers`, because sharing
+the helpers would make the comparison circular and prove nothing.
+
+Result: **0 mismatches across 420 player-ledgers, 5 seeds.**
+
+**My first run of it "found" 32 mismatches that were entirely my own error.**
+The independent pass zeroed ALL production on a blocked number; the shipped code
+charges one tile's worth, which is correct and documented. A disagreement
+between two implementations says one is wrong, and it is worth about ninety
+seconds to ask which before believing the new one. The second run found 18 more,
+which turned out to be a silently failed esbuild leaving the harness measuring
+stale code — check that the bundle actually rebuilt before trusting a delta.
+
+## What the results screen leads with
+
+**Mean and median roll are nearly irrelevant and used to be the headline.**
+Nobody finishes a game wondering whether the mean was 7.1. They wonder why they
+sat on 6 and 9 all night and never saw them. Worse, a table where everybody's
+numbers landed can share a mean with one where nobody's did — so the summary
+statistic is blind to the only question being asked.
+
+`services/exposureReport.ts` answers it directly: the numbers each player holds,
+how heavily, how often each actually came up, and par for a run of that length.
+Every figure is a count or a difference of counts, and par is always relative to
+the rolls actually made — "you should have seen six 8s" means nothing without
+saying six out of how many.
+
+**Nothing there is a luck claim**, and there is a test asserting the wording
+never becomes one. Whether a gap is remarkable stays with the percentile, which
+has the simulation behind it.
+
+**Accolades carry their whole table now.** A rank with no way to see the other
+places is a horoscope with a number in it — "4th of 4 for robber losses" invites
+the obvious question of what the other three lost, and the ranking was already
+computed to produce the badge. Tapping a card opens it.
 
 ## The statistical stance
 
@@ -1044,7 +1115,7 @@ produced more confident-and-wrong conclusions than the rest of the repo combined
 **Well covered:** dice tracking, stats, verdicts, storage and migrations, the
 constraint solver, the mode boundary, the board generator, corner geometry, the
 harbour layout, opening placement and roads, board state and live callouts.
-926 tests across 42 suites, all pure.
+965 tests across 44 suites, all pure.
 
 The vision pipeline's *logic* is covered too. Its recognition is now measured
 rather than merely covered — see the board reader section.

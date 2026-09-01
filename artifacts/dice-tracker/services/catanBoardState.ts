@@ -107,37 +107,65 @@ export function boardStateAtTurn(
   return { buildings, roads, unplaceable };
 }
 
-export type MidGamePlacementProblem = 'unknown_corner' | 'occupied' | 'too_close';
+export type MidGamePlacementProblem =
+  | 'unknown_corner'
+  | 'occupied'
+  | 'too_close'
+  | 'not_connected';
 
 /**
  * Why a corner cannot take a new building mid-game, or null if it can.
  *
- * Enforces the two rules a MIS-TAP breaks — the corner is taken, or it is
- * adjacent to a building — and deliberately not the third. Real Catan also
- * requires a settlement to connect to your own road, and that is NOT checked
- * here: roads are optional to record, so a player who has not been logging
- * them would find every legal corner refused. Occupancy and distance are
- * unambiguous from the board alone; connectivity depends on bookkeeping the
- * app cannot assume happened.
+ * Three rules, and the third is conditional:
  *
- * This is the same reasoning that put the distance rule into opening
- * placement: enforce what catches a slip, not what makes the app a referee.
+ *   occupied      the corner is taken. Unambiguous.
+ *   too_close     it is adjacent to a building. The distance rule.
+ *   not_connected after the opening, a settlement must sit on one of YOUR OWN
+ *                 roads. This is a real Catan rule and it is now enforced.
+ *
+ * **Connectivity is only checked when the player has recorded at least one
+ * road**, and that compromise is deliberate rather than lazy. Roads are
+ * optional to log — plenty of tables track settlements and never touch the
+ * road pill — and a player with no roads recorded would otherwise find EVERY
+ * corner refused, with the app insisting on a rule it has no data for. So the
+ * rule binds exactly when the app knows enough to apply it, and the moment a
+ * player logs their first road it starts holding them to it.
+ *
+ * `playerId` is optional for the same reason: callers that only want the
+ * board-wide rules (drawing, validation) pass nothing and get occupancy and
+ * distance, which is what "is this corner free" means without an owner.
  */
 export function midGameSettlementProblem(
   cornerId: string,
   snapshot: BoardSnapshot,
+  playerId?: string,
 ): MidGamePlacementProblem | null {
   if (!isBoardCorner(cornerId)) return 'unknown_corner';
   if (snapshot.buildings.has(cornerId)) return 'occupied';
   for (const neighbour of neighboursOf(cornerId)) {
     if (snapshot.buildings.has(neighbour)) return 'too_close';
   }
+  if (playerId) {
+    const ownRoads = [...snapshot.roads.entries()].filter(([, owner]) => owner === playerId);
+    if (ownRoads.length > 0) {
+      const touches = ownRoads.some(([edgeId]) => {
+        const ends = cornersOfEdge(edgeId);
+        return ends ? ends[0] === cornerId || ends[1] === cornerId : false;
+      });
+      if (!touches) return 'not_connected';
+    }
+  }
   return null;
 }
 
 /** Every corner a new building could legally go on. */
-export function legalMidGameCorners(snapshot: BoardSnapshot): string[] {
-  return [...VALID_CORNERS].filter(id => midGameSettlementProblem(id, snapshot) === null);
+export function legalMidGameCorners(
+  snapshot: BoardSnapshot,
+  playerId?: string,
+): string[] {
+  return [...VALID_CORNERS].filter(
+    id => midGameSettlementProblem(id, snapshot, playerId) === null,
+  );
 }
 
 /**

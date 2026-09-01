@@ -30,6 +30,7 @@ import * as Haptics from 'expo-haptics';
 
 import { useColors } from '@/hooks/useColors';
 import { useSettings } from '@/context/SettingsContext';
+import { useGame } from '@/context/GameContext';
 import { CatanHexGrid } from '@/components/CatanHexGrid';
 import { saveBoardLayout } from '@/services/boardLayouts';
 import { saveActiveBoard } from '@/services/storage';
@@ -116,6 +117,13 @@ export default function CatanBoardGeneratorScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { settings } = useSettings();
+  /**
+   * Only needed to key the board handoff by session. This screen can be
+   * opened with no session at all, so the handoff is skipped rather than
+   * crashing — which lands exposure setup on the number pad, exactly where
+   * it was before the board existed.
+   */
+  const { activeSession } = useGame();
   // This screen draws its own chrome (headerShown: false), so it owes the
   // status bar its own padding. Web has no inset but does sit under the dev
   // toolbar, which is why the sibling screens add a fixed offset there.
@@ -372,7 +380,9 @@ export default function CatanBoardGeneratorScreen() {
             // Hand the board forward so settlements can be picked off it rather
             // than typed in. Best-effort: if this fails, exposure setup falls
             // back to tapping numbers, which is where it started.
-            await saveActiveBoard({ hexes: board.hexes, ports: board.ports });
+            if (activeSession) {
+              await saveActiveBoard(activeSession.id, { hexes: board.hexes, ports: board.ports });
+            }
             router.navigate('/catan-exposure-quick' as never);
           }}
           activeOpacity={0.85}

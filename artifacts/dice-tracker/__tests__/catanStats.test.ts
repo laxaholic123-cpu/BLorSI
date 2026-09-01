@@ -14,11 +14,15 @@
 
 import {
   CATAN_PROBS,
+  blockedWeightForNumber,
   computeCatanGameStats,
   computePlayerProductionStats,
   getActiveRobberBlockedNumbers,
   getBuildingStatesAtTurn,
+  grossWeightForNumber,
+  netWeightForNumber,
 } from '../services/catanStats';
+import { getAllIntersections } from '../services/catanBoard';
 import {
   classifyCatanVerdict,
   classifyExposureLuck,
@@ -590,5 +594,61 @@ describe('computeCatanGameStats', () => {
     const rolls = Array.from({ length: 36 }, (_, i) => makeRoll((i % 11) + 2, 'p1', i + 1));
     const stats = computeCatanGameStats(session, rolls, []);
     expect(stats.sevenExpected).toBe(6); // round(6/36 × 36)
+  });
+});
+
+/**
+ * The robber charge, once the block knows which TILE it is on.
+ *
+ * Before the robber moved onto tiles, capture recorded only the number, so the
+ * best available estimate was "one hex's worth — charge the largest single
+ * share". With the hex recorded the answer is exact, and the two cases have to
+ * coexist: every block written before the change still has no hex.
+ */
+describe('blockedWeightForNumber', () => {
+  const onHexNine = getAllIntersections().filter(i => i.hexIndices.includes(9));
+  const notOnNine = getAllIntersections().find(i => !i.hexIndices.includes(9))!;
+
+  const bldg = (locationId: string, weight: number, numbers: number[]) => ({
+    locationId, productionWeight: weight, affectedNumbers: numbers,
+  });
+
+  it('charges exactly the buildings on the robbed tile', () => {
+    const buildings = [
+      bldg(onHexNine[0]!.id, 1, [5]),
+      bldg(onHexNine[1]!.id, 2, [5]),
+      bldg(notOnNine.id, 1, [5]),   // a different 5, across the board
+    ];
+    // Both buildings on hex 9 are robbed; the far one is not.
+    expect(blockedWeightForNumber(buildings, 5, 9)).toBe(3);
+  });
+
+  it('spares a player whose only 5 is on the OTHER 5-hex', () => {
+    const buildings = [bldg(notOnNine.id, 2, [5])];
+    expect(blockedWeightForNumber(buildings, 5, 9)).toBe(0);
+  });
+
+  it('falls back to the largest single share when no hex was recorded', () => {
+    const buildings = [
+      bldg(onHexNine[0]!.id, 1, [5]),
+      bldg(onHexNine[1]!.id, 2, [5]),
+    ];
+    // The legacy estimate: one hex's worth, bounded by the biggest building.
+    expect(blockedWeightForNumber(buildings, 5)).toBe(2);
+    expect(blockedWeightForNumber(buildings, 5, null)).toBe(2);
+  });
+
+  it('never charges more than was produced', () => {
+    const buildings = [bldg(onHexNine[0]!.id, 1, [5])];
+    const gross = grossWeightForNumber(buildings, 5);
+    expect(netWeightForNumber(buildings, 5, [5], [{ numbers: [5], hexIndex: 9 }]))
+      .toBe(Math.max(0, gross - 1));
+    expect(netWeightForNumber(buildings, 5, [5], [{ numbers: [5], hexIndex: 9 }]))
+      .toBeGreaterThanOrEqual(0);
+  });
+
+  it('leaves an unblocked number untouched', () => {
+    const buildings = [bldg(onHexNine[0]!.id, 1, [5])];
+    expect(netWeightForNumber(buildings, 5, [], [])).toBe(grossWeightForNumber(buildings, 5));
   });
 });

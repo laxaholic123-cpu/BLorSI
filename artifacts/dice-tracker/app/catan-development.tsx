@@ -68,7 +68,8 @@ export default function CatanDevelopmentScreen() {
   const { settings } = useSettings();
   const webTop = Platform.OS === 'web' ? 67 : 0;
 
-  const { action: actionParam } = useLocalSearchParams<{ action?: string }>();
+  const { action: actionParam, playerId: playerParam } =
+    useLocalSearchParams<{ action?: string; playerId?: string }>();
 
   /**
    * The board, needed only to draw the road picker.
@@ -89,10 +90,21 @@ export default function CatanDevelopmentScreen() {
    * the placement becomes a real board position like the opening ones.
    */
   const [selectedCorner, setSelectedCorner] = useState<string | null>(null);
-  useEffect(() => { void loadActiveBoard().then(setBoard); }, []);
+  useEffect(() => {
+    if (activeSession) void loadActiveBoard(activeSession.id).then(setBoard);
+  }, [activeSession]);
   const initialAction = (ACTIONS.find(a => a.type === actionParam)?.type ?? null) as ActionType;
   const [selectedAction, setSelectedAction] = useState<ActionType>(initialAction);
-  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
+  /**
+   * Preselected from the caller when the game already knows whose turn it is.
+   *
+   * Tapping Road on the active screen used to land on a player picker, so the
+   * map — the thing you came for — was two taps away and the app was asking a
+   * question it could already answer.
+   */
+  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(
+    playerParam ?? null,
+  );
   // A road chosen for one player is meaningless for another, and a stale
   // selection would be saved against whoever is picked next.
   useEffect(() => {
@@ -135,10 +147,40 @@ export default function CatanDevelopmentScreen() {
     [exposureEvents, activeSession, currentTurn],
   );
 
+  /**
+   * Every building on the board, and which of them are cities.
+   *
+   * Shared by BOTH pickers. Choosing a road with the settlements invisible, or
+   * a corner with the roads invisible, means judging connectivity against half
+   * a board — and the board is the thing the player is checking the app
+   * against.
+   */
+  const buildingMarks = useMemo(() => {
+    const marks: Record<string, string> = {};
+    for (const [cornerId, b] of snapshot.buildings) {
+      marks[cornerId] = activeSession?.players.find(p => p.id === b.playerId)?.color ?? '#888';
+    }
+    return marks;
+  }, [snapshot, activeSession]);
+
+  const cityCorners = useMemo(
+    () => [...snapshot.buildings.entries()].filter(([, b]) => b.weight >= 2).map(([id]) => id),
+    [snapshot],
+  );
+
+  /** Roads on the board, by owner colour — drawn in the corner picker too. */
+  const roadMarksAll = useMemo(() => {
+    const marks: Record<string, string> = {};
+    for (const [edgeId, ownerId] of snapshot.roads) {
+      marks[edgeId] = activeSession?.players.find(p => p.id === ownerId)?.color ?? '#888';
+    }
+    return marks;
+  }, [snapshot, activeSession]);
+
   /** Corners a new settlement could legally take — occupancy and distance. */
   const offeredCorners = useMemo(
-    () => (board ? legalMidGameCorners(snapshot) : []),
-    [board, snapshot],
+    () => (board ? legalMidGameCorners(snapshot, selectedPlayerId ?? undefined) : []),
+    [board, snapshot, selectedPlayerId],
   );
 
   /** What the chosen corner produces, derived from the board rather than typed. */
@@ -220,7 +262,9 @@ export default function CatanDevelopmentScreen() {
          * corner is preferred whenever one is available.
          */
         if (selectedCorner) {
-          const problem = midGameSettlementProblem(selectedCorner, snapshot);
+          const problem = midGameSettlementProblem(
+            selectedCorner, snapshot, selectedPlayerId,
+          );
           if (problem) {
             Alert.alert(
               'Cannot build there',
@@ -228,7 +272,9 @@ export default function CatanDevelopmentScreen() {
                 ? 'Someone already holds that corner.'
                 : problem === 'too_close'
                   ? 'Too close — settlements need a gap of at least one corner.'
-                  : 'That corner cannot be used.',
+                  : problem === 'not_connected'
+                    ? 'After the opening, a settlement has to sit on one of your own roads.'
+                    : 'That corner cannot be used.',
             );
             return;
           }
@@ -516,12 +562,23 @@ export default function CatanDevelopmentScreen() {
             ? 'NO LEGAL ROADS — A ROAD MUST TOUCH YOUR OWN ROAD OR BUILDING'
             : `TAP A ROAD · ${offerable.length} LEGAL`}
         </Text>
+        {/*
+          Buildings are drawn here too. Choosing a road with the settlements
+          invisible means judging "does this connect to anything of mine"
+          against a blank board — the legality filter already knows the answer,
+          but the player cannot SEE why an edge is or is not offered, and the
+          board is the thing they are checking the app against.
+        */}
         <CatanHexGrid
           hexes={board.hexes}
           ports={board.ports}
           showRoads
           legalRoads={offerable}
           roadMarks={marks}
+          showIntersections
+          legalIntersections={[]}
+          intersectionMarks={buildingMarks}
+          cityIntersections={cityCorners}
           onRoadPress={id => {
             void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             setSelectedRoad(id);
@@ -545,14 +602,8 @@ export default function CatanDevelopmentScreen() {
   const renderCornerPicker = () => {
     if (!board || !selectedPlayerId || !activeSession) return null;
 
-    const marks: Record<string, string> = {};
-    const cities: string[] = [];
-    for (const [cornerId, b] of snapshot.buildings) {
-      marks[cornerId] = activeSession.players.find(p => p.id === b.playerId)?.color ?? '#888';
-      if (b.weight >= 2) cities.push(cornerId);
-    }
     const mine = activeSession.players.find(p => p.id === selectedPlayerId)?.color ?? colors.primary;
-    if (selectedCorner) marks[selectedCorner] = mine;
+    const marks = { ...buildingMarks, ...(selectedCorner ? { [selectedCorner]: mine } : {}) };
 
     return (
       <View style={{ gap: 8 }}>
@@ -561,13 +612,20 @@ export default function CatanDevelopmentScreen() {
             ? `CORNER SELECTED · PRODUCES ${cornerNumbers.length ? cornerNumbers.join(', ') : 'NOTHING'}`
             : `TAP A CORNER · ${offeredCorners.length} LEGAL`}
         </Text>
+        {/* Roads are drawn but NOT tappable here — showRoads with no
+            onRoadPress means the overlay skips them entirely, so they cannot
+            steal a corner tap. You need to see your network to judge a
+            settlement; you do not need to build on it. */}
         <CatanHexGrid
           hexes={board.hexes}
           ports={board.ports}
           showIntersections
           legalIntersections={offeredCorners}
           intersectionMarks={marks}
-          cityIntersections={cities}
+          cityIntersections={cityCorners}
+          showRoads
+          legalRoads={[]}
+          roadMarks={roadMarksAll}
           onIntersectionPress={id => {
             haptic();
             setSelectedCorner(prev => (prev === id ? null : id));

@@ -134,6 +134,18 @@ export interface Accolade {
   outOf: number;
   /** How notable this pairing is, 0-1. Lets a caller show only strong ones. */
   strength: number;
+  /**
+   * The whole table on this axis, best first — so the badge can be opened and
+   * checked rather than taken on faith.
+   *
+   * An accolade without this is a horoscope with a number in it: "Robbed by
+   * Physics, 4th of 4" invites the obvious question of what the other three
+   * got, and the ranking is already computed to produce the badge. Showing it
+   * costs nothing and turns a claim into a table.
+   */
+  breakdown: { displayName: string; value: number; rank: number; isYou: boolean }[];
+  /** What the axis actually measures, in a few words. */
+  measures: string;
 }
 
 interface Ctx {
@@ -720,8 +732,16 @@ export function assignAccolades(
       // first axis that CAN, rather than emit an empty badge.
       col = ranked.findIndex(r => r.rank.get(p.playerId) !== undefined);
     }
-    const { axis, rank, outOf } = ranked[col]!;
+    const { axis, rank, outOf, values } = ranked[col]!;
     const r = rank.get(p.playerId)!;
+    const breakdown = [...values.entries()]
+      .map(([id, value]) => ({
+        displayName: all.find(x => x.playerId === id)?.displayName ?? '?',
+        value,
+        rank: rank.get(id) ?? 0,
+        isYou: id === p.playerId,
+      }))
+      .sort((a, b) => a.rank - b.rank);
     // Leader, mid-pack, or last — the title follows the placing.
     const title = r === 1 ? axis.titles[0]
       : r === outOf ? axis.titles[2]
@@ -735,6 +755,9 @@ export function assignAccolades(
       rank: r,
       outOf,
       strength: Math.min(1, interest(row, col)),
+      breakdown,
+      measures: ACCOLADE_CATALOGUE.find(c => c.kind === axis.kind)?.titles.join(' / ')
+        ?? axis.kind.replace(/_/g, ' '),
     };
   });
 }

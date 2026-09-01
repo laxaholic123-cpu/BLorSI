@@ -92,6 +92,25 @@ const CATAN_NUMBERS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12];
  */
 const PLAYER_COLORS = ['#F5A623', '#4A90D9', '#7ED321', '#D0021B', '#9013FE'];
 
+/**
+ * A short chip label that actually distinguishes players.
+ *
+ * `displayName.slice(0, 2)` rendered every default name as "Pl", because they
+ * all start "Player ". Named players collide too — "Sam" and "Sara" both give
+ * "Sa". Numbered defaults become P1..Pn; named players get their initials, and
+ * the seat number breaks a tie.
+ */
+function initialsFor(displayName: string | undefined, seatIndex: number): string {
+  const seat = seatIndex >= 0 ? String(seatIndex + 1) : '?';
+  if (!displayName) return `P${seat}`;
+  const numbered = displayName.trim().match(/^Player\s*(\d+)$/i);
+  if (numbered) return `P${numbered[1]}`;
+  const words = displayName.trim().split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return (words[0]![0]! + words[1]![0]!).toUpperCase();
+  const one = words[0] ?? '';
+  return one ? (one[0]!.toUpperCase() + seat) : `P${seat}`;
+}
+
 const RESOURCES: ResourceType[] = ['grain', 'ore', 'lumber', 'brick', 'wool', 'desert'];
 
 const RESOURCE_LABELS: Record<ResourceType, string> = {
@@ -523,7 +542,7 @@ export default function CatanBoardScanScreen() {
      * `new-game/catan.tsx` clears the active board on the way in, so this
      * overwrites nothing it should not.
      */
-    void saveActiveBoard({ hexes, ports });
+    void saveActiveBoard(activeSession.id, { hexes, ports });
     beginPlacement();
     setPhase('placement');
   };
@@ -947,23 +966,49 @@ export default function CatanBoardScanScreen() {
           </View>
         </View>
 
-        {/* Colour, chosen here where the board is actually visible. */}
+        {/*
+          Colour, chosen here where the board is actually visible.
+
+          A colour already taken by ANOTHER player is shown struck through and
+          refuses the tap. Two players sharing a colour is not a cosmetic
+          problem on this screen: every settlement, city and road on the board
+          is identified by colour alone, so a duplicate makes the board
+          unreadable and there is nothing on screen to reveal the mistake.
+        */}
         <View style={s.swatchRow}>
-          {PLAYER_COLORS.map(c => (
-            <TouchableOpacity
-              key={c}
-              onPress={() => {
-                haptic();
-                setColorOverrides(prev => ({ ...prev, [playerId]: c }));
-              }}
-              style={[
-                s.swatch,
-                { backgroundColor: c, borderColor: c === tint ? colors.foreground : 'transparent' },
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel={`Use this colour for ${player?.displayName ?? 'this player'}`}
-            />
-          ))}
+          {PLAYER_COLORS.map(c => {
+            const takenBy = players.find(p => p.id !== playerId && colorOf(p.id) === c);
+            const isMine = c === tint;
+            return (
+              <TouchableOpacity
+                key={c}
+                disabled={Boolean(takenBy)}
+                onPress={() => {
+                  haptic();
+                  setColorOverrides(prev => ({ ...prev, [playerId]: c }));
+                }}
+                style={[
+                  s.swatch,
+                  {
+                    backgroundColor: c,
+                    borderColor: isMine ? colors.foreground : 'transparent',
+                    opacity: takenBy ? 0.28 : 1,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: Boolean(takenBy), selected: isMine }}
+                accessibilityLabel={
+                  takenBy
+                    ? `Colour already taken by ${takenBy.displayName}`
+                    : `Use this colour for ${player?.displayName ?? 'this player'}`
+                }
+              >
+                {takenBy ? (
+                  <Ionicons name="close" size={16} color="#FFFFFF" />
+                ) : null}
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         {/*
@@ -1006,8 +1051,20 @@ export default function CatanBoardScanScreen() {
           <Text style={[s.settlementsLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
             OPENING ORDER · {progress.settlementsPlaced}/{progress.total} placed
           </Text>
-          <View style={s.stripRow}>
-            {slots.map(sl => {
+          {/*
+            One row per ROUND, because the opening is a snake: round 1 runs
+            forward and round 2 runs back. A single row of chips hid that
+            entirely — the order was there but unreadable, and every chip
+            showed "Pl" because the label was displayName.slice(0, 2) and
+            every default name starts "Player ".
+          */}
+          {([1, 2] as const).map(round => (
+            <View key={round} style={{ gap: 4 }}>
+              <Text style={[s.stripRoundLabel, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                {round === 1 ? 'ROUND 1 — first settlement, in order' : 'ROUND 2 — second settlement, reverse order'}
+              </Text>
+              <View style={s.stripRow}>
+            {slots.filter(sl => sl.round === round).map(sl => {
               const isActive = sl.index === activeSlot;
               const done = Boolean(sl.settlement && sl.road);
               const part = Boolean(sl.settlement) !== Boolean(sl.road);
@@ -1037,12 +1094,17 @@ export default function CatanBoardScanScreen() {
                     color: done ? '#FFFFFF' : colors.foreground,
                     fontFamily: 'Inter_600SemiBold',
                   }]}>
-                    {(players.find(p => p.id === sl.playerId)?.displayName ?? '?').slice(0, 2)}
+                    {initialsFor(
+                      players.find(p => p.id === sl.playerId)?.displayName,
+                      players.findIndex(p => p.id === sl.playerId),
+                    )}
                   </Text>
                 </TouchableOpacity>
               );
             })}
-          </View>
+              </View>
+            </View>
+          ))}
           <Text style={[s.stripHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
             Tap any turn to go back to it · long-press to clear just that one
           </Text>
@@ -1373,6 +1435,7 @@ const s = StyleSheet.create({
   stripChip: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   stripChipText: { fontSize: 13 },
   stripHint: { fontSize: 11, textAlign: 'center' },
+  stripRoundLabel: { fontSize: 10, letterSpacing: 0.5 },
   placementScroll: { padding: 16, gap: 10, paddingBottom: 40 },
   playerBar: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 12, borderRadius: 12, borderWidth: 1, borderLeftWidth: 4 },
   playerDot: { width: 12, height: 12, borderRadius: 6, marginTop: 3, flexShrink: 0 },

@@ -60,7 +60,7 @@ may be more or less done than it looks.
 
 **Untested on a device — the current risk, in one place**
 
-Everything below was built and verified offline (typecheck, 926 tests) and has
+Everything below was built and verified offline (typecheck, 965 tests) and has
 never run on hardware. Grouped because they are one testing session, not five:
 
 - The rebuilt opening placement: corner taps, road taps, the turn strip,
@@ -594,3 +594,59 @@ should answer first.
 
     Still unproven anywhere: Android touch dispatch, which is the whole point of
     the device session.
+
+20. **The robber moves onto TILES, and blocks now lift.** Done, and it turned up
+    a correctness bug worse than the UX one that prompted it.
+
+    **Blocks never ended.** Every 7 wrote a `robberBlockStarted` and nothing
+    wrote the matching end except a manual action in the development modal.
+    Blocked numbers only accumulated, so production was progressively
+    under-counted for the rest of the game — silently, and in the direction
+    that makes a player look unluckier than they were.
+
+    **And it blocked a number rather than a tile**, so a player whose second 5
+    was across the board lost production the robber never touched.
+
+    `services/catanRobber.ts` models one robber on one hex. A move returns the
+    ends and the starts together so it cannot be half-applied, and who is
+    blocked is derived from the tile's six corners instead of asked for. The
+    prompt shows the board. A Robber pill covers knights, which previously had
+    no path at all. 13 new tests.
+
+    Knock-on: `blockedWeightForNumber` was a documented ESTIMATE ("charge the
+    largest single share") because capture only knew the number. With the hex
+    recorded it is exact. Both modes remain — every block written before this
+    has no hex, and the estimate is the honest reading of those.
+
+21. **"Are all rolls and exposures captured?" — answered with a measurement.**
+    `tools/capture_audit.mjs` recomputes the whole production ledger from the
+    raw event log, independently of the shipped helpers, and compares.
+
+    **0 mismatches across 420 player-ledgers, 5 seeds.**
+
+    Two false alarms on the way, both worth remembering. The first run found 32
+    mismatches that were my own error — the independent pass zeroed all
+    production on a blocked number, when the shipped code correctly charges one
+    tile's worth. The second found 18, which was a silently failed esbuild
+    leaving the harness measuring stale code. A disagreement between two
+    implementations means one is wrong; check which before believing the new
+    one, and check the bundle actually rebuilt.
+
+22. **Results now lead with "did your numbers come up?"** Done —
+    `services/exposureReport.ts`.
+
+    Mean and median roll were the headline and are nearly irrelevant: nobody
+    finishes a game wondering whether the mean was 7.1, and a table where
+    everybody's numbers landed can share a mean with one where nobody's did.
+    The new lead is per player — the numbers they hold, how heavily, how often
+    each came up, and par for a run of that length.
+
+    Every figure is a count or a difference of counts, par is always relative
+    to the rolls actually made, and a test asserts the wording never becomes a
+    luck claim. Whether a gap is remarkable stays with the percentile, which
+    has the simulation behind it. 14 new tests.
+
+23. **Accolades carry their whole table.** Done. Tapping a card opens the full
+    ranking on that axis with every player's value, the reader highlighted. A
+    rank with no way to see the other places is a horoscope with a number in
+    it, and the ranking was already computed to produce the badge.

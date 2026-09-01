@@ -85,6 +85,18 @@ export interface CatanPlayerExposureEvent extends BoardExposureEvent {
    * calculations. They are reported as a separate placement dimension.
    */
   portAccess?: PortType;
+  /**
+   * Which HEX the robber sits on, for `robberBlockStarted` events.
+   *
+   * The robber occupies a TILE, not a number. Recording only the number
+   * blocked every hex carrying it — a player with a settlement on the other 5
+   * lost production the robber never touched.
+   *
+   * Optional, and absent on every event written before this existed. Nothing
+   * migrates: a block with no hex is read as a legacy number-block and still
+   * honoured, which is the honest reading of what that event recorded.
+   */
+  robberHexIndex?: number;
 }
 
 /**

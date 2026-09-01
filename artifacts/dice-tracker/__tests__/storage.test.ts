@@ -8,7 +8,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Pull helpers under test (imported after mock setup)
 import {
+  clearActiveBoard,
   clearPrefillSession,
+  loadActiveBoard,
+  saveActiveBoard,
   importAllData,
   loadPrefillSession,
   loadRollEvents,
@@ -431,5 +434,89 @@ describe('importAllData — legacy custom session normalization', () => {
 
     const loaded = await loadSession('new-standard');
     expect(loaded!.diceMode).toBe('D6');
+  });
+});
+
+
+/**
+ * The board handoff, keyed by SESSION.
+ *
+ * It used to be one global slot. That was harmless only because results is
+ * reachable exclusively from the game that just ended — the moment an old
+ * game's results became reachable from History, that slot would have handed it
+ * whatever board was current, and every resource row would have been
+ * confidently wrong about a real game with nothing on screen to show it.
+ */
+describe('active board is per session', () => {
+  const board = {
+    hexes: Array.from({ length: 19 }, () => ({ resource: 'ore', number: 5 })),
+    ports: [],
+  } as never;
+
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+  });
+
+  it('gives a session back its own board', async () => {
+    await saveActiveBoard('game-a', board);
+    const got = await loadActiveBoard('game-a');
+    expect(got?.hexes).toHaveLength(19);
+  });
+
+  it('does NOT leak one game\'s board into another', async () => {
+    await saveActiveBoard('game-a', board);
+    expect(await loadActiveBoard('game-b')).toBeNull();
+  });
+
+  it('keeps two games apart at the same time', async () => {
+    const other = {
+      hexes: Array.from({ length: 19 }, () => ({ resource: 'wool', number: 8 })),
+      ports: [],
+    } as never;
+    await saveActiveBoard('game-a', board);
+    await saveActiveBoard('game-b', other);
+    expect((await loadActiveBoard('game-a'))!.hexes[0]).toMatchObject({ resource: 'ore' });
+    expect((await loadActiveBoard('game-b'))!.hexes[0]).toMatchObject({ resource: 'wool' });
+  });
+
+  it('adopts a pre-session board ONCE, then retires the global slot', async () => {
+    // A game already in flight when per-session keys shipped must not lose its
+    // board mid-way — but no later game may pick it up either.
+    await AsyncStorage.setItem('blosi:active_board', JSON.stringify(board));
+
+    const adopted = await loadActiveBoard('in-flight');
+    expect(adopted?.hexes).toHaveLength(19);
+
+    // It now belongs to that session...
+    expect(await loadActiveBoard('in-flight')).not.toBeNull();
+    // ...and the global slot is gone, so the next game starts clean.
+    expect(await AsyncStorage.getItem('blosi:active_board')).toBeNull();
+    expect(await loadActiveBoard('a-later-game')).toBeNull();
+  });
+
+  it('refuses a board of the wrong shape rather than repairing it', async () => {
+    // Wrong numbers on real settlements is worse than no board at all.
+    await saveActiveBoard('game-a', { hexes: [], ports: [] } as never);
+    expect(await loadActiveBoard('game-a')).toBeNull();
+  });
+
+  it('survives unparseable junk', async () => {
+    await AsyncStorage.setItem('blosi:active_board:game-a', 'not json');
+    expect(await loadActiveBoard('game-a')).toBeNull();
+  });
+
+  it('clears one session without touching another', async () => {
+    await saveActiveBoard('game-a', board);
+    await saveActiveBoard('game-b', board);
+    await clearActiveBoard('game-a');
+    expect(await loadActiveBoard('game-a')).toBeNull();
+    expect(await loadActiveBoard('game-b')).not.toBeNull();
+  });
+
+  it('clears the legacy slot even with no session id', async () => {
+    // What new-game calls, before a session exists.
+    await AsyncStorage.setItem('blosi:active_board', JSON.stringify(board));
+    await clearActiveBoard();
+    expect(await AsyncStorage.getItem('blosi:active_board')).toBeNull();
   });
 });

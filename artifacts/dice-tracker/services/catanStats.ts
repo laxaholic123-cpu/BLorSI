@@ -18,6 +18,7 @@ import type {
   CatanPlayerProductionStats,
 } from '@/types/catanStats';
 import { CATAN_SMALL_SAMPLE_THRESHOLD } from '@/types/catanStats';
+import { getAllIntersections } from '@/services/catanBoard';
 import { classifyCatanVerdict } from '@/services/catanVerdict';
 import { simulateProductionPercentile, type PercentileResult } from '@/services/luckEngine';
 
@@ -79,12 +80,39 @@ export function grossWeightForNumber(buildings: BuildingState[], num: number): n
  *
  * The robber occupies exactly ONE hex, so it can only ever suppress one hex's
  * worth of production — not every building the player owns on that number.
- * Capture only records the number the robber landed on, so when a player has
- * several buildings on it we charge the largest single share: the robber
- * overwhelmingly targets the most productive tile, and it keeps the loss
- * bounded by what one hex can actually produce.
+ *
+ * TWO MODES, and the difference is how much the capture knew.
+ *
+ * When the block records the HEX (`robberHexIndex`, written since the robber
+ * moved onto tiles) this is EXACT: charge the buildings actually standing on
+ * that tile and nothing else. A player with two settlements on the robbed hex
+ * loses both; a player whose second 5 is across the board loses nothing.
+ *
+ * When it does not — every block written before that field existed — fall back
+ * to the old heuristic of charging the largest single share. Capture recorded
+ * only the number, so the most that can honestly be said is that one hex's
+ * worth went, and the loss stays bounded by what one hex can produce.
  */
-export function blockedWeightForNumber(buildings: BuildingState[], num: number): number {
+export function blockedWeightForNumber(
+  buildings: BuildingState[],
+  num: number,
+  robberHexIndex?: number | null,
+): number {
+  if (typeof robberHexIndex === 'number') {
+    const onHex = new Set(
+      getAllIntersections()
+        .filter(i => i.hexIndices.includes(robberHexIndex))
+        .map(i => i.id),
+    );
+    let sum = 0;
+    for (const bldg of buildings) {
+      if (!bldg.affectedNumbers.includes(num)) continue;
+      if (!onHex.has(bldg.locationId)) continue;
+      sum += bldg.productionWeight;
+    }
+    return sum;
+  }
+
   let largest = 0;
   for (const bldg of buildings) {
     if (!bldg.affectedNumbers.includes(num)) continue;
@@ -93,14 +121,68 @@ export function blockedWeightForNumber(buildings: BuildingState[], num: number):
   return largest;
 }
 
+/**
+ * Robber blocks on a player at a turn, carrying the hex when it is known.
+ *
+ * Parsed here rather than imported from `catanRobber`, which reaches this
+ * module through `catanBoardState` and would close a cycle.
+ */
+export function getActiveRobberBlockDetails(
+  playerId: string,
+  turnNumber: number,
+  allEvents: CatanPlayerExposureEvent[],
+): { numbers: number[]; hexIndex: number | null }[] {
+  const live = new Map<string, { numbers: number[]; hexIndex: number | null }>();
+  const relevant = allEvents
+    .filter(
+      e =>
+        e.playerId === playerId &&
+        e.turnNumber <= turnNumber &&
+        (e.eventType === 'robberBlockStarted' || e.eventType === 'robberBlockEnded'),
+    )
+    .sort((a, b) => a.turnNumber - b.turnNumber);
+
+  for (const e of relevant) {
+    const id = e.hexIdentifiers?.[0];
+    if (!id) continue;
+    if (e.eventType === 'robberBlockStarted') {
+      live.set(id, {
+        numbers: e.affectedNumbers,
+        hexIndex: typeof e.robberHexIndex === 'number' ? e.robberHexIndex : null,
+      });
+    } else {
+      live.delete(id);
+    }
+  }
+  return [...live.values()];
+}
+
 /** Production weight actually collected on `num`, after the robber. */
 export function netWeightForNumber(
   buildings: BuildingState[],
   num: number,
   blockedNumbers: number[],
+  /**
+   * The blocks in full, when the caller has them. Each may name the hex, which
+   * turns the robber charge from an estimate into an exact figure.
+   *
+   * Optional so every existing caller keeps working unchanged and keeps the
+   * old number-only behaviour.
+   */
+  blockDetails?: readonly { numbers: number[]; hexIndex: number | null }[],
 ): number {
   const gross = grossWeightForNumber(buildings, num);
   if (gross === 0) return 0;
+
+  if (blockDetails) {
+    let blocked = 0;
+    for (const b of blockDetails) {
+      if (!b.numbers.includes(num)) continue;
+      blocked = Math.max(blocked, blockedWeightForNumber(buildings, num, b.hexIndex));
+    }
+    return Math.max(0, gross - blocked);
+  }
+
   const blocked = blockedNumbers.includes(num) ? blockedWeightForNumber(buildings, num) : 0;
   return Math.max(0, gross - blocked);
 }
@@ -230,11 +312,14 @@ export function computePlayerProductionStats(
 
     const buildings = getBuildingStatesAtTurn(player.id, T, playerEvents);
     const blockedNumbers = getActiveRobberBlockedNumbers(player.id, T, playerEvents);
+    // Blocks in full, so a block that names its hex charges exactly the
+    // buildings on that hex instead of the largest-single-share estimate.
+    const blockDetails = getActiveRobberBlockDetails(player.id, T, playerEvents);
 
     // Net weight for every possible value on this turn (index 0/1 unused).
     const weightsByValue: number[] = new Array(13).fill(0);
     for (const num of CATAN_NUMBERS) {
-      weightsByValue[num] = netWeightForNumber(buildings, num, blockedNumbers);
+      weightsByValue[num] = netWeightForNumber(buildings, num, blockedNumbers, blockDetails);
     }
     perRollWeights.push(weightsByValue);
 

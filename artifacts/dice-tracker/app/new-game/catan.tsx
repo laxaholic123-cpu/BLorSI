@@ -201,6 +201,9 @@ export default function CatanGameSetupScreen() {
       // one, and it does so on the way out — so every other path must start
       // from no board, or a scanned game would silently inherit generated
       // numbers and attribute production nobody actually had.
+      // No session id yet. Per-session keys already stop a new game from
+      // inheriting an old board; this only purges the pre-session global
+      // slot, which is the one that could leak between games.
       await clearActiveBoard();
 
       // Navigate to exposure setup — session is now in context

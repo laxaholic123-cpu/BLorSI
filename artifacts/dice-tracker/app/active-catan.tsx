@@ -11,7 +11,7 @@
  * This tool is not affiliated with or endorsed by the publishers or owners of Catan.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Modal,
@@ -52,7 +52,9 @@ import { CATAN_SMALL_SAMPLE_THRESHOLD } from '@/types/catanStats';
 import { CatanProductionLeaderboard } from '@/components/CatanProductionLeaderboard';
 import { CatanRollHeatMap } from '@/components/CatanRollHeatMap';
 import { CatanBoardPanel } from '@/components/CatanBoardPanel';
+import { CatanHexGrid } from '@/components/CatanHexGrid';
 import { boardStateAtTurn } from '@/services/catanBoardState';
+import { currentRobberHex, playersOnHex, robberMoveEvents } from '@/services/catanRobber';
 import {
   calloutForLatestRoll,
   rememberCallout,
@@ -93,8 +95,13 @@ export default function ActiveCatanScreen() {
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState('');
   const [robberPromptState, setRobberPromptState] = useState<RobberPromptState>('idle');
+  /** Fallback for games with no board: the robber's NUMBER. */
   const [robberHexNumber, setRobberHexNumber] = useState<number | null>(null);
+  /** The tile the robber moved to, when the board is known. */
+  const [robberHexIndex, setRobberHexIndex] = useState<number | null>(null);
   const [robberDontAskAgain, setRobberDontAskAgain] = useState(false);
+  /** What made the robber move — only the title differs. */
+  const [robberTrigger, setRobberTrigger] = useState<'seven' | 'knight'>('seven');
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [showEditSettlementspicker, setShowEditSettlementspicker] = useState(false);
   // Heat map starts hidden so the dice pad is always immediately visible
@@ -194,6 +201,8 @@ export default function ActiveCatanScreen() {
 
   const isSmallSample = totalRolls < CATAN_SMALL_SAMPLE_THRESHOLD;
 
+
+
   /**
    * The board is read on FOCUS, not on mount.
    *
@@ -204,8 +213,8 @@ export default function ActiveCatanScreen() {
    */
   useFocusEffect(
     React.useCallback(() => {
-      void loadActiveBoard().then(setBoard);
-    }, []),
+      if (activeSession) void loadActiveBoard(activeSession.id).then(setBoard);
+    }, [activeSession]),
   );
 
   const boardSnapshot = useMemo(
@@ -224,6 +233,32 @@ export default function ActiveCatanScreen() {
    * about luck is made anywhere on this screen, because the simulation that
    * would justify one only runs at the end. See services/liveCallouts.
    */
+  /** Where the robber is now, so the prompt can say so rather than ask blind. */
+  const currentRobberHexIndex = useMemo(
+    () => currentRobberHex(exposureEvents),
+    [exposureEvents],
+  );
+
+  /** Plain-language name for a tile, for the robber prompt. */
+  const describeHex = useCallback((i: number) => {
+    const hex = board?.hexes[i];
+    if (!hex) return `tile ${i + 1}`;
+    const res = hex.resource ?? 'tile';
+    return hex.number ? `${res} ${hex.number}` : `${res}`;
+  }, [board]);
+
+  /** Who the pending move would block — shown before it is committed. */
+  const robberBlockPreview = useMemo(() => {
+    if (robberHexIndex === null || !board) return '';
+    const hex = board.hexes[robberHexIndex];
+    if (!hex?.number) return `${describeHex(robberHexIndex)} — produces nothing, so this blocks no one.`;
+    const names = playersOnHex(robberHexIndex, boardSnapshot)
+      .map(id => activeSession?.players.find(p => p.id === id)?.displayName ?? 'someone');
+    return names.length === 0
+      ? `${describeHex(robberHexIndex)} — nobody is on it.`
+      : `${describeHex(robberHexIndex)} — blocks ${names.join(', ')}.`;
+  }, [robberHexIndex, board, boardSnapshot, activeSession, describeHex]);
+
   const latestRollId = activeEvents.at(-1)?.id ?? null;
   useEffect(() => {
     if (!latestRollId || !activeSession) return;
@@ -285,6 +320,8 @@ export default function ActiveCatanScreen() {
       robberPromptState !== 'dismissed_this_session'
     ) {
       setRobberHexNumber(null);
+      setRobberHexIndex(null);
+      setRobberTrigger('seven');
       setRobberPromptState('showing');
     }
   };
@@ -412,8 +449,36 @@ export default function ActiveCatanScreen() {
 
   // ── Robber prompt handlers ────────────────────────────────────────────────────
 
+  /**
+   * Move the robber to a tile.
+   *
+   * `robberMoveEvents` returns the ENDS for whatever was blocked before plus
+   * the STARTS for whoever the robber now sits on, in one array, so the move
+   * cannot be half-applied. That ending step is the whole fix: blocks used to
+   * accumulate for the rest of the game.
+   */
+  const handleRobberMoveToHex = async () => {
+    if (!activeSession || robberHexIndex === null || !board) return;
+    const hex = board.hexes[robberHexIndex];
+    const events = robberMoveEvents({
+      sessionId: activeSession.id,
+      hexIndex: robberHexIndex,
+      hexNumber: hex?.number ?? null,
+      turnNumber,
+      snapshot: boardSnapshot,
+      events: exposureEvents,
+    });
+    if (events.length > 0) {
+      await persistExposureEvents(activeSession.id, [...exposureEvents, ...events]);
+    }
+    setRobberHexIndex(null);
+    if (robberDontAskAgain) setRobberPromptState('dismissed_this_session');
+    else setRobberPromptState('idle');
+  };
+
   const handleRobberConfirm = async () => {
     if (!activeSession) return;
+    if (board) return handleRobberMoveToHex();
     if (robberHexNumber !== null) {
       // Derive which players have documented exposure on this hex and block each one.
       // The stats engine resolves blocks per playerId, so a block event must be created
@@ -671,20 +736,20 @@ export default function ActiveCatanScreen() {
           the end. See services/liveCallouts. */}
       {callout && (
         <TouchableOpacity
-          style={[styles.callout, { backgroundColor: colors.muted, borderColor: colors.border }]}
+          style={[styles.callout, { backgroundColor: '#F0C24B', borderColor: '#F0C24B' }]}
           onPress={() => { haptic(); setCallout(null); }}
-          activeOpacity={0.8}
+          activeOpacity={0.85}
           accessibilityRole="button"
           accessibilityLabel={`${callout.text}. Tap to dismiss.`}
         >
-          <Ionicons name="sparkles-outline" size={14} color={colors.mutedForeground} />
+          <Ionicons name="sparkles" size={17} color="#1A1200" />
           <Text
-            style={[styles.calloutText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}
-            numberOfLines={1}
+            style={[styles.calloutText, { color: '#1A1200', fontFamily: 'Inter_700Bold' }]}
+            numberOfLines={2}
           >
             {callout.text}
           </Text>
-          <Ionicons name="close" size={14} color={colors.mutedForeground} />
+          <Ionicons name="close" size={16} color="#1A1200" />
         </TouchableOpacity>
       )}
 
@@ -754,7 +819,27 @@ export default function ActiveCatanScreen() {
       >
         <TouchableOpacity
           style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
-          onPress={() => router.push('/catan-development?action=add_settlement' as any)}
+          onPress={() => {
+            /*
+              The robber moves on a 7 AND on a knight. Only the 7 had a path,
+              so a knight-driven move could not be recorded at all — the block
+              stayed on whatever tile the last 7 put it on, for the rest of
+              the game.
+            */
+            haptic();
+            setRobberHexIndex(null);
+            setRobberTrigger('knight');
+            setRobberPromptState('showing');
+          }}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="skull-outline" size={14} color={colors.destructive} />
+          <Text style={[styles.buildPillText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>Robber</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
+          onPress={() => router.push(
+            `/catan-development?action=add_settlement${currentPlayer ? `&playerId=${currentPlayer.id}` : ''}` as any)}
           activeOpacity={0.8}
         >
           <Ionicons name="home-outline" size={14} color={colors.primary} />
@@ -762,7 +847,8 @@ export default function ActiveCatanScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
-          onPress={() => router.push('/catan-development?action=build_road' as any)}
+          onPress={() => router.push(
+            `/catan-development?action=build_road${currentPlayer ? `&playerId=${currentPlayer.id}` : ''}` as any)}
           activeOpacity={0.8}
         >
           <Ionicons name="git-branch-outline" size={14} color={colors.primary} />
@@ -904,35 +990,68 @@ export default function ActiveCatanScreen() {
           <View style={[styles.robberSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.robberHandle} />
             <Text style={[styles.robberTitle, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
-              🎲 7 Rolled — Robber Moves
+              {robberTrigger === 'knight' ? '⚔️ Knight — Robber Moves' : '🎲 7 Rolled — Robber Moves'}
             </Text>
             <Text style={[styles.robberSub, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-              Where did the robber go? (optional)
+              {board
+                ? 'Tap the tile the robber moved to.'
+                : 'Which number is the robber sitting on? (optional)'}
             </Text>
-            <View style={styles.robberHexGrid}>
-              {CATAN_NUMBERS.map(num => {
-                const selected = robberHexNumber === num;
-                return (
-                  <TouchableOpacity
-                    key={num}
-                    style={[styles.robberHexBtn, {
-                      backgroundColor: selected ? colors.destructive : colors.muted,
-                      borderColor: selected ? colors.destructive : colors.border,
-                    }]}
-                    onPress={() => setRobberHexNumber(selected ? null : num)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.robberHexBtnText, {
-                      color: selected ? '#FFFFFF' : colors.foreground,
-                      fontFamily: 'Inter_700Bold',
-                    }]}>{num}</Text>
-                    <Text style={[styles.robberHexBtnPips, {
-                      color: selected ? 'rgba(255,255,255,0.7)' : colors.mutedForeground,
-                    }]}>{'·'.repeat(PIPS[num] ?? 1)}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+
+            {/*
+              THE BOARD, when we have one. The robber occupies a TILE — asking
+              for a number blocked every hex carrying it, so a player on the
+              other 5 lost production the robber never touched. Tapping the
+              tile also means the app works out WHO is blocked, from the six
+              corners, instead of asking.
+            */}
+            {board ? (
+              <View style={{ width: '100%' }}>
+                <CatanHexGrid
+                  hexes={board.hexes}
+                  selectedIndices={robberHexIndex !== null ? [robberHexIndex] : []}
+                  selectionColor={colors.destructive}
+                  onHexPress={(i: number) => {
+                    haptic();
+                    setRobberHexIndex(prev => (prev === i ? null : i));
+                  }}
+                />
+                <Text style={[styles.robberSub, {
+                  color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginTop: 6,
+                }]}>
+                  {robberHexIndex === null
+                    ? currentRobberHexIndex !== null
+                      ? `Currently on the ${describeHex(currentRobberHexIndex)}.`
+                      : 'Nothing is blocked right now.'
+                    : robberBlockPreview}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.robberHexGrid}>
+                {CATAN_NUMBERS.map(num => {
+                  const selected = robberHexNumber === num;
+                  return (
+                    <TouchableOpacity
+                      key={num}
+                      style={[styles.robberHexBtn, {
+                        backgroundColor: selected ? colors.destructive : colors.muted,
+                        borderColor: selected ? colors.destructive : colors.border,
+                      }]}
+                      onPress={() => setRobberHexNumber(selected ? null : num)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.robberHexBtnText, {
+                        color: selected ? '#FFFFFF' : colors.foreground,
+                        fontFamily: 'Inter_700Bold',
+                      }]}>{num}</Text>
+                      <Text style={[styles.robberHexBtnPips, {
+                        color: selected ? 'rgba(255,255,255,0.7)' : colors.mutedForeground,
+                      }]}>{'·'.repeat(PIPS[num] ?? 1)}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
 
             {/* Don't ask again */}
             <TouchableOpacity
@@ -1050,13 +1169,19 @@ const styles = StyleSheet.create({
    * One line, fixed height. This sits between the scroll area and the roll pad,
    * so anything that can wrap to two lines eats the pad's space.
    */
+  /**
+   * Reported as "very small and blandly colored, almost did not notice it".
+   * Now a solid amber bar with dark text — the only saturated block on a dark
+   * screen. Height is capped rather than free, because this sits between the
+   * scroll area and the roll pad and anything that can grow eats the pad.
+   */
   callout: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    borderWidth: 1, borderRadius: 10,
-    paddingHorizontal: 10, height: 36,
-    marginHorizontal: 12, marginBottom: 6,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    borderWidth: 1, borderRadius: 12,
+    paddingHorizontal: 12, paddingVertical: 10, minHeight: 48,
+    marginHorizontal: 12, marginBottom: 8,
   },
-  calloutText: { flex: 1, fontSize: 12 },
+  calloutText: { flex: 1, fontSize: 14, lineHeight: 18 },
   numBtn: { width: '18%', aspectRatio: 1, borderRadius: 12, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', gap: 2, minHeight: 52 },
   numBtnValue: { fontSize: 20 },
   numBtnPips: { fontSize: 9, letterSpacing: 1 },

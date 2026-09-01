@@ -551,39 +551,62 @@ export const clearPrefillSession = async (): Promise<void> => {
 
 // ─── Active board handoff ─────────────────────────────────────────────────────
 
-const ACTIVE_BOARD_KEY = 'blosi:active_board';
+/**
+ * The pre-session key. One global slot, which is the problem.
+ *
+ * Kept only so a game already in flight when this shipped does not lose its
+ * board mid-way: `loadActiveBoard` falls back to it and migrates it forward.
+ * Nothing writes here any more.
+ */
+const LEGACY_ACTIVE_BOARD_KEY = 'blosi:active_board';
+
+const activeBoardKey = (sessionId: string) => `blosi:active_board:${sessionId}`;
 
 /**
- * The board the current game is being played on, when it is known exactly.
+ * The board a game is being played on, when it is known exactly.
  *
- * Set by the generator; read by exposure setup so settlements can be picked off
- * the real board instead of typed in as loose numbers. Absent for scanned or
- * hand-entered games, and the exposure screen treats absence as "fall back to
- * tapping numbers" rather than as an error.
+ * Written by the generator and by the scan screen once the layout is reviewed;
+ * read by exposure setup, the mid-game corner picker, the live board panel and
+ * the results resource breakdown. Absent for hand-entered games, and every
+ * reader treats absence as "fall back to numbers" rather than as an error.
  *
- * These three swallow their errors, unlike the roll and exposure paths. That is
- * deliberate and it is the one place it is safe: this is a convenience handoff,
- * not a record. Losing it costs the player a nicer input mode, not any data —
- * and the fallback is the input mode they would have had anyway.
+ * KEYED BY SESSION, and that is load-bearing rather than tidiness. It used to
+ * be one global slot, which was harmless only because results is reachable
+ * exclusively from the game that just ended. The moment an old game's results
+ * became reachable from History, that slot would have handed it whatever board
+ * is current — and every resource row would have been confidently wrong, about
+ * a real game, with nothing on screen to reveal it. That is this repo's
+ * signature failure, and it was one feature away.
+ *
+ * Per-session keys also retire the `clearActiveBoard` rule: a new session has a
+ * new id, so it cannot inherit the previous game's board even if nobody clears
+ * anything.
+ *
+ * These swallow their errors, unlike the roll and exposure paths. Deliberate,
+ * and the one place it is safe: losing this costs a nicer input mode and a
+ * breakdown, never any recorded data.
  */
 export interface ActiveBoard {
   hexes: CatanHexDef[];
   ports: CatanPortDef[];
 }
 
-export const saveActiveBoard = async (board: ActiveBoard): Promise<void> => {
+export const saveActiveBoard = async (
+  sessionId: string,
+  board: ActiveBoard,
+): Promise<void> => {
   try {
-    await AsyncStorage.setItem(ACTIVE_BOARD_KEY, JSON.stringify(board));
+    await AsyncStorage.setItem(activeBoardKey(sessionId), JSON.stringify(board));
   } catch {}
 };
 
-export const loadActiveBoard = async (): Promise<ActiveBoard | null> => {
+/** Shape check shared by both read paths. */
+const parseBoard = (json: string | null): ActiveBoard | null => {
+  if (!json) return null;
   try {
-    const json = await AsyncStorage.getItem(ACTIVE_BOARD_KEY);
-    if (!json) return null;
     const raw = JSON.parse(json) as Partial<ActiveBoard>;
-    // A board that is not the right shape is worse than no board: it would put
-    // wrong numbers on a player's settlements without anyone noticing.
+    // A board of the wrong shape is worse than no board: it would put wrong
+    // numbers on real settlements without anyone noticing.
     if (!Array.isArray(raw.hexes) || raw.hexes.length !== BOARD_HEX_COUNT) return null;
     if (!Array.isArray(raw.ports)) return null;
     return { hexes: raw.hexes, ports: raw.ports };
@@ -592,9 +615,31 @@ export const loadActiveBoard = async (): Promise<ActiveBoard | null> => {
   }
 };
 
-export const clearActiveBoard = async (): Promise<void> => {
+export const loadActiveBoard = async (sessionId: string): Promise<ActiveBoard | null> => {
   try {
-    await AsyncStorage.removeItem(ACTIVE_BOARD_KEY);
+    const mine = parseBoard(await AsyncStorage.getItem(activeBoardKey(sessionId)));
+    if (mine) return mine;
+
+    // A game that was already running when per-session keys shipped. Adopt the
+    // old global board ONCE, under this session's key, then drop the global so
+    // no later session can pick it up.
+    const legacy = parseBoard(await AsyncStorage.getItem(LEGACY_ACTIVE_BOARD_KEY));
+    if (legacy) {
+      await AsyncStorage.setItem(activeBoardKey(sessionId), JSON.stringify(legacy));
+      await AsyncStorage.removeItem(LEGACY_ACTIVE_BOARD_KEY);
+      return legacy;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+export const clearActiveBoard = async (sessionId?: string): Promise<void> => {
+  try {
+    if (sessionId) await AsyncStorage.removeItem(activeBoardKey(sessionId));
+    // Always clear the legacy slot: it is the one that could leak between games.
+    await AsyncStorage.removeItem(LEGACY_ACTIVE_BOARD_KEY);
   } catch {}
 };
 

@@ -38,6 +38,12 @@ import type { CatanGameStats } from '@/types/catanStats';
 import { selectBestShareCard, CARD_METADATA } from '@/services/shareCard';
 import { RollFrequencyChart } from '@/components/RollFrequencyChart';
 import { CatanBoardPanel } from '@/components/CatanBoardPanel';
+import {
+  biggestResourceGap,
+  describeExposure,
+  exposureReports,
+  resourceExposure,
+} from '@/services/exposureReport';
 import { loadActiveBoard, type ActiveBoard } from '@/services/storage';
 
 export default function ResultsScreen() {
@@ -52,7 +58,28 @@ export default function ResultsScreen() {
    * errors by design — a missing board costs this one panel and nothing else.
    */
   const [finalBoard, setFinalBoard] = useState<ActiveBoard | null>(null);
-  useEffect(() => { void loadActiveBoard().then(setFinalBoard); }, []);
+  /** Which accolade is expanded, if any. */
+  const [openAccolade, setOpenAccolade] = useState<string | null>(null);
+  /**
+   * Whether the dice averages are showing.
+   *
+   * Collapsed by default for a board game with exposure data, where "did your
+   * numbers come up" is the question and the mean roll is not. Always open for
+   * a plain dice game, which has nothing else to say.
+   */
+  const [showDiceDetail, setShowDiceDetail] = useState(false);
+  /** Which player's number-by-number breakdown is open. */
+  const [openExposure, setOpenExposure] = useState<string | null>(null);
+  /** Per-player "did your numbers come up" — the lead of this screen. */
+  const exposure = useMemo(
+    () => (activeSession
+      ? exposureReports(activeSession.players, rollEvents, exposureEvents)
+      : []),
+    [activeSession, rollEvents, exposureEvents],
+  );
+  useEffect(() => {
+    if (activeSession) void loadActiveBoard(activeSession.id).then(setFinalBoard);
+  }, [activeSession]);
   const { settings } = useSettings();
   const webTop = Platform.OS === 'web' ? 67 : 0;
 
@@ -165,6 +192,8 @@ export default function ResultsScreen() {
   }
 
   const isMultiplayer = activeSession.players.length > 1;
+  /** A board game with exposure data has a better lead than the mean roll. */
+  const hidesDiceAverages = Boolean(catanStats?.hasExposureData && exposure.length > 0);
   const isD20 = activeSession.diceMode === 'D20';
   const is2D6 = activeSession.diceMode === '2D6';
   const maxCount = Math.max(...stats.frequencies.map(f => f.count), 1);
@@ -365,6 +394,179 @@ export default function ResultsScreen() {
           </TouchableOpacity>
         </Animated.View>
 
+        {/* HOW THE BOARD TREATED YOU -------------------------------------
+            The lead, ahead of every dice statistic.
+
+            Rebuilt after looking at what Catan players actually argue about
+            after a game. Two things came out of that, and neither was a
+            number:
+
+            1. The grievance is about RESOURCES. Nobody says "my 8
+               underperformed"; they say "I could not get ore all game". A
+               settlement on 6-ore and one on 6-wool are identical pips and a
+               completely different game, and only one of them costs you the
+               cities. So resources lead and numbers became the detail.
+
+            2. The bias worth correcting is asymmetric memory: people notice
+               the shortfalls and forget the windfalls. So this reports OVER as
+               loudly as UNDER. A panel that only ever finds droughts is that
+               same distortion with a chart on it, and it would make the app an
+               engine for grievance instead of a check on one.
+
+            Every figure is a count or a difference of counts, and par is
+            always relative to the rolls actually made. Whether a gap is
+            strange belongs to the percentile below, which has a simulation
+            behind it. */}
+        {catanStats && catanStats.hasExposureData && exposure.length > 0 && (
+          <>
+            <SectionLabel text="HOW THE BOARD TREATED YOU" colors={colors} />
+            <View style={{ gap: 8, marginBottom: 10 }}>
+              {exposure.map(report => {
+                const player = activeSession?.players.find(p => p.id === report.playerId);
+                const tint = player?.color ?? colors.primary;
+                const resources = finalBoard && player
+                  ? resourceExposure(player, rollEvents, exposureEvents, finalBoard.hexes)
+                  : [];
+                const gap = biggestResourceGap(resources);
+                const robbed = catanStats.playerStats
+                  .find(ps => ps.playerId === report.playerId)?.robberLostProduction ?? 0;
+                const open = openExposure === report.playerId;
+
+                /** Standardised: a gap of 3 is not the same on a 2 as on an 8. */
+                const toneFor = (actual: number, expected: number) => {
+                  if (expected <= 0) return colors.mutedForeground;
+                  const z = (actual - expected) / Math.sqrt(expected);
+                  return z >= 1 ? '#3EB86B' : z <= -1 ? '#E2564A' : colors.mutedForeground;
+                };
+
+                return (
+                  <View
+                    key={report.playerId}
+                    style={[styles.card, {
+                      backgroundColor: colors.card,
+                      borderColor: colors.border,
+                      borderLeftWidth: 3,
+                      borderLeftColor: tint,
+                    }]}
+                  >
+                    <Text style={[styles.accoladeName, { color: tint, fontFamily: 'Inter_700Bold' }]}>
+                      {report.displayName}
+                    </Text>
+                    <Text style={[styles.verdictBody, {
+                      color: colors.foreground, fontFamily: 'Inter_500Medium', marginBottom: 8,
+                    }]}>
+                      {describeExposure(report)}
+                    </Text>
+
+                    {/* The line a player would repeat to the table. Says "ran
+                        hot" as readily as "ran dry". */}
+                    {gap && Math.abs(gap.z) >= 1 && (
+                      <Text style={[styles.verdictBody, {
+                        color: gap.z > 0 ? '#3EB86B' : '#E2564A',
+                        fontFamily: 'Inter_700Bold',
+                        marginBottom: 8,
+                      }]}>
+                        {gap.z > 0
+                          ? 'Their ' + gap.resource + ' ran hot \u2014 ' + Math.abs(Math.round(gap.diff)) + ' more than par.'
+                          : 'Their ' + gap.resource + ' ran dry \u2014 ' + Math.abs(Math.round(gap.diff)) + ' short of par.'}
+                      </Text>
+                    )}
+
+                    {/* RESOURCES: what people actually argue about. */}
+                    {resources.length > 0 ? (
+                      resources.map(r => (
+                        <View key={r.resource} style={styles.exposureRow}>
+                          <Text style={[styles.exposureRes, {
+                            color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
+                            {r.resource}
+                          </Text>
+                          <Text style={[styles.exposureWeight, {
+                            color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                            {r.perRoll.toFixed(2)} a roll on paper
+                          </Text>
+                          <Text style={[styles.exposureCount, {
+                            color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
+                            got {Math.round(r.actual)}
+                          </Text>
+                          <Text style={[styles.exposureCount, {
+                            color: toneFor(r.actual, r.expected), fontFamily: 'Inter_500Medium' }]}>
+                            par {r.expected.toFixed(1)}
+                          </Text>
+                        </View>
+                      ))
+                    ) : (
+                      /*
+                        Two different reasons, and naming the wrong one is its
+                        own small lie. The reader gets terrain 19/19 and BOTH
+                        the scan and generator paths save their board, so a
+                        photographed game splits by resource perfectly well.
+                        What cannot: a hand-entered game, where no board exists
+                        at all, and a settlement typed on the number pad, which
+                        has no corner and therefore no terrain — the same gap
+                        the board panel reports as "not shown".
+                      */
+                      <Text style={[styles.verdictNote, {
+                        color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                        {finalBoard
+                          ? 'These settlements were typed in as numbers rather than tapped on the board, so they cannot be tied to terrain.'
+                          : 'This game was set up by hand with no board, so production cannot be split by resource.'}
+                      </Text>
+                    )}
+
+                    {/* The robber is its own grievance entirely. */}
+                    {robbed > 0 && (
+                      <Text style={[styles.verdictNote, {
+                        color: colors.mutedForeground,
+                        fontFamily: 'Inter_400Regular',
+                        marginTop: 6,
+                      }]}>
+                        The robber cost them {robbed.toFixed(1)} production.
+                      </Text>
+                    )}
+
+                    {/* Numbers are the DETAIL now, one tap down. */}
+                    <TouchableOpacity
+                      onPress={() =>
+                        setOpenExposure(prev => (prev === report.playerId ? null : report.playerId))}
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                    >
+                      <Text style={[styles.verdictNote, {
+                        color: colors.mutedForeground,
+                        fontFamily: 'Inter_500Medium',
+                        marginTop: 8,
+                      }]}>
+                        {open ? 'Hide the number-by-number' : 'Number by number'}
+                      </Text>
+                    </TouchableOpacity>
+
+                    {open && report.numbers.map(n => (
+                      <View key={n.number} style={styles.exposureRow}>
+                        <Text style={[styles.exposureNum, {
+                          color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+                          {n.number}
+                        </Text>
+                        <Text style={[styles.exposureWeight, {
+                          color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                          {n.weight} a roll
+                        </Text>
+                        <Text style={[styles.exposureCount, {
+                          color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
+                          came up {n.actual}
+                        </Text>
+                        <Text style={[styles.exposureCount, {
+                          color: toneFor(n.actual, n.expected), fontFamily: 'Inter_500Medium' }]}>
+                          par {n.expected.toFixed(1)}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                );
+              })}
+            </View>
+          </>
+        )}
+
         {/* ── Distribution ── */}
         <SectionLabel text="DISTRIBUTION vs EXPECTED" colors={colors} />
         <RollFrequencyChart frequencies={stats.frequencies} totalRolls={stats.totalRolls} />
@@ -429,8 +631,35 @@ export default function ResultsScreen() {
           })}
         </View>
 
+        {/*
+          The dice averages, demoted.
+
+          Mean, median and mode per player used to sit second on this screen,
+          directly under the chart. For a board game they answer a question
+          nobody asked: a table where everybody's numbers landed can share a
+          mean with one where nobody's did. They are still true and still here,
+          one tap away, because a pure dice game has nothing better to show —
+          but they no longer outrank "did your numbers come up".
+        */}
+        {hidesDiceAverages && (
+          <TouchableOpacity
+            style={[styles.card, {
+              backgroundColor: colors.card, borderColor: colors.border, marginBottom: 10,
+            }]}
+            onPress={() => setShowDiceDetail(v => !v)}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.verdictNote, {
+              color: colors.mutedForeground, fontFamily: 'Inter_500Medium', textAlign: 'center',
+            }]}>
+              {showDiceDetail ? 'Hide dice averages' : 'Dice averages, mode and spread'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {/* ── Player summaries ── */}
-        {isMultiplayer && (
+        {isMultiplayer && (showDiceDetail || !hidesDiceAverages) && (
           <>
             <SectionLabel text="PLAYER SUMMARIES" colors={colors} />
             {stats.playerSummaries.map(ps => {
@@ -522,7 +751,7 @@ export default function ResultsScreen() {
         ) : null}
 
         {/* ── Single player overview (if not multiplayer) ── */}
-        {!isMultiplayer && (
+        {!isMultiplayer && (showDiceDetail || !hidesDiceAverages) && (
           <>
             <SectionLabel text="OVERVIEW" colors={colors} />
             <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -749,8 +978,12 @@ export default function ResultsScreen() {
                     const player = activeSession?.players.find(p => p.id === a.playerId);
                     const tint = player?.color ?? colors.primary;
                     return (
-                      <View
+                      <TouchableOpacity
                         key={a.playerId}
+                        activeOpacity={0.85}
+                        onPress={() => setOpenAccolade(prev => (prev === a.playerId ? null : a.playerId))}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${a.title}. ${a.detail} Tap for the full table.`}
                         style={[styles.accoladeCard, {
                           backgroundColor: colors.muted,
                           borderColor: colors.border,
@@ -776,7 +1009,44 @@ export default function ResultsScreen() {
                           color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
                           {a.detail}
                         </Text>
-                      </View>
+
+                        {/* The whole table on this axis, so the badge can be
+                            checked rather than taken on faith. A rank with no
+                            way to see the other places is a horoscope with a
+                            number in it. */}
+                        {openAccolade === a.playerId ? (
+                          <View style={styles.accoladeBreakdown}>
+                            {a.breakdown.map(row => (
+                              <View key={row.displayName + row.rank} style={styles.exposureRow}>
+                                <Text style={[styles.exposureNum, {
+                                  color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                                  {row.rank}
+                                </Text>
+                                <Text
+                                  style={[styles.exposureWeight, {
+                                    color: row.isYou ? colors.foreground : colors.mutedForeground,
+                                    fontFamily: row.isYou ? 'Inter_700Bold' : 'Inter_400Regular',
+                                  }]}
+                                  numberOfLines={1}
+                                >
+                                  {row.displayName}
+                                </Text>
+                                <Text style={[styles.exposureCount, {
+                                  color: row.isYou ? colors.foreground : colors.mutedForeground,
+                                  fontFamily: 'Inter_500Medium',
+                                }]}>
+                                  {Number.isInteger(row.value) ? row.value : row.value.toFixed(2)}
+                                </Text>
+                              </View>
+                            ))}
+                          </View>
+                        ) : (
+                          <Text style={[styles.verdictNote, {
+                            color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                            Tap to see the whole table
+                          </Text>
+                        )}
+                      </TouchableOpacity>
                     );
                   })}
                 </View>
@@ -953,6 +1223,12 @@ const styles = StyleSheet.create({
   verdictCard: { borderRadius: 12, borderWidth: 1, padding: 16, gap: 8, marginBottom: 4 },
   verdictHeadline: { fontSize: 18 },
   verdictBody: { fontSize: 14, lineHeight: 22 },
+  accoladeBreakdown: { marginTop: 6, gap: 1 },
+  exposureRes: { fontSize: 12, width: 58, textTransform: 'capitalize' },
+  exposureRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2 },
+  exposureNum: { fontSize: 15, width: 26 },
+  exposureWeight: { fontSize: 11, flex: 1 },
+  exposureCount: { fontSize: 12, width: 78, textAlign: 'right' },
   verdictNote: { fontSize: 11, opacity: 0.7, marginTop: 4 },
 
   // Card

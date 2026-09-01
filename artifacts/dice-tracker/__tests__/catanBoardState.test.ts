@@ -17,7 +17,7 @@ import {
   numbersAtCorner,
 } from '@/services/catanBoardState';
 import { getAllIntersections } from '@/services/catanBoard';
-import { allEdges, neighboursOf } from '@/services/catanPlacement';
+import { allEdges, cornersOfEdge, neighboursOf } from '@/services/catanPlacement';
 import { generateId } from '@/types/models';
 import type { CatanPlayerExposureEvent } from '@/types/models';
 
@@ -232,5 +232,67 @@ describe('cornersHeldBy', () => {
     );
     expect([...cornersHeldBy(snap, 'p1')]).toEqual([a]);
     expect([...cornersHeldBy(snap, 'p2')]).toEqual([b]);
+  });
+});
+
+describe('a mid-game settlement must sit on your own road', () => {
+  const edge = EDGES[0]!;
+  const [endA] = cornersOfEdge(edge)!;
+  const elsewhere = CORNERS.find(
+    c => c !== endA && !neighboursOf(endA).includes(c) && !cornersOfEdge(edge)!.includes(c),
+  )!;
+
+  const road = (playerId: string, edgeId: string) =>
+    build({
+      playerId, turnNumber: 1, eventType: 'roadBuilt',
+      hexIdentifiers: [edgeId], affectedNumbers: [], productionWeight: 0,
+    });
+
+  it('allows a corner on one of your own roads', () => {
+    const snap = boardStateAtTurn([road('p1', edge)], ['p1']);
+    expect(midGameSettlementProblem(endA, snap, 'p1')).toBeNull();
+  });
+
+  it('refuses a corner nowhere near your network', () => {
+    const snap = boardStateAtTurn([road('p1', edge)], ['p1']);
+    expect(midGameSettlementProblem(elsewhere, snap, 'p1')).toBe('not_connected');
+  });
+
+  it("does not let you build on SOMEBODY ELSE's road", () => {
+    const snap = boardStateAtTurn([road('p2', edge)], ['p1', 'p2']);
+    // p1 has no roads at all, so the rule does not bind — see below. Give p1 a
+    // road somewhere else and their opponent's road stops counting.
+    const other = EDGES.find(e => !cornersOfEdge(e)!.includes(endA))!;
+    const snap2 = boardStateAtTurn([road('p2', edge), road('p1', other)], ['p1', 'p2']);
+    expect(midGameSettlementProblem(endA, snap2, 'p1')).toBe('not_connected');
+    expect(snap.roads.get(edge)).toBe('p2');
+  });
+
+  it('does NOT bind for a player who has recorded no roads', () => {
+    // Deliberate: roads are optional to log, and enforcing connectivity with no
+    // road data would refuse every corner and make the app insist on a rule it
+    // cannot see. The rule starts applying the moment they log one.
+    const snap = boardStateAtTurn([], ['p1']);
+    expect(midGameSettlementProblem(elsewhere, snap, 'p1')).toBeNull();
+  });
+
+  it('still applies occupancy and distance before connectivity', () => {
+    const neighbour = neighboursOf(endA)[0]!;
+    const snap = boardStateAtTurn(
+      [road('p1', edge), build({ playerId: 'p2', turnNumber: 1, hexIdentifiers: [neighbour] })],
+      ['p1', 'p2'],
+    );
+    expect(midGameSettlementProblem(endA, snap, 'p1')).toBe('too_close');
+  });
+
+  it('ignores connectivity entirely when no player is given', () => {
+    const snap = boardStateAtTurn([road('p1', edge)], ['p1']);
+    expect(midGameSettlementProblem(elsewhere, snap)).toBeNull();
+  });
+
+  it('narrows the legal set once a road exists', () => {
+    const withRoad = boardStateAtTurn([road('p1', edge)], ['p1']);
+    expect(legalMidGameCorners(withRoad, 'p1').length)
+      .toBeLessThan(legalMidGameCorners(withRoad).length);
   });
 });

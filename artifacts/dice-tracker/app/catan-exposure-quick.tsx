@@ -118,7 +118,8 @@ export default function CatanExposureQuickScreen() {
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
-      loadActiveBoard().then(loaded => {
+      if (!activeSession) return;
+      loadActiveBoard(activeSession.id).then(loaded => {
         if (cancelled || !loaded) return;
         setBoard(loaded);
         // Prefer picking off the board when we have one: it removes the
@@ -128,7 +129,7 @@ export default function CatanExposureQuickScreen() {
         setInputMode('board');
       });
       return () => { cancelled = true; };
-    }, []),
+    }, [activeSession]),
   );
 
   // ─── Board mode ───────────────────────────────────────────────────────────
