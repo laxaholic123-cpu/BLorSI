@@ -335,6 +335,29 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Development builds only — __DEV__ is false in any release bundle, so
+            this cannot ship. The probe answers "which SVG primitives receive
+            taps on THIS build", which is the question behind three separate
+            multi-week bugs in this project. */}
+        {__DEV__ && (
+          <>
+            <SectionLabel label="DIAGNOSTICS · DEV BUILDS ONLY" colors={colors} />
+            <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <TouchableOpacity
+                style={settingsStyles.row}
+                onPress={() => { haptic(); router.push('/touch-probe' as any); }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="finger-print-outline" size={20} color={colors.mutedForeground} />
+                <Text style={[settingsStyles.rowLabel, { color: colors.foreground, fontFamily: 'Inter_400Regular' }]}>
+                  Touch dispatch probe
+                </Text>
+                <Ionicons name="chevron-forward" size={18} color={colors.mutedForeground} />
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
         <Text style={[styles.version, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
           Skill Check · v1.0.0{'\n'}
           All game data is stored locally on your device.

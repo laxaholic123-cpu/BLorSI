@@ -40,7 +40,7 @@ import React, { useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import Svg, { Circle, G, Rect } from 'react-native-svg';
+import Svg, { Circle, G, Rect, Text as SvgText } from 'react-native-svg';
 
 import { useColors } from '@/hooks/useColors';
 
@@ -56,7 +56,7 @@ const VARIANTS: { id: VariantId; label: string; note: string }[] = [
   { id: 'G', label: 'Circle onLongPress', note: 'control — expected to FAIL' },
 ];
 
-const BOX = 300;
+const BOX = 320;
 const R = 26;
 
 export default function TouchProbeScreen() {
@@ -119,6 +119,32 @@ export default function TouchProbeScreen() {
                 strokeWidth={2}
                 pointerEvents="none"
               />
+              {/* The letter inside the ring, and its running count beside it.
+                  Without these the rings are six identical circles and there
+                  is no way to report which one fired. Decorative — every one
+                  is pointerEvents="none" so none can steal the tap it is
+                  labelling, which is the bug this screen exists to find. */}
+              <SvgText
+                x={60}
+                y={y + 6}
+                fontSize={17}
+                fontWeight="bold"
+                fill={counts[id] > 0 ? '#3EB86B' : '#7B8FA8'}
+                textAnchor="middle"
+                pointerEvents="none"
+              >
+                {id}
+              </SvgText>
+              <SvgText
+                x={104}
+                y={y + 6}
+                fontSize={15}
+                fill={counts[id] > 0 ? '#3EB86B' : '#7B8FA8'}
+                textAnchor="start"
+                pointerEvents="none"
+              >
+                {counts[id] > 0 ? `FIRED x${counts[id]}` : 'no'}
+              </SvgText>
               {id === 'A' && (
                 <Circle cx={60} cy={y} r={R} fill="transparent" onPress={() => hit('A')} />
               )}

@@ -64,23 +64,22 @@ const edgeAngleDeg = (edge: number): number => 240 + 60 * edge;
 const APOTHEM = HEX_R * Math.cos(Math.PI / 6);
 
 /**
- * Touch radius for a settlement corner.
+ * WHERE THE OLD SVG HIT RADII WENT, and the lesson that outlived them.
  *
- * Neighbouring corners sit exactly HEX_R apart (a regular hexagon's side equals
- * its circumradius), so anything under 20 keeps the targets disjoint. 16 leaves
- * margin while roughly doubling the tappable area over the visible dot.
+ * Corners and roads used to carry transparent SVG <Circle>s at r=16 and r=14.
+ * Those are gone — no SVG shape dispatches touches in this build — but the
+ * geometry finding still governs the <Pressable> boxes that replaced them:
  *
- * That disjointness is only WITHIN this family. A corner and a road hit target
- * DO overlap: an edge midpoint sits exactly 20 from each of its endpoints and
- * the two radii sum to 30, so a corner covers 25.1% of each touching road's
- * disc — measured, not estimated. Corners are drawn last and therefore win, on
- * both platforms: react-native-svg's Android hitTest walks children in reverse
- * draw order and tests the geometric fill REGION, so `fill="transparent"` is
- * fully tappable and only `pointerEvents="none"` opts out. That is why an
- * inert corner must not render a hit target at all — see the intersection
- * block below.
+ * An edge midpoint sits exactly 20 units from each of its endpoints. The two
+ * radii summed to 30, so a corner covered 25.1% of each touching road's hit
+ * area, and corners were drawn last. Each radius had been checked for overlap
+ * WITHIN its own family and never across families.
+ *
+ * Generalise it: two hit targets sized independently, each provably disjoint
+ * from its own kind, is not evidence they are disjoint from each other. Count
+ * the cross-family distances. The overlay keeps corners rendered after roads
+ * for the same reason — where they overlap, the corner should win.
  */
-const INTERSECTION_HIT_R = 16;
 
 /**
  * Vertex angles, in drawing order. Index is the vertex number used by
@@ -145,16 +144,6 @@ const EDGE_SEGMENTS: ReadonlyMap<string, { x1: number; y1: number; x2: number; y
   });
   return map;
 })();
-
-/**
- * Touch radius for a road.
- *
- * A CIRCLE at the edge midpoint rather than a thick transparent line, because
- * a Circle is the primitive already proven to receive taps on Android in this
- * component and a transparent stroke is not. Two edges meeting at a corner put
- * their midpoints about 0.87 x HEX_R apart, so 14 keeps them disjoint.
- */
-const ROAD_HIT_R = 14;
 
 /** Pointy-top hexagon SVG points string for the given centre and radius. */
 function hexPoints(cx: number, cy: number, r: number): string {
@@ -276,13 +265,50 @@ export function CatanHexGrid({
    * nothing on a real phone. Rather than fight it, real <Pressable>s are laid
    * over the hex centres and RN's own responder system does the work.
    *
-   * Not rendered in intersection mode: there the taps belong to the corner
-   * circles inside the SVG, and an overlay would swallow every one of them.
+   * MEASURED ON A DEVICE, 31 Aug 2026, and it is worse than that note said:
+   * NO SVG shape dispatches touches at all in this build. `app/touch-probe.tsx`
+   * put seven variants side by side and only the React Native <Pressable>
+   * fired. Transparent fill, solid fill at zero opacity, near-opaque paint,
+   * <Rect> and a handler on a <G> all did nothing — so this is not about
+   * transparency, and no amount of changing the paint would have fixed it.
+   *
+   * Cause: `newArchEnabled: true` (Fabric) with react-native-svg 15.12.1.
+   * Under the new architecture this version's touch handling does not reach
+   * shapes. It explains all three of this project's historical touch bugs at
+   * once — long-press correction, the corner handles, and the roll pad — which
+   * were each diagnosed separately as their own mystery.
+   *
+   * So EVERY interactive target in this component is a real <Pressable> laid
+   * over the drawing. The SVG is pictures only.
    */
-  const wantsHexTouches = Boolean(onHexPress || onHexLongPress) && !showIntersections;
+  const wantsHexTouches = Boolean(onHexPress || onHexLongPress);
+  const wantsCornerTouches = Boolean(showIntersections && onIntersectionPress);
+  const wantsRoadTouches = Boolean(showRoads && onRoadPress);
+  const wantsOverlay = wantsHexTouches || wantsCornerTouches || wantsRoadTouches;
 
   /** Touch box per hex, in viewBox units. Rows sit 60 apart, so 56 cannot overlap. */
   const TOUCH = 56;
+
+  /**
+   * Corners are laid over roads, so where the two boxes overlap the CORNER
+   * wins — settlements are placed first and are the more consequential of the
+   * two. Same ordering the SVG used, now expressed as render order in the
+   * overlay.
+   *
+   * The boxes are squares, not discs, so they are kept smaller than the old
+   * SVG radii: a 32-unit square inscribes the 16-unit circle it replaces, and
+   * corners sit 40 apart, so neighbours still cannot overlap.
+   */
+  const CORNER_TOUCH = 36;
+  /**
+   * Road targets were 22 and reported as "takes a tap or two to register".
+   *
+   * 22 viewBox units is about 24px on a phone — half the 48dp guideline, and
+   * roads are the one target you aim at with the board already crowded. Two
+   * edge midpoints meeting at a corner sit 0.87 x HEX_R apart, so 34 is the
+   * ceiling before neighbours overlap; 32 keeps a margin and is ~35px.
+   */
+  const ROAD_TOUCH = 32;
 
   const svg = (
     <Svg
@@ -307,16 +333,14 @@ export function CatanHexGrid({
 
         return (
           <G key={i}>
-            {/* Hex background — touch handlers live here so Android dispatches
-                press/long-press correctly. react-native-svg on Android does not
-                reliably fire events on <G> groups; only concrete shapes work. */}
+            {/* Hex background. No handlers: the tap target is a <Pressable>
+                in the overlay, like every other target in this component. */}
             <Polygon
               points={hexPoints(cx, cy, HEX_R - 1.5)}
               fill={rs.fill}
               stroke={isSelected ? selectionColor : (isLowConf ? '#F59E0B' : '#111111')}
               strokeWidth={isSelected ? 3.5 : (isLowConf ? 3 : 1)}
-              onPress={onHexPress ? () => onHexPress(i) : undefined}
-              onLongPress={onHexLongPress ? () => onHexLongPress(i) : undefined}
+              pointerEvents="none"
             />
 
             {/* Resource abbreviation — pointerEvents="none" so touches fall
@@ -384,12 +408,11 @@ export function CatanHexGrid({
         );
       })}
 
-      {/* Settlement corners. Drawn above the hexes so the touch target is not
-          swallowed by the hex polygons beneath, and as concrete <Circle>s
-          rather than a <G> — Android only dispatches events on real shapes. */}
-      {/* Roads. Drawn before the corners so that where a road's hit circle
-          and a corner's hit circle overlap, the CORNER wins — settlements are
-          placed first and are the more consequential of the two. */}
+      {/* Roads, then corners. Both are PICTURES ONLY — every touch target for
+          them is a <Pressable> in the overlay below the SVG, because no SVG
+          shape dispatches touches in this build. Ordering still matters, but
+          now it is the overlay's render order that decides who wins an
+          overlap, not this. */}
       {(showRoads || roadMarks) &&
         [...EDGE_SEGMENTS.entries()].map(([id, seg]) => {
           const mark = roadMarks?.[id];
@@ -402,21 +425,19 @@ export function CatanHexGrid({
                 y1={seg.y1}
                 x2={seg.x2}
                 y2={seg.y2}
-                stroke={mark ?? '#7B8FA8'}
-                strokeWidth={mark ? 7 : 4}
+                /* An OFFERED road has to read as an invitation on a dark
+                   board. It was #7B8FA8 at 0.5 opacity and 4 wide — reported
+                   as "grey on a black background, tough to see". Now bright,
+                   full opacity and nearly as thick as a built road, so the
+                   difference between "you may build here" and "someone built
+                   here" is colour rather than a guess at contrast. */
+                stroke={mark ?? '#F0C24B'}
+                strokeWidth={mark ? 7 : 6}
                 strokeLinecap="round"
-                opacity={mark ? 1 : 0.5}
+                opacity={mark ? 1 : 0.95}
+                strokeDasharray={mark ? undefined : '10 6'}
                 pointerEvents="none"
               />
-              {offerable && (
-                <Circle
-                  cx={seg.mx}
-                  cy={seg.my}
-                  r={ROAD_HIT_R}
-                  fill="transparent"
-                  onPress={onRoadPress ? () => onRoadPress(id) : undefined}
-                />
-              )}
             </G>
           );
         })}
@@ -459,29 +480,10 @@ export function CatanHexGrid({
                 pointerEvents="none"
               />
               )}
-              {/* Invisible hit target, drawn last so it sits on top.
-                  A 7-unit dot is about 12px across on a phone — less than a
-                  third of the 48dp minimum, and finger-sized targets matter
-                  more here than anywhere else in the app, because a mis-tap
-                  does not look like an error: it silently records production
-                  the player never had.
-                  r=16 gives a ~28px target while staying inside the 40-unit
-                  gap between neighbouring corners, so no two overlap.
-
-                  Rendered ONLY when there is a handler. An inert hit target is
-                  not harmless here: it still wins the hit test (the region is
-                  geometric, transparent fill and all) and it sits on top of the
-                  roads, so it would silently eat a quarter of every road tap.
-                  See the note on INTERSECTION_HIT_R. */}
-              {onIntersectionPress && (
-                <Circle
-                  cx={pt.x}
-                  cy={pt.y}
-                  r={INTERSECTION_HIT_R}
-                  fill="transparent"
-                  onPress={() => onIntersectionPress(id)}
-                />
-              )}
+              {/* No hit target here any more. It used to be a transparent
+                  <Circle> drawn last, and on a device it never fired — see the
+                  note by `wantsHexTouches`. The tap target is a <Pressable> in
+                  the overlay instead. */}
             </G>
           );
         })}
@@ -537,30 +539,64 @@ export function CatanHexGrid({
     </Svg>
   );
 
-  if (!wantsHexTouches) return svg;
+  if (!wantsOverlay) return svg;
+
+  /** viewBox units → a percentage box on the overlay, which sits exactly over
+   *  the SVG because both use the same aspect ratio and `xMidYMid meet`. */
+  const box = (cx: number, cy: number, size: number): ViewStyle => ({
+    position: 'absolute',
+    left: `${((cx - size / 2 - vbX) / vbW) * 100}%`,
+    top: `${((cy - size / 2 - vbY) / vbH) * 100}%`,
+    width: `${(size / vbW) * 100}%`,
+    height: `${(size / vbH) * 100}%`,
+  });
 
   return (
     <View style={[{ width: '100%', aspectRatio: vbW / vbH }, style]}>
       {svg}
       <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-        {HEX_POS.map(([col, row], i) => {
-          const { cx, cy } = hexCenter(col, row);
-          return (
-            <Pressable
-              key={`touch-${i}`}
-              onPress={onHexPress ? () => onHexPress(i) : undefined}
-              onLongPress={onHexLongPress ? () => onHexLongPress(i) : undefined}
-              delayLongPress={350}
-              style={{
-                position: 'absolute',
-                left: `${((cx - TOUCH / 2 - vbX) / vbW) * 100}%`,
-                top: `${((cy - TOUCH / 2 - vbY) / vbH) * 100}%`,
-                width: `${(TOUCH / vbW) * 100}%`,
-                height: `${(TOUCH / vbH) * 100}%`,
-              }}
-            />
-          );
-        })}
+        {wantsHexTouches &&
+          HEX_POS.map(([col, row], i) => {
+            const { cx, cy } = hexCenter(col, row);
+            return (
+              <Pressable
+                key={`touch-${i}`}
+                onPress={onHexPress ? () => onHexPress(i) : undefined}
+                onLongPress={onHexLongPress ? () => onHexLongPress(i) : undefined}
+                delayLongPress={350}
+                style={box(cx, cy, TOUCH)}
+              />
+            );
+          })}
+
+        {/* Roads BEFORE corners, so a corner laid over a road wins the overlap.
+            Only offerable edges get a target — the same restriction that made
+            mis-taps unreachable rather than merely discouraged. */}
+        {wantsRoadTouches &&
+          [...EDGE_SEGMENTS.entries()]
+            .filter(([id]) => !legalRoads || legalRoads.includes(id))
+            .map(([id, seg]) => (
+              <Pressable
+                key={`rt-${id}`}
+                onPress={() => onRoadPress?.(id)}
+                style={box(seg.mx, seg.my, ROAD_TOUCH)}
+                accessibilityRole="button"
+                accessibilityLabel="Build a road here"
+              />
+            ))}
+
+        {wantsCornerTouches &&
+          [...INTERSECTION_POINTS.entries()]
+            .filter(([id]) => !legalIntersections || legalIntersections.includes(id))
+            .map(([id, pt]) => (
+              <Pressable
+                key={`ct-${id}`}
+                onPress={() => onIntersectionPress?.(id)}
+                style={box(pt.x, pt.y, CORNER_TOUCH)}
+                accessibilityRole="button"
+                accessibilityLabel="Place on this corner"
+              />
+            ))}
       </View>
     </View>
   );

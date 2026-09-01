@@ -693,12 +693,48 @@ ${JSON.stringify(payload)}`,
 
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24 }}>
           <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'left' }]}>
-            Drag each dot to the middle of that corner tile. Getting these right
-            matters more than anything else — every tile is measured from them.
+            Tap the middle of a corner tile and the nearest dot jumps there, or
+            drag a dot to fine-tune. Getting these right matters more than
+            anything else — every tile is measured from them.
           </Text>
 
           <View
             style={{ width: '100%', aspectRatio: shotAspect, marginVertical: 12 }}
+            /**
+             * TAP TO PLACE. The handles were drag-only, and the first thing
+             * tried on a device was tapping — which did nothing at all.
+             *
+             * Drag is the precise interaction on the least precise input: a
+             * 52px handle hauled across a phone-sized photo, aiming at a tile
+             * centre a few pixels wide. Tapping the target directly is both
+             * easier and more accurate. Drag stays, for nudging.
+             *
+             * This lives on the CONTAINER, so a tap that lands on a handle is
+             * claimed by that handle's PanResponder first and does not also
+             * fire here.
+             */
+            onStartShouldSetResponder={() => true}
+            onResponderRelease={e => {
+              if (!boxSize) return;
+              const { locationX, locationY } = e.nativeEvent;
+              const x = clamp01(locationX / boxSize.w);
+              const y = clamp01(locationY / boxSize.h);
+              setCorners(prev => {
+                if (!prev) return prev;
+                // Nearest handle wins. Squared distance in normalised space is
+                // fine: the four handles sit far apart, so no scaling subtlety
+                // can change which one is closest.
+                let best = 0;
+                let bestD = Infinity;
+                prev.forEach((c, i) => {
+                  const d = (c.x - x) ** 2 + (c.y - y) ** 2;
+                  if (d < bestD) { bestD = d; best = i; }
+                });
+                const next = [...prev];
+                next[best] = { x, y };
+                return next;
+              });
+            }}
             onLayout={e => {
               /**
                * Only update when the size actually CHANGED.
