@@ -246,3 +246,29 @@ export function describePercentile(percentile: number): string {
   if (p >= 99) return 'luckier than 99% of simulated games';
   return `luckier than ${p}% of simulated games`;
 }
+
+/**
+ * The band as a player would read it off a card.
+ *
+ * Separate from `describePercentile`, which gives the sentence. This gives the
+ * two-word answer to "was I unlucky?" — the question the app is named after and
+ * the one a results screen should answer before it answers anything about the
+ * dice in aggregate.
+ */
+export function labelForBand(band: LuckBand): string {
+  switch (band) {
+    case 'very_unlucky': return 'Very unlucky';
+    case 'unlucky': return 'Unlucky';
+    case 'lucky': return 'Lucky';
+    case 'very_lucky': return 'Very lucky';
+    default: return 'About average';
+  }
+}
+
+/**
+ * Whether a band is worth colouring. `normal` deliberately is not: painting
+ * every player's row makes the two that mattered impossible to pick out.
+ */
+export function isNotableBand(band: LuckBand): boolean {
+  return band !== 'normal';
+}

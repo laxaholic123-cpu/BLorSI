@@ -686,3 +686,51 @@ should answer first.
     ranking on that axis with every player's value, the reader highlighted. A
     rank with no way to see the other places is a horoscope with a number in
     it, and the ranking was already computed to produce the badge.
+
+
+24. **A day with no device: three things fixed by counting.** All found without
+    running the app, which is the point — none would have failed a test.
+
+    **Saved layouts threw away their harbours, both ways.**
+    `CatanBoardLayout.ports` was written by every save and read back by nothing:
+    `handleLoadLayout` set only hexes, `handleSaveLayout` passed no ports, so
+    the `?? [...STANDARD_PORT_LAYOUT]` fallback fired every time and stored the
+    rulebook frame over whatever had been read or corrected. Fixed both halves;
+    `boardLayouts.test.ts` now asserts a non-standard frame round-trips AND is
+    not the standard one.
+
+    **The swallowed storage failures got the voice built for them.**
+    `reportHandledError` says in its own docstring that storage failures are
+    invisible without it, and nothing called it. Counted 87 catch blocks, 24
+    completely empty, 15 of those in `storage.ts`. All 29 sites there now
+    report through an INJECTED reporter — crashReporting imports Sentry at
+    module scope and cannot load under ts-jest, which would take
+    `storage.test.ts` down. Injection also made the voice testable.
+
+    **"3 to check" on a board that was 19/19 right.** Measured with
+    `tools/confidence_audit.mjs`: 126/126 tokens correct, 5 flagged, 0 of the 5
+    actually wrong, 0 wrong-and-unflagged. All five were the same case — the
+    reader declined and the solver filled from the remaining tokens. The flag
+    was not miscalibrated, the wording was, including "the scan didn't match the
+    pieces in the box", which is false for a decline. The screen now branches on
+    `change.from`: null means "could not read it, worked it out" in calm words,
+    non-null means "this could not be true" and keeps the alarm.
+
+    Still open from the same feedback batch: **reading confirmation** after the
+    read button is pressed.
+
+25. **The results screen answers "was I unlucky?" before "were the dice fair?"**
+    Reported as wanting a per-player verdict rather than an overall one.
+
+    `productionLuckPercentile` was already computed per player — it was rendered
+    near the bottom of the screen in small grey note text, under the findings
+    and beside the trademark disclaimer, while the VERDICT card at the top
+    answered a question nobody asks. The card now carries a row per player,
+    unluckiest first, with the tails coloured and the middle deliberately not.
+
+    `labelForBand` and `isNotableBand` in `luckEngine.ts`, pinned by four tests.
+    The duplicate list at the bottom is gone; one screen should not answer the
+    same question twice.
+
+    NOT verified on a device or on web — typecheck and tests only. The layout of
+    the new rows is unproven.

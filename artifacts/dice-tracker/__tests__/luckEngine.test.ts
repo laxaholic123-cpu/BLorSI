@@ -10,12 +10,15 @@ import {
   bandForPercentile,
   chiSquare,
   describePercentile,
+  isNotableBand,
+  labelForBand,
   makeRng,
   percentileOf,
   rollTwoD6,
   simulateFitPercentile,
   simulateProductionPercentile,
 } from '@/services/luckEngine';
+import type { LuckBand } from '@/services/luckEngine';
 import { TWO_D6_PROBS } from '@/services/stats';
 
 describe('makeRng', () => {
@@ -227,5 +230,41 @@ describe('describePercentile', () => {
     expect(describePercentile(3)).toBe('unluckier than 97% of simulated games');
     expect(describePercentile(97)).toBe('luckier than 97% of simulated games');
     expect(describePercentile(50)).toBe('dead average');
+  });
+});
+
+describe('band labels', () => {
+  /*
+    The results screen leads with these now. "Were the dice fair?" is not the
+    question anyone finishes a game asking — they ask whether THEY were unlucky,
+    which is the question the app is named after. That answer already existed
+    per player and was rendered in small grey text near the trademark notice.
+  */
+  it('gives every band a two-word answer', () => {
+    const bands: LuckBand[] = ['very_unlucky', 'unlucky', 'normal', 'lucky', 'very_lucky'];
+    const labels = bands.map(labelForBand);
+    expect(new Set(labels).size).toBe(bands.length);
+    for (const l of labels) expect(l.length).toBeGreaterThan(0);
+  });
+
+  it('treats only the tails as notable', () => {
+    // If every row were coloured, the two that mattered would be impossible to
+    // pick out — which is the whole reason to have a band rather than a number.
+    expect(isNotableBand('normal')).toBe(false);
+    expect(isNotableBand('unlucky')).toBe(true);
+    expect(isNotableBand('very_unlucky')).toBe(true);
+    expect(isNotableBand('lucky')).toBe(true);
+    expect(isNotableBand('very_lucky')).toBe(true);
+  });
+
+  it('labels the extremes differently from the merely unusual', () => {
+    expect(labelForBand(bandForPercentile(1))).not.toBe(labelForBand(bandForPercentile(5)));
+    expect(labelForBand(bandForPercentile(99))).not.toBe(labelForBand(bandForPercentile(95)));
+  });
+
+  it('calls the middle average across the whole normal range', () => {
+    for (const p of [10, 25, 50, 75, 90]) {
+      expect(labelForBand(bandForPercentile(p))).toBe('About average');
+    }
   });
 });

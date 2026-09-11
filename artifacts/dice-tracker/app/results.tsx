@@ -31,7 +31,13 @@ import { assignAccolades, profileRolls } from '@/services/catanAccolades';
 import { useSettings } from '@/context/SettingsContext';
 import { computeAllStats, formatDuration } from '@/services/stats';
 import { computeCatanGameStats } from '@/services/catanStats';
-import { describePercentile } from '@/services/luckEngine';
+import {
+  DEFAULT_ITERATIONS as SIM_GAMES,
+  bandForPercentile,
+  describePercentile,
+  isNotableBand,
+  labelForBand,
+} from '@/services/luckEngine';
 import { describePort } from '@/services/catanBoard';
 import { computeDevCardStats, DEV_DECK_SIZE } from '@/services/devCards';
 import type { CatanGameStats } from '@/types/catanStats';
@@ -140,6 +146,37 @@ export default function ResultsScreen() {
         : null,
     [activeSession, devCardEvents],
   );
+
+  /**
+   * How each player actually did, unluckiest first.
+   *
+   * The percentile is already computed per player by `computePlayerProductionStats`
+   * with `simulate: true`; this only turns it into something a person reads.
+   * Sorted ascending so the unluckiest is first — that is the player who will
+   * argue, and the one the screen should answer before anyone else.
+   */
+  const perPlayerVerdicts = useMemo(() => {
+    if (!catanStats || !activeSession) return [];
+    return catanStats.playerStats
+      .filter(ps => typeof ps.productionLuckPercentile === 'number')
+      .map(ps => {
+        const pct = ps.productionLuckPercentile!;
+        const band = bandForPercentile(pct);
+        return {
+          playerId: ps.playerId,
+          displayName: ps.displayName,
+          percentile: pct,
+          color: activeSession.players.find(p => p.id === ps.playerId)?.color ?? colors.primary,
+          label: labelForBand(band),
+          sentence: describePercentile(pct),
+          notable: isNotableBand(band),
+          // Only the tails get colour. Painting every row makes the two that
+          // mattered impossible to pick out at a glance.
+          bandColor: pct < 50 ? colors.destructive : '#16A34A',
+        };
+      })
+      .sort((a, b) => a.percentile - b.percentile);
+  }, [catanStats, activeSession, colors]);
 
   // ── Verdict entrance animation ───────────────────────────────────────────────
   // A gentle fade-up when the results screen first renders.
@@ -395,6 +432,62 @@ export default function ResultsScreen() {
               <Text style={[styles.verdictNote, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
                 Mean: {stats.mean?.toFixed(2)} vs expected {stats.expectedMean.toFixed(1)} (z = {stats.meanZScore.toFixed(2)})
               </Text>
+            )}
+
+            {/*
+              PER PLAYER, in the verdict card itself.
+
+              Everything above this answers "were the dice fair?" — and nobody
+              finishes a game asking that. They ask whether THEY were unlucky,
+              which is the question the app is named after. That answer already
+              existed as `productionLuckPercentile`; it was rendered near the
+              bottom of the screen in small grey note text, under the findings
+              and next to the trademark disclaimer.
+
+              Ordered unluckiest first, because the person with a grievance is
+              the one reaching for the phone.
+            */}
+            {perPlayerVerdicts.length > 0 && (
+              <View style={styles.verdictPlayers}>
+                {perPlayerVerdicts.map(v => (
+                  <View key={v.playerId} style={styles.verdictPlayerRow}>
+                    <View style={[styles.verdictPlayerDot, { backgroundColor: v.color }]} />
+                    <Text
+                      style={[styles.verdictPlayerName, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}
+                      numberOfLines={1}
+                    >
+                      {v.displayName}
+                    </Text>
+                    <View style={{ flex: 1 }} />
+                    <Text
+                      style={[styles.verdictPlayerBand, {
+                        color: v.notable ? v.bandColor : colors.mutedForeground,
+                        fontFamily: v.notable ? 'Inter_700Bold' : 'Inter_400Regular',
+                      }]}
+                    >
+                      {v.label}
+                    </Text>
+                  </View>
+                ))}
+                {/* The sentence, for anyone the dice actually treated oddly —
+                    and for the unluckiest player when nobody stands out, so the
+                    card always answers "how unlucky, exactly?" for someone. */}
+                {(perPlayerVerdicts.filter(v => v.notable).length > 0
+                  ? perPlayerVerdicts.filter(v => v.notable)
+                  : perPlayerVerdicts.slice(0, 1)
+                ).map(v => (
+                  <Text
+                    key={`sentence-${v.playerId}`}
+                    style={[styles.verdictNote, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginTop: 6 }]}
+                  >
+                    {v.displayName}: {v.sentence}.
+                  </Text>
+                ))}
+                <Text style={[styles.verdictNote, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginTop: 6 }]}>
+                  Each player is compared against {SIM_GAMES.toLocaleString()} simulated
+                  games on their own board position, over the same number of rolls.
+                </Text>
+              </View>
             )}
           </View>
 
@@ -1117,18 +1210,6 @@ export default function ResultsScreen() {
                       {detail}
                     </Text>
                   ))}
-                  {/* The actual number behind the label. A percentile is what
-                      players can compare between games and argue about. */}
-                  {catanStats.playerStats
-                    .filter(ps => typeof ps.productionLuckPercentile === 'number')
-                    .map(ps => (
-                      <Text
-                        key={ps.playerId}
-                        style={[styles.verdictNote, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginTop: 4 }]}
-                      >
-                        {ps.displayName}: {describePercentile(ps.productionLuckPercentile!)}
-                      </Text>
-                    ))}
                   <Text style={[styles.verdictNote, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginTop: 8 }]}>
                     This is an independent companion tool and is not affiliated with or endorsed by the publishers or owners of Catan.
                   </Text>
@@ -1213,6 +1294,11 @@ const styles = StyleSheet.create({
   bodyText: { fontSize: 16 },
 
   scroll: { paddingHorizontal: 16 },
+  verdictPlayers: { marginTop: 12, gap: 6 },
+  verdictPlayerRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  verdictPlayerDot: { width: 10, height: 10, borderRadius: 5 },
+  verdictPlayerName: { fontSize: 14, maxWidth: '45%' },
+  verdictPlayerBand: { fontSize: 13 },
   sectionLabel: { fontSize: 11, letterSpacing: 1.2, marginTop: 20, marginBottom: 8 },
 
   // Winner banner
