@@ -15,8 +15,8 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { GameProvider } from '@/context/GameContext';
 import { SettingsProvider } from '@/context/SettingsContext';
-import { ensureSchemaVersion } from '@/services/storage';
-import { initCrashReporting } from '@/services/crashReporting';
+import { ensureSchemaVersion, setStorageFailureReporter } from '@/services/storage';
+import { initCrashReporting, reportHandledError } from '@/services/crashReporting';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -112,6 +112,26 @@ export default function RootLayout() {
     // Start crash reporting before anything else can fail. No-op unless
     // EXPO_PUBLIC_SENTRY_DSN is set, so local builds report nothing.
     initCrashReporting();
+
+    /*
+      Give the storage layer a voice, BEFORE the first thing that uses it.
+
+      Every catch in storage.ts swallows by design — a failed write must not
+      kill a game in progress — which also made every one of them invisible.
+      `reportHandledError` was written for exactly this and had never been
+      called by anything.
+
+      It is injected rather than imported because crashReporting pulls in
+      @sentry/react-native at module scope, which cannot load under ts-jest,
+      and storage.ts is unit-tested.
+
+      Ordering matters: `ensureSchemaVersion` is the very next line and is one
+      of the reporting callers, so installing this afterwards would send a
+      launch-time migration failure — the one most worth hearing about — to
+      the no-op.
+    */
+    setStorageFailureReporter(reportHandledError);
+
     // Run schema migration on every launch (no-op when schema is current)
     void ensureSchemaVersion();
   }, []);

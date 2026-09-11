@@ -1241,3 +1241,56 @@ them.
 When a test fails, check the fixture before the code. Roughly half the failures
 here were tests encoding an old assumption — a board painted flat when the reader
 needs texture, a token painted smaller than the area sampled.
+
+
+## Two things that existed, typechecked, and never ran
+
+Both found by counting rather than reading, on a day with no device to test on.
+Same shape as the harbour-icon predicates and the robber blocks that never
+lifted, and it is now the most common bug class in this repo.
+
+**`CatanBoardLayout.ports` was written by every save and read back by nothing.**
+The field was typed, migrated, and defensively backfilled in `loadBoardLayouts`
+— and `handleLoadLayout` set only `hexes`, while `handleSaveLayout` called
+`saveBoardLayout(hexes, name)` with no ports at all. So the `ports ?? existing
+?.ports ?? [...STANDARD_PORT_LAYOUT]` fallback fired every time and quietly
+stored the rulebook frame over whatever had just been read or corrected. Saving
+a board you had fixed by hand discarded the fix; loading it gave you a
+plausible, wrong ring. The whole point of storing a frame is that the frame
+outlives the shuffle. Both halves fixed, with a round-trip test that asserts a
+non-standard frame comes back unchanged AND is not the standard one — the second
+assertion is the one that would have caught it.
+
+**`reportHandledError` was written for the swallowed storage failures and never
+called.** Its own docstring says "Storage failures are caught and swallowed by
+design, so without an explicit report they are invisible". Counted: 87 catch
+blocks in the app, 24 completely empty, 15 of those in `storage.ts`. All 29
+call sites in `storage.ts` now report, and the root layout injects the real
+reporter.
+
+INJECTED, not imported: `crashReporting.ts` does `import * as Sentry from
+'@sentry/react-native'` at module scope, which cannot load under ts-jest, and
+`storage.ts` is unit-tested — a direct import takes `storage.test.ts` and
+`schemaMigration.test.ts` down with it. Verified by trying it. Injection also
+makes the voice testable, which is what stops it going quiet again.
+
+Two traps worth keeping:
+
+  - The sweep gave `reportStorageFailure`'s OWN catch a voice, so a throwing
+    reporter reported its own failure, which threw, which reported, until the
+    stack blew. That one catch is deliberately silent and says so.
+  - `setStorageFailureReporter` must be called BEFORE `ensureSchemaVersion` in
+    the root layout. It is the very next line and a reporting caller, so the
+    launch-time migration failure — the one most worth hearing about — would
+    otherwise go to the no-op.
+
+**`jest.restoreAllMocks()` does not restore a spy placed on a function that was
+already a `jest.fn()`.** The AsyncStorage jest mock's methods are, so a failing
+`setItem` leaked out of one test and failed the next one on someone else's
+error. Track spies and call `mockRestore()` on each.
+
+**A scan is only as good as its roots.** The first pass over exported symbols
+omitted `context/` and `hooks/`, which made `GameContext`'s calls invisible and
+reported half the storage layer as dead code. Check the measurement before
+believing the finding: `services`, `components`, `app`, `context`, `hooks`,
+`utils`, `constants`.

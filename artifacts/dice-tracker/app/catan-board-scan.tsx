@@ -279,6 +279,14 @@ export default function CatanBoardScanScreen() {
    * a dead control with no error and nothing to see in review.
    */
   const [portOverride, setPortOverride] = useState<CatanPortDef[] | null>(null);
+  /**
+   * Whether the ring on screen came from a SAVED LAYOUT rather than this photo.
+   *
+   * Only affects what the banner claims. Telling a player their harbours were
+   * "read from your photo" when they came out of storage is the kind of small
+   * lie that makes them stop checking the ones that really were read.
+   */
+  const [portsFromLayout, setPortsFromLayout] = useState(false);
 
   const ports = useMemo(() => {
     if (portOverride) return portOverride;
@@ -589,7 +597,15 @@ export default function CatanBoardScanScreen() {
   const handleSaveLayout = async () => {
     setIsSavingLayout(true);
     try {
-      await saveBoardLayout(hexes, layoutName || 'My Board');
+      /*
+        Ports go WITH the layout.
+
+        This used to save hexes only, so `saveBoardLayout` fell through to
+        `[...STANDARD_PORT_LAYOUT]` and quietly stored the rulebook ring over
+        whatever had just been read or corrected. Saving a board you had fixed
+        by hand discarded the fix, and nothing said so.
+      */
+      await saveBoardLayout(hexes, layoutName || 'My Board', undefined, ports);
       const layouts = await loadBoardLayouts();
       setSavedLayouts(layouts);
       setShowSaveModal(false);
@@ -602,6 +618,18 @@ export default function CatanBoardScanScreen() {
   const handleLoadLayout = (layout: CatanBoardLayout) => {
     haptic();
     setHexes(layout.hexes.map(h => ({ ...h })));
+    /*
+      And the ports, which this dropped on the floor.
+
+      `CatanBoardLayout.ports` was written by every save and read by nothing —
+      the field was typed, migrated, and defensively backfilled, and no code
+      path ever put it back on screen. The whole reason to store a frame is
+      that the frame outlives the shuffle, so loading one has to restore it.
+    */
+    if (Array.isArray(layout.ports) && layout.ports.length === PORT_COUNT) {
+      setPortOverride(layout.ports.map(p => ({ ...p })));
+      setPortsFromLayout(true);
+    }
     setShowLoadModal(false);
     setPhase('review');
   };
@@ -979,7 +1007,10 @@ export default function CatanBoardScanScreen() {
                 seven boards in ten came out exactly right. A player who is told
                 the right number checks the right amount.
               */}
-              {detectedSlots
+              {portsFromLayout
+                ? 'Harbours came from the saved layout. Tap any harbour to change ' +
+                  'what it trades.'
+                : detectedSlots
                 ? unsureCount > 0
                   ? `Read ${PORT_COUNT - unsureCount} of ${PORT_COUNT} harbours from your photo. ` +
                     `${unsureCount === 1 ? 'One was' : `${unsureCount} were`} too faint to place — ` +

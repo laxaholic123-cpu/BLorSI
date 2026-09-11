@@ -16,12 +16,15 @@ import {
   loadPrefillSession,
   loadRollEvents,
   loadSession,
+  loadSettings,
   normalizeSession,
   saveSession,
   savePrefillSession,
+  saveSettings,
+  setStorageFailureReporter,
 } from '@/services/storage';
 import type { GameSession } from '@/types/models';
-import { SCHEMA_VERSION } from '@/types/models';
+import { DEFAULT_SETTINGS, SCHEMA_VERSION } from '@/types/models';
 
 // ─── AsyncStorage mock ────────────────────────────────────────────────────────
 
@@ -518,5 +521,81 @@ describe('active board is per session', () => {
     await AsyncStorage.setItem('blosi:active_board', JSON.stringify(board));
     await clearActiveBoard();
     expect(await AsyncStorage.getItem('blosi:active_board')).toBeNull();
+  });
+});
+
+describe('the storage failure reporter', () => {
+  /*
+    Storage catches everything on purpose — a failed write must not kill a game
+    in progress — and that is exactly why the failures were invisible.
+    `reportHandledError` was written for this and had never been called by
+    anything. These tests exist so the voice cannot go quiet again without a
+    red test, which is the only thing that would have caught it the first time.
+  */
+  const failing = () => {
+    throw new Error('disk full');
+  };
+
+  /*
+    Spies are tracked and restored by hand. `jest.restoreAllMocks()` does not
+    restore a spy placed on a function that was ALREADY a jest.fn — which the
+    AsyncStorage mock's methods are — so a failing setItem leaked out of the
+    first test and made the "stays silent" case fail on someone else's error.
+  */
+  let spies: jest.SpyInstance[] = [];
+  const breakMethod = (name: 'setItem' | 'getItem') => {
+    const spy = jest.spyOn(AsyncStorage, name).mockImplementation(failing);
+    spies.push(spy);
+  };
+
+  afterEach(() => {
+    setStorageFailureReporter(() => {});
+    for (const s of spies) s.mockRestore();
+    spies = [];
+  });
+
+  it('speaks up when a WRITE fails', async () => {
+    const heard: { error: unknown; context?: Record<string, unknown> }[] = [];
+    setStorageFailureReporter((error, context) => heard.push({ error, context }));
+    breakMethod('setItem');
+
+    await saveSettings({ ...DEFAULT_SETTINGS });
+
+    expect(heard).toHaveLength(1);
+    expect((heard[0]!.error as Error).message).toBe('disk full');
+    // The context has to name the operation, or a report is just "storage
+    // broke" with no way to tell a settings write from a session write.
+    expect(heard[0]!.context).toMatchObject({ module: 'storage', op: 'saveSettings' });
+  });
+
+  it('speaks up when a READ fails, and still returns its fallback', async () => {
+    const heard: unknown[] = [];
+    setStorageFailureReporter(e => heard.push(e));
+    breakMethod('getItem');
+
+    // Reporting must not change behaviour — the caller still gets defaults.
+    await expect(loadSettings()).resolves.toEqual(DEFAULT_SETTINGS);
+    expect(heard).toHaveLength(1);
+  });
+
+  it('stays silent when nothing fails', async () => {
+    const heard: unknown[] = [];
+    setStorageFailureReporter(e => heard.push(e));
+    await saveSettings({ ...DEFAULT_SETTINGS });
+    expect(heard).toEqual([]);
+  });
+
+  it('survives a reporter that throws, without recursing', () => {
+    /*
+      The bug a sweep introduced and nearly shipped. Giving EVERY catch in
+      storage.ts a voice gave the reporter's own catch one too, so a throwing
+      reporter reported its own failure, which threw, which reported... until
+      the stack blew. A throwing reporter must be absorbed, not amplified.
+    */
+    setStorageFailureReporter(() => {
+      throw new Error('reporter is down');
+    });
+    breakMethod('setItem');
+    expect(() => saveSettings({ ...DEFAULT_SETTINGS })).not.toThrow();
   });
 });

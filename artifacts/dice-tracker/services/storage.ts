@@ -28,6 +28,51 @@ import { DEFAULT_SETTINGS, DICE_RANGES, SCHEMA_VERSION } from '@/types/models';
 import { STANDARD_PORT_LAYOUT } from '@/services/catanBoard';
 import { BOARD_HEX_COUNT } from '@/services/boardConstraints';
 
+/**
+ * Where storage failures go.
+ *
+ * Every catch in this file swallows: a failed write must not crash a game in
+ * progress, and a failed read has a sane fallback. That is the right behaviour
+ * and it is also why these failures were completely invisible -- the user saw
+ * a vague message and the developer saw nothing at all.
+ *
+ * INJECTED rather than imported. `crashReporting.ts` pulls in
+ * @sentry/react-native at module scope, which cannot load under ts-jest, and
+ * this file is unit-tested -- importing it directly would take storage.test.ts
+ * and schemaMigration.test.ts down with it. The root layout calls
+ * `setStorageFailureReporter(reportHandledError)` once Sentry is up.
+ *
+ * Defaults to a no-op so nothing changes until it is wired, and so tests stay
+ * silent unless they ask to listen.
+ */
+export type StorageFailureReporter = (
+  error: unknown,
+  context?: Record<string, unknown>,
+) => void;
+
+let failureReporter: StorageFailureReporter = () => {};
+
+export function setStorageFailureReporter(report: StorageFailureReporter): void {
+  failureReporter = report;
+}
+
+/** Report and carry on. Never throws -- it sits inside the caller's catch. */
+function reportStorageFailure(error: unknown, op: string): void {
+  try {
+    failureReporter(error, { module: 'storage', op });
+  } catch {
+    /*
+      Deliberately the ONE silent catch in this file.
+
+      Reporting a reporter failure calls the reporter, which fails, which
+      reports... A sweep that gave every catch here a voice gave this one a
+      voice too, and a throwing reporter then recursed until the stack blew.
+      Leave it empty.
+    */
+  }
+}
+
+
 // ─── Storage keys ────────────────────────────────────────────────────────────
 
 const KEYS = {
@@ -98,7 +143,8 @@ const migrateSessionSettingsToV3 = async (): Promise<void> => {
     let session: Record<string, unknown>;
     try {
       session = JSON.parse(json) as Record<string, unknown>;
-    } catch {
+    } catch (err) {
+    reportStorageFailure(err, 'migrateSessionSettingsToV3');
       continue; // Leave a corrupted record alone rather than making it worse.
     }
 
@@ -149,7 +195,8 @@ export const ensureSchemaVersion = async (): Promise<void> => {
     }
 
     await AsyncStorage.setItem(KEYS.SCHEMA_VERSION, String(SCHEMA_VERSION));
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'ensureSchemaVersion');
     // Non-fatal — the app still works, and the unchanged version stamp means
     // the migration will be attempted again on the next launch.
   }
@@ -197,7 +244,8 @@ export const loadSettings = async (): Promise<AppSettings> => {
       stored.defaultDiceMode = LEGACY_DICE_MODE_MAP[stored.defaultDiceMode as string];
     }
     return { ...DEFAULT_SETTINGS, ...stored };
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'loadSettings');
     return { ...DEFAULT_SETTINGS };
   }
 };
@@ -205,7 +253,8 @@ export const loadSettings = async (): Promise<AppSettings> => {
 export const saveSettings = async (settings: AppSettings): Promise<void> => {
   try {
     await AsyncStorage.setItem(KEYS.SETTINGS, JSON.stringify(settings));
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'saveSettings');
     // Non-fatal
   }
 };
@@ -215,7 +264,8 @@ export const saveSettings = async (settings: AppSettings): Promise<void> => {
 export const getActiveSessionId = async (): Promise<string | null> => {
   try {
     return await AsyncStorage.getItem(KEYS.ACTIVE_SESSION_ID);
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'getActiveSessionId');
     return null;
   }
 };
@@ -227,7 +277,8 @@ export const setActiveSessionId = async (id: string | null): Promise<void> => {
     } else {
       await AsyncStorage.removeItem(KEYS.ACTIVE_SESSION_ID);
     }
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'setActiveSessionId');
     // Non-fatal
   }
 };
@@ -248,7 +299,8 @@ export const saveSession = async (session: GameSession): Promise<void> => {
       const updated = [session.id, ...ids];
       await AsyncStorage.setItem(KEYS.SESSION_IDS, JSON.stringify(updated));
     }
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'saveSession');
     // Index maintenance is non-fatal — the session record itself was saved above
   }
 };
@@ -263,7 +315,8 @@ const scanSessionIdsFromKeys = async (): Promise<string[]> => {
     const allKeys = await AsyncStorage.getAllKeys();
     const prefix = 'blosi:session:';
     return allKeys.filter(k => k.startsWith(prefix)).map(k => k.slice(prefix.length));
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'scanSessionIdsFromKeys');
     return [];
   }
 };
@@ -280,7 +333,8 @@ export const loadSession = async (id: string): Promise<GameSession | null> => {
       await AsyncStorage.setItem(KEYS.SESSION(id), JSON.stringify(normalized));
     }
     return normalized;
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'loadSession');
     return null;
   }
 };
@@ -299,7 +353,8 @@ export const loadAllSessions = async (): Promise<GameSession[]> => {
     if (orphans.length > 0) {
       try {
         await AsyncStorage.setItem(KEYS.SESSION_IDS, JSON.stringify(ids));
-      } catch {
+      } catch (err) {
+    reportStorageFailure(err, 'loadAllSessions');
         // Healing is best-effort; the orphans are still returned below
       }
     }
@@ -313,12 +368,14 @@ export const loadAllSessions = async (): Promise<GameSession[]> => {
       if (!json) continue;
       try {
         sessions.push(normalizeSession(JSON.parse(json) as GameSession));
-      } catch {
+      } catch (err) {
+    reportStorageFailure(err, 'loadAllSessions');
         // Skip a corrupted record rather than losing the whole history
       }
     }
     return sessions;
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'loadAllSessions');
     return [];
   }
 };
@@ -331,7 +388,8 @@ export const deleteSession = async (id: string): Promise<void> => {
       const ids = (JSON.parse(raw) as string[]).filter((sid) => sid !== id);
       await AsyncStorage.setItem(KEYS.SESSION_IDS, JSON.stringify(ids));
     }
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'deleteSession');
     // Non-fatal
   }
 };
@@ -348,7 +406,8 @@ export const loadRollEvents = async (sessionId: string): Promise<RollEvent[]> =>
   try {
     const json = await AsyncStorage.getItem(KEYS.ROLLS(sessionId));
     return json ? (JSON.parse(json) as RollEvent[]) : [];
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'loadRollEvents');
     return [];
   }
 };
@@ -361,7 +420,8 @@ export const saveExposureEvents = async (
 ): Promise<void> => {
   try {
     await AsyncStorage.setItem(KEYS.EXPOSURES(sessionId), JSON.stringify(events));
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'saveExposureEvents');
     // Non-fatal
   }
 };
@@ -372,7 +432,8 @@ export const loadExposureEvents = async (
   try {
     const json = await AsyncStorage.getItem(KEYS.EXPOSURES(sessionId));
     return json ? (JSON.parse(json) as CatanPlayerExposureEvent[]) : [];
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'loadExposureEvents');
     return [];
   }
 };
@@ -391,7 +452,8 @@ export const loadDevCardEvents = async (sessionId: string): Promise<CatanDevCard
   try {
     const json = await AsyncStorage.getItem(KEYS.DEV_CARDS(sessionId));
     return json ? (JSON.parse(json) as CatanDevCardEvent[]) : [];
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'loadDevCardEvents');
     return [];
   }
 };
@@ -513,6 +575,7 @@ export const importAllData = async (
     }
     return { imported, skipped };
   } catch (err) {
+    reportStorageFailure(err, 'importAllData');
     return { imported: 0, skipped: 0, error: `Parse error: ${String(err)}` };
   }
 };
@@ -524,7 +587,9 @@ const PREFILL_KEY = 'blosi:prefill_session';
 export const savePrefillSession = async (session: GameSession): Promise<void> => {
   try {
     await AsyncStorage.setItem(PREFILL_KEY, JSON.stringify(session));
-  } catch {}
+  } catch (err) {
+    reportStorageFailure(err, 'savePrefillSession');
+  }
 };
 
 export const loadPrefillSession = async (): Promise<GameSession | null> => {
@@ -538,7 +603,8 @@ export const loadPrefillSession = async (): Promise<GameSession | null> => {
       await AsyncStorage.setItem(PREFILL_KEY, JSON.stringify(normalized));
     }
     return normalized;
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'loadPrefillSession');
     return null;
   }
 };
@@ -546,7 +612,9 @@ export const loadPrefillSession = async (): Promise<GameSession | null> => {
 export const clearPrefillSession = async (): Promise<void> => {
   try {
     await AsyncStorage.removeItem(PREFILL_KEY);
-  } catch {}
+  } catch (err) {
+    reportStorageFailure(err, 'clearPrefillSession');
+  }
 };
 
 // ─── Active board handoff ─────────────────────────────────────────────────────
@@ -597,7 +665,9 @@ export const saveActiveBoard = async (
 ): Promise<void> => {
   try {
     await AsyncStorage.setItem(activeBoardKey(sessionId), JSON.stringify(board));
-  } catch {}
+  } catch (err) {
+    reportStorageFailure(err, 'saveActiveBoard');
+  }
 };
 
 /** Shape check shared by both read paths. */
@@ -610,7 +680,8 @@ const parseBoard = (json: string | null): ActiveBoard | null => {
     if (!Array.isArray(raw.hexes) || raw.hexes.length !== BOARD_HEX_COUNT) return null;
     if (!Array.isArray(raw.ports)) return null;
     return { hexes: raw.hexes, ports: raw.ports };
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'parseBoard');
     return null;
   }
 };
@@ -630,7 +701,8 @@ export const loadActiveBoard = async (sessionId: string): Promise<ActiveBoard | 
       return legacy;
     }
     return null;
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'loadActiveBoard');
     return null;
   }
 };
@@ -640,7 +712,9 @@ export const clearActiveBoard = async (sessionId?: string): Promise<void> => {
     if (sessionId) await AsyncStorage.removeItem(activeBoardKey(sessionId));
     // Always clear the legacy slot: it is the one that could leak between games.
     await AsyncStorage.removeItem(LEGACY_ACTIVE_BOARD_KEY);
-  } catch {}
+  } catch (err) {
+    reportStorageFailure(err, 'clearActiveBoard');
+  }
 };
 
 // ─── Diagnostics: board reader ground truth ───────────────────────────────────
@@ -661,7 +735,9 @@ const GROUND_TRUTH_KEY = 'blosi:diag_ground_truth';
 export const saveGroundTruth = async (hexes: CatanHexDef[]): Promise<void> => {
   try {
     await AsyncStorage.setItem(GROUND_TRUTH_KEY, JSON.stringify(hexes));
-  } catch {}
+  } catch (err) {
+    reportStorageFailure(err, 'saveGroundTruth');
+  }
 };
 
 export const loadGroundTruth = async (): Promise<CatanHexDef[] | null> => {
@@ -672,7 +748,8 @@ export const loadGroundTruth = async (): Promise<CatanHexDef[] | null> => {
     // A partial board would score every read against nonsense.
     if (!Array.isArray(raw) || raw.length !== BOARD_HEX_COUNT) return null;
     return raw;
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'loadGroundTruth');
     return null;
   }
 };
@@ -680,7 +757,9 @@ export const loadGroundTruth = async (): Promise<CatanHexDef[] | null> => {
 export const clearGroundTruth = async (): Promise<void> => {
   try {
     await AsyncStorage.removeItem(GROUND_TRUTH_KEY);
-  } catch {}
+  } catch (err) {
+    reportStorageFailure(err, 'clearGroundTruth');
+  }
 };
 
 export const clearAllData = async (): Promise<void> => {
@@ -690,7 +769,8 @@ export const clearAllData = async (): Promise<void> => {
     if (appKeys.length > 0) {
       await AsyncStorage.multiRemove(appKeys);
     }
-  } catch {
+  } catch (err) {
+    reportStorageFailure(err, 'clearAllData');
     // Non-fatal
   }
 };

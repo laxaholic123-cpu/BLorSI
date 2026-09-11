@@ -11,7 +11,10 @@ import {
   makeEmptyLayout,
   saveBoardLayout,
 } from "@/services/boardLayouts";
-import type { CatanHexDef } from "@/types/models";
+import type { CatanHexDef, CatanPortDef } from "@/types/models";
+import { STANDARD_PORT_LAYOUT, getCoastalEdgesClockwise, PORT_COUNT }
+  from "@/services/catanBoard";
+import { portsFromDetectedSlots } from "@/services/catanPorts";
 
 // ─── AsyncStorage mock ────────────────────────────────────────────────────────
 
@@ -160,5 +163,71 @@ describe("deleteBoardLayout", () => {
     await deleteBoardLayout("non-existent-id");
     const layouts = await loadBoardLayouts();
     expect(layouts).toHaveLength(1);
+  });
+});
+
+describe("ports on a saved layout", () => {
+  /*
+    The reason this block exists: `CatanBoardLayout.ports` was written by every
+    save and read back by nothing. The field was typed, migrated and
+    defensively backfilled, and no path ever restored it to the screen — so a
+    frame you had read from a photo or corrected by hand was silently replaced
+    with the rulebook ring the next time you loaded it. Nothing failed, nothing
+    warned, and the whole point of storing a frame is that the frame outlives
+    the shuffle.
+  */
+
+  /** A frame that is legal but NOT the standard one, so a fallback is visible. */
+  const shuffled = (): CatanPortDef[] => {
+    const ring = getCoastalEdgesClockwise();
+    return portsFromDetectedSlots(
+      [0, 3, 7, 10, 13, 17, 20, 23, 27].map(i => ({
+        hexIndex: ring[i]!.hexIndex,
+        edge: ring[i]!.edge,
+      })),
+    );
+  };
+
+  const key = (ports: readonly CatanPortDef[]) =>
+    ports.map(p => `${p.hexIndex}:${p.edge}:${p.type}`).sort().join("|");
+
+  it("round-trips a non-standard frame", async () => {
+    const ports = shuffled();
+    expect(key(ports)).not.toBe(key(STANDARD_PORT_LAYOUT));
+
+    await saveBoardLayout(makeHexes(), "Our Board", undefined, ports);
+    const [loaded] = await loadBoardLayouts();
+    expect(loaded!.ports).toHaveLength(PORT_COUNT);
+    expect(key(loaded!.ports)).toBe(key(ports));
+  });
+
+  it("does not quietly substitute the standard ring", async () => {
+    // The actual failure. A saved board came back as the rulebook frame, which
+    // looks entirely plausible and is wrong.
+    const ports = shuffled();
+    await saveBoardLayout(makeHexes(), "Our Board", undefined, ports);
+    const [loaded] = await loadBoardLayouts();
+    expect(key(loaded!.ports)).not.toBe(key(STANDARD_PORT_LAYOUT));
+  });
+
+  it("keeps the frame when only the TILES are re-saved", async () => {
+    // Groups reshuffle tiles every game and leave the frame assembled, so
+    // re-saving hexes onto an existing layout must not disturb its ports.
+    const ports = shuffled();
+    const first = await saveBoardLayout(makeHexes(), "Our Board", undefined, ports);
+    await saveBoardLayout(makeHexes(), "Our Board", first.id);
+    const [loaded] = await loadBoardLayouts();
+    expect(key(loaded!.ports)).toBe(key(ports));
+  });
+
+  it("still backfills a layout that predates ports", async () => {
+    // Migration path: an old stored layout has no ports at all and must not
+    // crash the picker.
+    await AsyncStorage.setItem(
+      "blosi:board_layouts",
+      JSON.stringify([{ id: "old", name: "Old", hexes: makeHexes(), savedAt: "2026-01-01" }]),
+    );
+    const [loaded] = await loadBoardLayouts();
+    expect(loaded!.ports).toHaveLength(PORT_COUNT);
   });
 });
