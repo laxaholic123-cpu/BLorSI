@@ -73,7 +73,15 @@ const PIPS: Record<number, number> = {
 
 // ─── Robber prompt state ──────────────────────────────────────────────────────
 
-type RobberPromptState = 'idle' | 'showing' | 'dismissed_this_session';
+/**
+ * No 'dismissed_this_session' any more.
+ *
+ * Silencing the prompt for a whole game means the robber never moves again
+ * in the record, so its blocks never lift — which is precisely the bug this
+ * screen was just fixed for. A single 7 can still be skipped; the next one
+ * asks again.
+ */
+type RobberPromptState = 'idle' | 'showing';
 
 export default function ActiveCatanScreen() {
   const colors = useColors();
@@ -99,7 +107,6 @@ export default function ActiveCatanScreen() {
   const [robberHexNumber, setRobberHexNumber] = useState<number | null>(null);
   /** The tile the robber moved to, when the board is known. */
   const [robberHexIndex, setRobberHexIndex] = useState<number | null>(null);
-  const [robberDontAskAgain, setRobberDontAskAgain] = useState(false);
   /** What made the robber move — only the title differs. */
   const [robberTrigger, setRobberTrigger] = useState<'seven' | 'knight'>('seven');
   const [showEndConfirm, setShowEndConfirm] = useState(false);
@@ -239,6 +246,26 @@ export default function ActiveCatanScreen() {
     [exposureEvents],
   );
 
+  /**
+   * Every piece on the board, for the robber prompt.
+   *
+   * Choosing where the robber goes is a decision about whose production to
+   * cut, so the prompt has to show whose pieces are where.
+   */
+  const robberBoardMarks = useMemo(() => {
+    const buildings: Record<string, string> = {};
+    const cities: string[] = [];
+    const roads: Record<string, string> = {};
+    const colourOf = (id: string) =>
+      activeSession?.players.find(p => p.id === id)?.color ?? '#888';
+    for (const [cornerId, b] of boardSnapshot.buildings) {
+      buildings[cornerId] = colourOf(b.playerId);
+      if (b.weight >= 2) cities.push(cornerId);
+    }
+    for (const [edgeId, owner] of boardSnapshot.roads) roads[edgeId] = colourOf(owner);
+    return { buildings, cities, roads };
+  }, [boardSnapshot, activeSession]);
+
   /** Plain-language name for a tile, for the robber prompt. */
   const describeHex = useCallback((i: number) => {
     const hex = board?.hexes[i];
@@ -316,8 +343,7 @@ export default function ActiveCatanScreen() {
     if (
       value === 7 &&
       activeSession.settings.catanRobberTracking &&
-      !robberDontAskAgain &&
-      robberPromptState !== 'dismissed_this_session'
+      true
     ) {
       setRobberHexNumber(null);
       setRobberHexIndex(null);
@@ -472,8 +498,7 @@ export default function ActiveCatanScreen() {
       await persistExposureEvents(activeSession.id, [...exposureEvents, ...events]);
     }
     setRobberHexIndex(null);
-    if (robberDontAskAgain) setRobberPromptState('dismissed_this_session');
-    else setRobberPromptState('idle');
+    setRobberPromptState('idle');
   };
 
   const handleRobberConfirm = async () => {
@@ -511,13 +536,11 @@ export default function ActiveCatanScreen() {
         await persistExposureEvents(activeSession.id, [...exposureEvents, ...blockEvents]);
       }
     }
-    if (robberDontAskAgain) setRobberPromptState('dismissed_this_session');
-    else setRobberPromptState('idle');
+    setRobberPromptState('idle');
   };
 
   const handleRobberSkip = () => {
-    if (robberDontAskAgain) setRobberPromptState('dismissed_this_session');
-    else setRobberPromptState('idle');
+    setRobberPromptState('idle');
   };
 
   // ── No session guard ─────────────────────────────────────────────────────────
@@ -1007,10 +1030,35 @@ export default function ActiveCatanScreen() {
             */}
             {board ? (
               <View style={{ width: '100%' }}>
+                {/*
+                  THE LIVE BOARD, not a blank one. Deciding where the robber
+                  goes is a decision about whose production you are cutting, so
+                  a board with no pieces on it is the wrong picture entirely —
+                  and the robber's CURRENT tile matters most of all, because
+                  the move is "from there to here" and you cannot leave it
+                  where it is.
+
+                  The current tile is marked amber; the tile you are moving to
+                  goes red. Two different colours because they are two
+                  different things, and a single highlight made them
+                  indistinguishable.
+                */}
                 <CatanHexGrid
                   hexes={board.hexes}
-                  selectedIndices={robberHexIndex !== null ? [robberHexIndex] : []}
-                  selectionColor={colors.destructive}
+                  ports={board.ports}
+                  selectedIndices={[
+                    ...(currentRobberHexIndex !== null && currentRobberHexIndex !== robberHexIndex
+                      ? [currentRobberHexIndex] : []),
+                    ...(robberHexIndex !== null ? [robberHexIndex] : []),
+                  ]}
+                  selectionColor={robberHexIndex !== null ? colors.destructive : '#F0C24B'}
+                  showIntersections
+                  legalIntersections={[]}
+                  intersectionMarks={robberBoardMarks.buildings}
+                  cityIntersections={robberBoardMarks.cities}
+                  showRoads
+                  legalRoads={[]}
+                  roadMarks={robberBoardMarks.roads}
                   onHexPress={(i: number) => {
                     haptic();
                     setRobberHexIndex(prev => (prev === i ? null : i));
@@ -1053,18 +1101,22 @@ export default function ActiveCatanScreen() {
               </View>
             )}
 
-            {/* Don't ask again */}
-            <TouchableOpacity
-              style={styles.dontAskRow}
-              onPress={() => setRobberDontAskAgain(v => !v)}
-            >
-              <View style={[styles.checkbox, { borderColor: colors.border, backgroundColor: robberDontAskAgain ? colors.primary : 'transparent' }]}>
-                {robberDontAskAgain && <Ionicons name="checkmark" size={12} color="#FFFFFF" />}
-              </View>
-              <Text style={[styles.dontAskText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-                Don't ask again this game
-              </Text>
-            </TouchableOpacity>
+            {/*
+              "Don't ask again this game" is GONE.
+
+              It made sense when the robber was optional bookkeeping: the
+              prompt asked for a number, most people did not care, and
+              silencing it cost only a note. It stopped making sense the moment
+              the robber became a real position on the board. Switching it off
+              now means blocks never lift for the rest of the game — the exact
+              bug that was just fixed, reintroduced by a checkbox — and the
+              player who silences it is the one who most believes they are
+              being robbed.
+
+              "Not now" still exists for a single 7 nobody wants to log. That
+              is a per-roll decision and it leaves the next one askable, which
+              is the difference that matters.
+            */}
 
             {/* Actions */}
             <View style={styles.robberActions}>

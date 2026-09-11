@@ -575,6 +575,7 @@ export default function CatanDevelopmentScreen() {
           showRoads
           legalRoads={offerable}
           roadMarks={marks}
+          offerColor={activeSession.players.find(p => p.id === selectedPlayerId)?.color}
           showIntersections
           legalIntersections={[]}
           intersectionMarks={buildingMarks}
@@ -610,8 +611,42 @@ export default function CatanDevelopmentScreen() {
         <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
           {selectedCorner
             ? `CORNER SELECTED · PRODUCES ${cornerNumbers.length ? cornerNumbers.join(', ') : 'NOTHING'}`
-            : `TAP A CORNER · ${offeredCorners.length} LEGAL`}
+            : offeredCorners.length === 0
+              ? 'NOWHERE LEGAL YET'
+              : `TAP A CORNER · ${offeredCorners.length} LEGAL`}
         </Text>
+
+        {/*
+          "0 LEGAL" on its own reads exactly like a broken app, and it was
+          reported as one. It is usually correct and it is usually correct for
+          the SAME reason: right after the opening, every corner your roads
+          reach is adjacent to one of your own settlements, so the distance
+          rule blocks all of them. Measured on a normal four-player opening —
+          30 corners free by occupancy and distance, 0 reachable by road.
+
+          Real Catan: you build a road first. So say that, and offer the road.
+        */}
+        {offeredCorners.length === 0 && (
+          <View style={[styles.actionForm, {
+            backgroundColor: colors.muted, borderColor: colors.border, gap: 8,
+          }]}>
+            <Text style={[styles.buildingBtnSub, { color: colors.mutedForeground }]}>
+              {roadsOf(exposureEvents, selectedPlayerId).size === 0
+                ? 'A settlement has to sit on one of your own roads, and none are recorded for this player yet.'
+                : 'Every corner your roads reach is next to one of your own settlements, so the distance rule blocks it. Build a road further out first — this is the normal state right after the opening.'}
+            </Text>
+            <TouchableOpacity
+              style={[styles.secondaryBtn, { borderColor: colors.border }]}
+              onPress={() => { haptic(); setSelectedAction('build_road'); }}
+              accessibilityRole="button"
+            >
+              <Ionicons name="git-branch-outline" size={15} color={colors.foreground} />
+              <Text style={[styles.secondaryBtnText, { color: colors.foreground }]}>
+                Build a road instead
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
         {/* Roads are drawn but NOT tappable here — showRoads with no
             onRoadPress means the overlay skips them entirely, so they cannot
             steal a corner tap. You need to see your network to judge a
@@ -622,6 +657,7 @@ export default function CatanDevelopmentScreen() {
           showIntersections
           legalIntersections={offeredCorners}
           intersectionMarks={marks}
+          offerColor={mine}
           cityIntersections={cityCorners}
           showRoads
           legalRoads={[]}
@@ -638,6 +674,66 @@ export default function CatanDevelopmentScreen() {
         ) : (
           <Text style={[styles.buildingBtnSub, { color: colors.mutedForeground, textAlign: 'center' }]}>
             Or skip this and enter the numbers by hand below.
+          </Text>
+        )}
+      </View>
+    );
+  };
+
+  /**
+   * Pick one of YOUR OWN buildings off the board.
+   *
+   * Used for upgrading to a city and for removing a building. The list picker
+   * below still exists for a game with no board, but "Settlement 2" means
+   * counting your own pieces to work out which one that is — when the board is
+   * right there and the answer is a tap.
+   *
+   * Only this player's buildings are offered. Everyone else's stay drawn, in
+   * their own colour, because the board should show what is there.
+   */
+  const renderOwnBuildingBoard = () => {
+    if (!board || !selectedPlayerId || !activeSession) return null;
+    const mineCorners = [...snapshot.buildings.entries()]
+      .filter(([, b]) => b.playerId === selectedPlayerId)
+      // Upgrading is settlements only: a city cannot be upgraded again.
+      .filter(([, b]) => (selectedAction === 'upgrade_city' ? b.weight < 2 : true))
+      .map(([id]) => id);
+
+    const marks = { ...buildingMarks };
+    if (selectedLocationId) {
+      marks[selectedLocationId] =
+        activeSession.players.find(p => p.id === selectedPlayerId)?.color ?? colors.primary;
+    }
+
+    return (
+      <View style={{ gap: 8 }}>
+        <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+          {mineCorners.length === 0
+            ? (selectedAction === 'upgrade_city'
+                ? 'NO SETTLEMENTS LEFT TO UPGRADE'
+                : 'NOTHING ON THE BOARD TO REMOVE')
+            : selectedAction === 'upgrade_city'
+              ? `TAP ONE OF YOUR SETTLEMENTS · ${mineCorners.length}`
+              : `TAP THE BUILDING TO REMOVE · ${mineCorners.length}`}
+        </Text>
+        <CatanHexGrid
+          hexes={board.hexes}
+          ports={board.ports}
+          showIntersections
+          legalIntersections={mineCorners}
+          intersectionMarks={marks}
+          cityIntersections={cityCorners}
+          showRoads
+          legalRoads={[]}
+          roadMarks={roadMarksAll}
+          onIntersectionPress={id => {
+            haptic();
+            setSelectedLocationId(prev => (prev === id ? null : id));
+          }}
+        />
+        {selectedLocationId && (
+          <Text style={[styles.buildingBtnSub, { color: colors.mutedForeground, textAlign: 'center' }]}>
+            Tap it again to clear the selection.
           </Text>
         )}
       </View>
@@ -670,6 +766,12 @@ export default function CatanDevelopmentScreen() {
         {selectedPlayerId && showRobberEndPicker && renderRobberBlockPicker()}
         {selectedPlayerId && selectedAction === 'build_road' && renderRoadPicker()}
         {selectedPlayerId && selectedAction === 'add_settlement' && renderCornerPicker()}
+        {/* Upgrading and removing are BOARD actions too. Picking "Settlement 2"
+            off a list means counting your own pieces to work out which one that
+            is, when the board is right there and the answer is a tap. The list
+            above still lists them, for a game with no board. */}
+        {selectedPlayerId && ['upgrade_city', 'remove_building'].includes(selectedAction)
+          && renderOwnBuildingBoard()}
         {selectedPlayerId && showNumberPicker && renderNumberPicker(
           selectedAction === 'start_robber' ? 'NUMBER(S) BEING BLOCKED' :
           selectedAction === 'correct_exposure' ? 'CORRECTED NUMBER(S)' :
@@ -784,6 +886,11 @@ const styles = StyleSheet.create({
 
   emptyText: { fontSize: 13, fontStyle: 'italic', paddingVertical: 4 },
 
+  secondaryBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    borderWidth: 1, borderRadius: 10, paddingVertical: 10,
+  },
+  secondaryBtnText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
   submitBtn: { paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 4 },
   submitBtnText: { fontSize: 16 },
 });

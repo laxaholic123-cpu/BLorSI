@@ -12,7 +12,7 @@
 
 import React from 'react';
 import { Pressable, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
-import Svg, { Circle, G, Line, Polygon, Rect, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, G, Line, Polygon, Text as SvgText } from 'react-native-svg';
 import type { CatanHexDef, CatanPortDef, ResourceType } from '@/types/models';
 import { intersectionIdAt } from '@/services/catanBoard';
 
@@ -145,6 +145,49 @@ const EDGE_SEGMENTS: ReadonlyMap<string, { x1: number; y1: number; x2: number; y
   return map;
 })();
 
+
+/**
+ * A settlement, as a house.
+ *
+ * Flat base, straight walls, pitched roof — the silhouette of the wooden
+ * piece. Sized so it reads at phone scale: roughly 20 units wide against the
+ * 40-unit gap between neighbouring corners, so two adjacent houses never
+ * touch even though the pieces they stand for would.
+ */
+function housePoints(x: number, y: number): string {
+  const w = 7.5;   // half-width
+  const h = 6;     // wall height below centre
+  const roof = 6;  // roof rise above the walls
+  return [
+    [x - w, y + h],
+    [x - w, y - h * 0.15],
+    [x, y - h * 0.15 - roof],
+    [x + w, y - h * 0.15],
+    [x + w, y + h],
+  ].map(([px, py]) => `${px.toFixed(2)},${py.toFixed(2)}`).join(' ');
+}
+
+/**
+ * A city: the same house with a tower, and wider.
+ *
+ * Deliberately a DIFFERENT SHAPE rather than a bigger house. Size alone does
+ * not read at this scale — that was the problem with the old dot-versus-bigger
+ * dot — but a stepped roofline does, at a glance, from across a table.
+ */
+function cityPoints(x: number, y: number): string {
+  const w = 10.5;
+  const h = 6.5;
+  return [
+    [x - w, y + h],
+    [x - w, y - h * 0.2],
+    [x - w * 0.45, y - h * 0.2 - 6.5],   // tower peak
+    [x + w * 0.1, y - h * 0.2],
+    [x + w * 0.1, y - h * 0.9],          // step up to the taller block
+    [x + w, y - h * 0.9],
+    [x + w, y + h],
+  ].map(([px, py]) => `${px.toFixed(2)},${py.toFixed(2)}`).join(' ');
+}
+
 /** Pointy-top hexagon SVG points string for the given centre and radius. */
 function hexPoints(cx: number, cy: number, r: number): string {
   const ANGLES = [-90, -30, 30, 90, 150, 210];
@@ -228,6 +271,15 @@ export interface CatanHexGridProps {
   roadMarks?: Record<string, string>;
   /** When given, ONLY these roads are drawn and tappable. */
   legalRoads?: readonly string[];
+  /**
+   * Colour for things being OFFERED — legal roads and legal corners.
+   *
+   * Pass the player who is building. An offered road in a neutral colour makes
+   * you work out whose turn it is from somewhere else on the screen; in your
+   * own colour it reads as "this would be yours", which is the question being
+   * asked. Falls back to amber when no player owns the choice.
+   */
+  offerColor?: string;
   style?: StyleProp<ViewStyle>;
 }
 
@@ -248,6 +300,7 @@ export function CatanHexGrid({
   onRoadPress,
   roadMarks,
   legalRoads,
+  offerColor,
   style,
 }: CatanHexGridProps) {
   const pad = ports && ports.length > 0 ? PORT_PAD : 0;
@@ -431,7 +484,7 @@ export function CatanHexGrid({
                    full opacity and nearly as thick as a built road, so the
                    difference between "you may build here" and "someone built
                    here" is colour rather than a guess at contrast. */
-                stroke={mark ?? '#F0C24B'}
+                stroke={mark ?? offerColor ?? '#F0C24B'}
                 strokeWidth={mark ? 7 : 6}
                 strokeLinecap="round"
                 opacity={mark ? 1 : 0.95}
@@ -452,33 +505,51 @@ export function CatanHexGrid({
           const isCity = Boolean(mark) && cityIntersections?.includes(id);
           return (
             <G key={`ix-${id}`}>
-              {/* The mark people see. Decorative: pointerEvents="none" so it
-                  cannot steal the tap from the hit target below it.
-                  A city is a SQUARE, not a bigger dot — at nine units across,
-                  size alone does not read. */}
-              {isCity ? (
-                <Rect
-                  x={pt.x - 9}
-                  y={pt.y - 9}
-                  width={18}
-                  height={18}
-                  rx={3}
-                  fill={mark}
-                  stroke="#FFFFFF"
-                  strokeWidth={2}
+              {/* The piece people see. Decorative throughout —
+                  pointerEvents="none" so nothing here can steal the tap from
+                  the Pressable overlay.
+
+                  SHAPED like the pieces on the table: a settlement is a house
+                  and a city is a bigger building with a tower. A dot and a
+                  square were distinguishable but meaningless — you had to
+                  learn which was which, and the whole point of the board view
+                  is checking it against the wooden pieces in front of you. A
+                  silhouette needs no legend.
+
+                  An empty OFFERED corner stays a small dot. It is a place you
+                  could build, not a thing that is there, and drawing a ghost
+                  house would say the opposite. */}
+              {mark ? (
+                isCity ? (
+                  <Polygon
+                    points={cityPoints(pt.x, pt.y)}
+                    fill={mark}
+                    stroke="#FFFFFF"
+                    strokeWidth={1.6}
+                    strokeLinejoin="round"
+                    pointerEvents="none"
+                  />
+                ) : (
+                  <Polygon
+                    points={housePoints(pt.x, pt.y)}
+                    fill={mark}
+                    stroke="#FFFFFF"
+                    strokeWidth={1.6}
+                    strokeLinejoin="round"
+                    pointerEvents="none"
+                  />
+                )
+              ) : (
+                <Circle
+                  cx={pt.x}
+                  cy={pt.y}
+                  r={7}
+                  fill={offerColor ?? '#0B1220'}
+                  opacity={offerColor ? 0.85 : 0.45}
+                  stroke={offerColor ?? '#7B8FA8'}
+                  strokeWidth={1}
                   pointerEvents="none"
                 />
-              ) : (
-              <Circle
-                cx={pt.x}
-                cy={pt.y}
-                r={mark ? 9 : 7}
-                fill={mark ?? '#0B1220'}
-                opacity={mark ? 1 : 0.45}
-                stroke={mark ? '#FFFFFF' : '#7B8FA8'}
-                strokeWidth={mark ? 2 : 1}
-                pointerEvents="none"
-              />
               )}
               {/* No hit target here any more. It used to be a transparent
                   <Circle> drawn last, and on a device it never fired — see the

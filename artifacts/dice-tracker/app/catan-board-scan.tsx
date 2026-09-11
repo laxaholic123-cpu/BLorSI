@@ -50,6 +50,7 @@ import {
   legalRoads,
   legalSettlements,
   openingOrder,
+  slotsFromOpeningEvents,
   placeRoad,
   placeSettlement,
   placementProgress,
@@ -65,7 +66,12 @@ import {
   saveBoardLayout,
 } from '@/services/boardLayouts';
 import { getBoardScanApiUrl } from '@/services/boardScanApi';
-import { clearGroundTruth, saveActiveBoard, saveGroundTruth } from '@/services/storage';
+import {
+  clearGroundTruth,
+  loadActiveBoard,
+  saveActiveBoard,
+  saveGroundTruth,
+} from '@/services/storage';
 import { ROTATION_STEPS, rotatePortLayout } from '@/services/catanPorts';
 import { getLinkedBuildingEventCount, mergeEditedSettlements } from '@/services/editSettlements';
 import { normalizePieces, type DetectedPiece } from '@/utils/normalizePieces';
@@ -546,6 +552,30 @@ export default function CatanBoardScanScreen() {
     beginPlacement();
     setPhase('placement');
   };
+
+  /**
+   * EDIT MODE opens the placement you already made, on the board you already
+   * have — it used to land on the scan ENTRY phase and ask for a fresh photo
+   * of a board the app was holding, to fix a placement it already knew.
+   *
+   * Runs on focus, not mount: this screen can still be mounted underneath from
+   * an earlier visit, and a mount-only read would show a stale board. That trap
+   * has cost this repo three separate bugs — see CLAUDE.md.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      if (!isEditMode || !activeSession) return;
+      let cancelled = false;
+      void loadActiveBoard(activeSession.id).then(loaded => {
+        if (cancelled || !loaded) return;
+        setHexes(loaded.hexes);
+        setSlots(slotsFromOpeningEvents(
+          activeSession.players.map(p => p.id), exposureEvents));
+        setPhase('placement');
+      });
+      return () => { cancelled = true; };
+    }, [isEditMode, activeSession, exposureEvents]),
+  );
 
   // ── Opening placement ──────────────────────────────────────────────────────
 
@@ -1031,6 +1061,7 @@ export default function CatanBoardScanScreen() {
           showRoads={awaitingRoad}
           legalRoads={offeredRoads}
           roadMarks={roadMarks}
+          offerColor={tint}
           onRoadPress={onRoadTap}
           style={{ marginVertical: 8 }}
         />

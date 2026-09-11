@@ -15,6 +15,7 @@ import {
   legalSettlements,
   neighboursOf,
   openingOrder,
+  slotsFromOpeningEvents,
   placeRoad,
   placeSettlement,
   placementProgress,
@@ -337,5 +338,69 @@ describe('toExposureEvents', () => {
     const event = toExposureEvents(slots, 'sess', hexes)[0]!;
     expect(event.affectedNumbers.length).toBeGreaterThan(0);
     expect(event.affectedNumbers).not.toContain(null);
+  });
+});
+
+/**
+ * Rebuilding the opening from recorded events, so it can be corrected.
+ *
+ * "Edit Settlements" used to push to the scan screen's entry phase and ask for
+ * a fresh photo of a board the app was already holding.
+ */
+describe('slotsFromOpeningEvents', () => {
+  const ids = ['p1', 'p2'];
+  const ev = (playerId: string, eventType: string, id: string, turnNumber = 0) =>
+    ({ playerId, eventType, turnNumber, hexIdentifiers: [id] });
+
+  it('puts each placement back in its own slot, in order', () => {
+    const corners = getAllIntersections().map(i => i.id);
+    const slots = slotsFromOpeningEvents(ids, [
+      ev('p1', 'initialSettlement', corners[0]!),
+      ev('p2', 'initialSettlement', corners[10]!),
+      ev('p2', 'initialSettlement', corners[20]!),
+      ev('p1', 'initialSettlement', corners[30]!),
+    ]);
+    const p1 = slots.filter(s => s.playerId === 'p1');
+    const p2 = slots.filter(s => s.playerId === 'p2');
+    expect(p1.map(s => s.settlement)).toEqual([corners[0], corners[30]]);
+    expect(p2.map(s => s.settlement)).toEqual([corners[10], corners[20]]);
+  });
+
+  it('carries the roads too', () => {
+    const edges = allEdges().map(e => e.id);
+    const slots = slotsFromOpeningEvents(ids, [
+      ev('p1', 'roadBuilt', edges[0]!),
+      ev('p1', 'roadBuilt', edges[5]!),
+    ]);
+    expect(slots.filter(s => s.playerId === 'p1').map(s => s.road))
+      .toEqual([edges[0], edges[5]]);
+  });
+
+  it('IGNORES anything built during play', () => {
+    // A mid-game settlement is not part of the opening, and letting it into the
+    // draft would have the snake try to re-order a piece it never dealt.
+    const corners = getAllIntersections().map(i => i.id);
+    const slots = slotsFromOpeningEvents(ids, [
+      ev('p1', 'initialSettlement', corners[0]!),
+      ev('p1', 'settlementBuilt', corners[40]!, 7),
+      ev('p1', 'roadBuilt', allEdges()[3]!.id, 9),
+    ]);
+    const p1 = slots.filter(s => s.playerId === 'p1');
+    expect(p1[0]!.settlement).toBe(corners[0]);
+    expect(p1[1]!.settlement).toBeNull();
+    expect(p1.every(s => s.road === null)).toBe(true);
+  });
+
+  it('returns an empty draft when nothing was recorded', () => {
+    const slots = slotsFromOpeningEvents(ids, []);
+    expect(slots).toHaveLength(4);
+    expect(slots.every(s => s.settlement === null && s.road === null)).toBe(true);
+  });
+
+  it('keeps the snake order openingOrder produces', () => {
+    const plain = openingOrder(ids);
+    const rebuilt = slotsFromOpeningEvents(ids, []);
+    expect(rebuilt.map(s => [s.index, s.playerId, s.round]))
+      .toEqual(plain.map(s => [s.index, s.playerId, s.round]));
   });
 });

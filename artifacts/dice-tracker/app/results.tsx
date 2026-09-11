@@ -38,6 +38,7 @@ import type { CatanGameStats } from '@/types/catanStats';
 import { selectBestShareCard, CARD_METADATA } from '@/services/shareCard';
 import { RollFrequencyChart } from '@/components/RollFrequencyChart';
 import { CatanBoardPanel } from '@/components/CatanBoardPanel';
+import { AccoladeReveal } from '@/components/AccoladeReveal';
 import {
   biggestResourceGap,
   describeExposure,
@@ -70,6 +71,13 @@ export default function ResultsScreen() {
   const [showDiceDetail, setShowDiceDetail] = useState(false);
   /** Which player's number-by-number breakdown is open. */
   const [openExposure, setOpenExposure] = useState<string | null>(null);
+  /**
+   * Whether the accolade ceremony is still running.
+   *
+   * Starts true and is turned off by finishing or skipping. Not persisted:
+   * results is terminal, so there is no second visit to remember.
+   */
+  const [showReveal, setShowReveal] = useState(true);
   /** Per-player "did your numbers come up" — the lead of this screen. */
   const exposure = useMemo(
     () => (activeSession
@@ -275,6 +283,32 @@ export default function ResultsScreen() {
           </TouchableOpacity>
         </View>
       </View>
+    );
+  }
+
+  /*
+    THE ACCOLADES, ONE PLAYER AT A TIME, BEFORE THE NUMBERS.
+
+    They were already on this screen, in a list, under a chart and two tables.
+    That is the right place to keep them and the wrong place to first see them:
+    when a game ends the table is still looking at each other, and the
+    interesting output is a different sentence about each person. A list gets
+    skimmed by whoever holds the phone; a sequence gets read out.
+
+    It adds no claim the report below does not already make — only order and
+    pace — and it never blocks: Skip is always one tap, because on the second
+    game of the night the person holding the phone just wants the numbers.
+  */
+  if (showReveal && accolades.length > 0) {
+    return (
+      <AccoladeReveal
+        accolades={accolades}
+        players={activeSession.players}
+        exposure={exposure}
+        winnerPlayerId={activeSession.winnerPlayerId}
+        reducedMotion={settings.reducedMotion}
+        onDone={() => setShowReveal(false)}
+      />
     );
   }
 

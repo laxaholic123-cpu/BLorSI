@@ -118,6 +118,55 @@ export type PlacementProblem =
   | 'unknown_edge';
 
 /**
+ * Rebuild the opening draft from what was recorded, so it can be corrected.
+ *
+ * "Edit Settlements" used to push to the scan screen's ENTRY phase, which asks
+ * you to photograph the board again — for a board the app already has, to fix
+ * a placement it already knows. This turns stored events back into slots so
+ * the ordinary placement screen can open on the existing opening.
+ *
+ * ONLY turn-0 events count. A settlement built during play is not part of the
+ * opening and must not appear in a draft the snake would then try to re-order;
+ * those are corrected from the development screen instead.
+ *
+ * Order within a player is event order, which is placement order, so round 1
+ * and round 2 land in the right slots.
+ */
+export function slotsFromOpeningEvents(
+  playerIds: readonly string[],
+  events: readonly {
+    playerId: string; eventType: string; turnNumber: number; hexIdentifiers?: string[];
+  }[],
+): PlacementSlot[] {
+  const settlementsBy = new Map<string, string[]>();
+  const roadsBy = new Map<string, string[]>();
+
+  for (const e of events) {
+    if (e.turnNumber !== 0) continue;
+    const id = e.hexIdentifiers?.[0];
+    if (!id) continue;
+    if (e.eventType === 'initialSettlement') {
+      settlementsBy.set(e.playerId, [...(settlementsBy.get(e.playerId) ?? []), id]);
+    } else if (e.eventType === 'roadBuilt') {
+      roadsBy.set(e.playerId, [...(roadsBy.get(e.playerId) ?? []), id]);
+    }
+  }
+
+  // Slots come back in snake order; walk each player's own slots in that order
+  // and hand them their placements in the order they were recorded.
+  const seen = new Map<string, number>();
+  return openingOrder(playerIds).map(slot => {
+    const n = seen.get(slot.playerId) ?? 0;
+    seen.set(slot.playerId, n + 1);
+    return {
+      ...slot,
+      settlement: settlementsBy.get(slot.playerId)?.[n] ?? null,
+      road: roadsBy.get(slot.playerId)?.[n] ?? null,
+    };
+  });
+}
+
+/**
  * The order the opening SHOULD run in: out along the seats, then back.
  *
  * Returned as a plain list of slots so a caller can jump anywhere in it. The
