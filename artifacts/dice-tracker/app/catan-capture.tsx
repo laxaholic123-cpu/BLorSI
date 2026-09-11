@@ -55,6 +55,7 @@ import { useColors } from '@/hooks/useColors';
 import { loadPixelBuffer } from '@/services/vision/pixelSource';
 import { downscale, screenToImage } from '@/services/vision/pixelBuffer';
 import { boardTransform, clippedTokenHexes, readFrame } from '@/services/vision/readFrame';
+import { readHarbours } from '@/services/vision/harbours';
 import {
   CONFIDENCE_THRESHOLD,
   emptyEvidence,
@@ -75,7 +76,7 @@ import { recognizeBoardText, recognizeTokenFaces } from '@/services/vision/ocrSo
 import { mapOcrToHexes } from '@/services/vision/ocrTokens';
 import type { HexEvidence } from '@/services/boardConstraints';
 import type { Point } from '@/services/vision/homography';
-import type { CatanHexDef } from '@/types/models';
+import type { CatanHexDef, HexEdge } from '@/types/models';
 
 /**
  * Working width for the read.
@@ -189,6 +190,25 @@ export default function CatanCaptureScreen() {
    * the honest fix (step back half a pace) looks like the reader being bad.
    */
   const [framingNote, setFramingNote] = useState<string | null>(null);
+  /**
+   * Harbour positions read from the same photo as the tiles.
+   *
+   * Kept separate from `board` because it is a separate reading with its own
+   * constraint — the coastal ring — and its own failure mode. Null means the
+   * read did not run or found nothing, and the review screen falls back to
+   * letting the player turn the ring by hand.
+   */
+  const [harbourSlots, setHarbourSlots] = useState<
+    { hexIndex: number; edge: HexEdge }[] | null
+  >(null);
+  /**
+   * The harbours the ring constraint placed but could not confirm — WHICH ones,
+   * not how many. The review screen rings these on the map, and a count alone
+   * could not tell it where to draw.
+   */
+  const [harbourUnsure, setHarbourUnsure] = useState<
+    { hexIndex: number; edge: HexEdge }[]
+  >([]);
 
   /**
    * Reload on FOCUS, not on mount.
@@ -399,6 +419,22 @@ export default function CatanCaptureScreen() {
             'catch them.',
       );
 
+      /*
+        Harbours, from the same pixels. Deliberately after the tile read has
+        been accepted: if the corners were wrong enough to fail the tiles, the
+        projection is wrong for the badges too, and a harbour ring read off a
+        bad homography would be confidently wrong rather than absent.
+      */
+      try {
+        const hb = readHarbours(buffer, imagePoints);
+        setHarbourSlots(hb ? hb.slots.map(s => ({ hexIndex: s.hexIndex, edge: s.edge })) : null);
+        setHarbourUnsure(hb ? hb.unsure.map(s => ({ hexIndex: s.hexIndex, edge: s.edge })) : []);
+      } catch {
+        // Never let harbours cost a tile read. They are the smaller prize.
+        setHarbourSlots(null);
+        setHarbourUnsure([]);
+      }
+
       // A second aimed shot is deliberate evidence, so merging is safe here in a
       // way it was not for a drifting loop.
       const merged = mergeEvidence(evidence, reading.evidence);
@@ -597,13 +633,23 @@ ${JSON.stringify(payload)}`,
   const useBoard = () => {
     router.push({
       pathname: '/catan-board-scan',
-      params: { scanned: JSON.stringify(board) },
+      params: {
+        scanned: JSON.stringify(board),
+        ...(harbourSlots
+          ? {
+              harbours: JSON.stringify(harbourSlots),
+              harboursUnsure: JSON.stringify(harbourUnsure),
+            }
+          : {}),
+      },
     } as never);
   };
 
   const startOver = () => {
     setEvidence(emptyEvidence());
     setBoard([]);
+    setHarbourSlots(null);
+    setHarbourUnsure([]);
     setShots(0);
     setPhase('aiming');
   };

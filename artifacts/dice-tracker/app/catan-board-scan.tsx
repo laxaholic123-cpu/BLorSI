@@ -72,11 +72,25 @@ import {
   saveActiveBoard,
   saveGroundTruth,
 } from '@/services/storage';
-import { ROTATION_STEPS, rotatePortLayout } from '@/services/catanPorts';
+import {
+  PORT_TYPE_ORDER,
+  ROTATION_STEPS,
+  portsFromDetectedSlots,
+  rotatePortLayout,
+  setPortType,
+  shiftPortTypes,
+} from '@/services/catanPorts';
 import { getLinkedBuildingEventCount, mergeEditedSettlements } from '@/services/editSettlements';
 import { normalizePieces, type DetectedPiece } from '@/utils/normalizePieces';
 import { describeChange, reconcileBoard, type BoardChange } from '@/services/boardConstraints';
-import type { CatanBoardLayout, CatanHexDef, ResourceType } from '@/types/models';
+import type {
+  CatanBoardLayout,
+  CatanHexDef,
+  CatanPortDef,
+  HexEdge,
+  ResourceType,
+} from '@/types/models';
+import { PORT_COUNT } from '@/services/catanBoard';
 import type { CatanPlayerExposureEvent } from '@/types/models';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -159,9 +173,11 @@ export default function CatanBoardScanScreen() {
 
   // ── Edit-mode: editPlayerId is set when launched from an active game ────────
   // ── scanned: a board already read on-device by the capture screen ──────────
-  const { editPlayerId, scanned } = useLocalSearchParams<{
+  const { editPlayerId, scanned, harbours, harboursUnsure } = useLocalSearchParams<{
     editPlayerId?: string;
     scanned?: string;
+    harbours?: string;
+    harboursUnsure?: string;
   }>();
   const isEditMode = Boolean(editPlayerId);
 
@@ -181,6 +197,42 @@ export default function CatanBoardScanScreen() {
       return null;
     }
   }, [scanned]);
+
+  /**
+   * Harbour positions the capture screen read off the same photo.
+   *
+   * Null when the read did not happen — an imported board, a hand-entered one,
+   * or a photo the detector could not use — and the hand-turned ring below is
+   * the fallback for exactly those cases.
+   */
+  const detectedSlots = React.useMemo<{ hexIndex: number; edge: HexEdge }[] | null>(() => {
+    if (!harbours) return null;
+    try {
+      const parsed = JSON.parse(harbours) as { hexIndex: number; edge: HexEdge }[];
+      return Array.isArray(parsed) && parsed.length === PORT_COUNT ? parsed : null;
+    } catch {
+      return null;
+    }
+  }, [harbours]);
+
+  /**
+   * Harbours the detector placed but could not confirm.
+   *
+   * These are real: the coast admits two placements whenever a missed badge
+   * sits in a 7-edge span, which is six of the nine positions. Flagging them is
+   * the difference between a reader that is right and one that only looks it.
+   */
+  const unsureKeys = React.useMemo<Set<string>>(() => {
+    if (!harboursUnsure) return new Set();
+    try {
+      const parsed = JSON.parse(harboursUnsure) as { hexIndex: number; edge: HexEdge }[];
+      return new Set(parsed.map(s => `${s.hexIndex}:${s.edge}`));
+    } catch {
+      return new Set();
+    }
+  }, [harboursUnsure]);
+  const unsureCount = unsureKeys.size;
+
 
   // ── Phase ──────────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<ScanPhase>(handedOver ? 'review' : 'entry');
@@ -202,10 +254,43 @@ export default function CatanBoardScanScreen() {
    * harbour is correct relative to the others.
    */
   const [portRotation, setPortRotation] = useState(0);
-  const ports = useMemo(
-    () => rotatePortLayout(makeDefaultPorts(), portRotation),
-    [portRotation],
-  );
+  /**
+   * The harbour ring once the player has touched it, or null while it is still
+   * exactly what detection proposed.
+   *
+   * Holding the WHOLE ring rather than a map of per-harbour edits is what keeps
+   * the shift control alive. Correcting one harbour swaps a second (the bag has
+   * to stay legal), so an edits-map keyed by position ends up pinning every
+   * harbour after a single tap, and shift silently stops doing anything —
+   * a dead control with no error and nothing to see in review.
+   */
+  const [portOverride, setPortOverride] = useState<CatanPortDef[] | null>(null);
+
+  const ports = useMemo(() => {
+    if (portOverride) return portOverride;
+    /*
+      Two different situations, and conflating them is what made this screen
+      wrong for so long.
+
+      Detected: the photo told us WHERE the nine harbours are, and the ring
+      constraint makes that reliable even on a shuffled frame. Types are still
+      a proposal, because nothing has looked at the icons yet.
+
+      Not detected: nothing was read, and the old behaviour is the only honest
+      option — the standard ring, turned by hand until it matches the table.
+    */
+    return detectedSlots
+      ? portsFromDetectedSlots(detectedSlots)
+      : rotatePortLayout(makeDefaultPorts(), portRotation);
+  }, [detectedSlots, portOverride, portRotation]);
+
+  /** Shift labels round detected harbours, or turn the whole assumed ring. */
+  const turnRing = (dir: 1 | -1) => {
+    haptic();
+    if (detectedSlots) setPortOverride(cur => shiftPortTypes(cur ?? ports, dir));
+    else setPortRotation(r => (r + ROTATION_STEPS + dir) % ROTATION_STEPS);
+  };
+
   /** Repairs the constraint solver made to the scan, shown in review. */
   const [boardCorrections, setBoardCorrections] = useState<BoardChange[]>([]);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
@@ -219,6 +304,8 @@ export default function CatanBoardScanScreen() {
 
   // ── Correction panel ───────────────────────────────────────────────────────
   const [correctionIdx, setCorrectionIdx] = useState<number | null>(null);
+  /** Index into `ports` of the harbour whose type is being set, if any. */
+  const [portIdx, setPortIdx] = useState<number | null>(null);
   const [correctionResource, setCorrectionResource] = useState<ResourceType | null>(null);
   const [correctionNumber, setCorrectionNumber] = useState<number | null>(null);
 
@@ -837,6 +924,13 @@ export default function CatanBoardScanScreen() {
           hexes={hexes}
           ports={ports}
           onHexLongPress={openCorrection}
+          onPortPress={i => {
+            haptic(Haptics.ImpactFeedbackStyle.Medium);
+            setPortIdx(i);
+          }}
+          unsurePorts={ports
+            .map((p, i) => (unsureKeys.has(`${p.hexIndex}:${p.edge}`) ? i : -1))
+            .filter(i => i >= 0)}
           lowConfidenceIndices={lowConfIndices}
           style={{ marginVertical: 8 }}
         />
@@ -847,42 +941,60 @@ export default function CatanBoardScanScreen() {
         </Text>
 
         {/* ── The harbour ring ────────────────────────────────────────────────
-            Stated as an assumption to check, not a reading. The camera never
-            looked at the harbours; this ring comes from one photographed board,
-            and the frame's rotation relative to the tiles is arbitrary. */}
+            Positions come from the photo now; types do not. The banner says
+            which is which, because the previous version claimed the harbours
+            were not read at all and made the player turn a ring by hand — and
+            a turn cannot fix a frame that has been shuffled. */}
         <View style={[s.hintBanner, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-          <Ionicons name="boat-outline" size={16} color={colors.mutedForeground} />
+          <Ionicons
+            name={detectedSlots ? 'boat' : 'boat-outline'}
+            size={16}
+            color={detectedSlots ? colors.primary : colors.mutedForeground}
+          />
           <View style={{ flex: 1, gap: 8 }}>
             <Text style={[s.hintText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-              Harbours are not read from the photo. Turn the ring until it matches
-              your board — the nine are always in the same order, so one of the six
-              positions will line up. Harbours affect trade only, never production
-              or luck.
+              {detectedSlots
+                ? unsureCount > 0
+                  ? `Found ${PORT_COUNT - unsureCount} of ${PORT_COUNT} harbours on your board. ` +
+                    `${unsureCount === 1 ? 'One was' : `${unsureCount} were`} too faint to place — ` +
+                    'check them on the map. Tap any harbour to set what it trades.'
+                  : 'All nine harbours found on your board ✓ Which resource each ' +
+                    'trades is a guess — tap one to correct it, or shift the labels ' +
+                    'round if the whole ring is off by a step.'
+                : 'Harbours were not read from this board. Turn the ring until it ' +
+                  'matches your table — the nine are always in the same order, so ' +
+                  'one of the six positions will line up.'}
             </Text>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <TouchableOpacity
                 style={[s.secondaryBtn, { borderColor: colors.border, flex: 1 }]}
-                onPress={() => {
-                  haptic();
-                  setPortRotation(r => (r + ROTATION_STEPS - 1) % ROTATION_STEPS);
-                }}
+                onPress={() => turnRing(-1)}
                 accessibilityRole="button"
-                accessibilityLabel="Turn the harbour ring anticlockwise"
+                accessibilityLabel={
+                  detectedSlots
+                    ? 'Shift harbour labels anticlockwise'
+                    : 'Turn the harbour ring anticlockwise'
+                }
               >
                 <Ionicons name="arrow-undo-outline" size={15} color={colors.foreground} />
-                <Text style={[s.secondaryBtnText, { color: colors.foreground }]}>Turn</Text>
+                <Text style={[s.secondaryBtnText, { color: colors.foreground }]}>
+                  {detectedSlots ? 'Shift' : 'Turn'}
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[s.secondaryBtn, { borderColor: colors.border, flex: 1 }]}
-                onPress={() => {
-                  haptic();
-                  setPortRotation(r => (r + 1) % ROTATION_STEPS);
-                }}
+                onPress={() => turnRing(1)}
                 accessibilityRole="button"
-                accessibilityLabel="Turn the harbour ring clockwise"
+                accessibilityLabel={
+                  detectedSlots
+                    ? 'Shift harbour labels clockwise'
+                    : 'Turn the harbour ring clockwise'
+                }
               >
                 <Ionicons name="arrow-redo-outline" size={15} color={colors.foreground} />
-                <Text style={[s.secondaryBtnText, { color: colors.foreground }]}>Turn</Text>
+                <Text style={[s.secondaryBtnText, { color: colors.foreground }]}>
+                  {detectedSlots ? 'Shift' : 'Turn'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1161,6 +1273,65 @@ export default function CatanBoardScanScreen() {
     );
   };
 
+  /**
+   * Set what a harbour trades.
+   *
+   * Goes through `setPortType`, which SWAPS rather than assigns: the box holds
+   * four generic harbours and one of each resource, so naming this one "ore"
+   * has to take ore away from whichever harbour had it. A straight assignment
+   * produces a board that cannot exist, and `validatePortLayout` would then
+   * reject the thing the player just told us.
+   */
+  const renderPortPanel = () => {
+    const port = portIdx !== null ? ports[portIdx] : null;
+    if (!port) return null;
+    return (
+      <View style={[s.correctionOverlay, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+        <View style={s.correctionHeader}>
+          <Text style={[s.correctionTitle, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+            What does this harbour trade?
+          </Text>
+          <TouchableOpacity onPress={() => setPortIdx(null)} hitSlop={8}>
+            <Ionicons name="close" size={22} color={colors.mutedForeground} />
+          </TouchableOpacity>
+        </View>
+
+        <Text style={[s.correctionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+          HARBOUR TYPE
+        </Text>
+        <View style={s.correctionResourceRow}>
+          {PORT_TYPE_ORDER.map(pt => (
+            <TouchableOpacity
+              key={pt}
+              style={[
+                s.resourceBtn,
+                {
+                  backgroundColor: port.type === pt ? colors.primary : colors.muted,
+                  borderColor: port.type === pt ? colors.primary : colors.border,
+                },
+              ]}
+              onPress={() => {
+                haptic();
+                // Swaps rather than assigns, so the bag stays legal.
+                setPortOverride(setPortType(ports, portIdx!, pt));
+                setPortIdx(null);
+              }}
+            >
+              <Text style={[s.resourceBtnText, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
+                {pt === 'generic' ? '3:1' : pt}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <Text style={[s.correctionHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+          The box holds four 3:1 harbours and one of each resource, so naming
+          this one swaps it with whichever harbour held that type.
+        </Text>
+      </View>
+    );
+  };
+
   const renderCorrectionPanel = () => {
     const h = correctionIdx !== null ? hexes[correctionIdx] : null;
     return (
@@ -1323,7 +1494,8 @@ export default function CatanBoardScanScreen() {
       : `Opening — turn ${activeSlot + 1} of ${slots.length || players.length * 2}`,
   };
 
-  const hasModalOpen = correctionIdx !== null || showSaveModal || showLoadModal;
+  const hasModalOpen =
+    correctionIdx !== null || portIdx !== null || showSaveModal || showLoadModal;
 
   return (
     <View style={[s.root, { backgroundColor: colors.background }]}>
@@ -1364,6 +1536,7 @@ export default function CatanBoardScanScreen() {
         />
       )}
       {correctionIdx !== null && renderCorrectionPanel()}
+      {portIdx !== null && renderPortPanel()}
       {showSaveModal && renderSaveModal()}
       {showLoadModal && renderLoadModal()}
     </View>

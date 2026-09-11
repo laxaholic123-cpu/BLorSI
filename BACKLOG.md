@@ -73,7 +73,9 @@ never run on hardware. Grouped because they are one testing session, not five:
 - **The live callout line**, which sits between the scroll area and the roll
   pad. It is one line of fixed height for exactly that reason; check the pad
   still has its two rows.
-- **The harbour rotation control** in board review.
+- **The harbour ring** in board review — now detected positions plus a
+  tap-to-correct type picker, so there are new Pressable targets out in the
+  sea that have never met a finger.
 - The roll-pad fix — `numGrid` had `flex: 1` inside a wrapper with none, which
   collapsed ten buttons to one row. Reported as "most of the numbers cannot be
   tapped" and never confirmed fixed.
@@ -186,7 +188,8 @@ should answer first.
     cycle allows, which is what a construction looks like. Remaining caveat —
     the 3-4 edge spacing was assumed and cross-checked against the photo five
     times, not measured, so that is where to look if a board disagrees. Frames
-    also differ between editions, and there is still no port editor in the app.
+    also differ between editions. (The "no port editor" caveat is closed: the
+    review screen now has one, reached by tapping a harbour on the map.)
 
 4. **Board scan provider decision.** Model and base URL are configuration now, but nothing works until a key and a reachable model are chosen. `EXPO_PUBLIC_DOMAIN` also needs repointing off the Replit domain.
 5. ~~**`expo-av` is deprecated.**~~ Done — migrated to `expo-audio`. The new player
@@ -512,24 +515,47 @@ should answer first.
     ring's rotation is arbitrary game to game. **No stored layout can be right
     in general.**
 
-    Shipped: `services/catanPorts.ts` with exact axial rotation, and a "turn
-    the ring" control in board review, which is the fix the measurement
-    actually calls for — one tap instead of nine edits. Harbours now render in
-    review, described as an assumption to check rather than a reading.
+    **Superseded: POSITIONS ARE NOW READ, and the rotation control is gone.**
+    Turning the ring was the right fix for the measurement above, but it
+    assumed the frame was only ever ROTATED. A frame whose harbours have been
+    reshuffled cannot be reached by any rotation, and that is a board people
+    own. Reported as "do what it takes to recognize those harbors reliably".
 
-    **Not shipped, and recorded as a negative result:** reading a harbour's
-    TYPE off colour. Three attempts, all overlapping; the boat hull and dock
-    timbers read as ink and are larger than a resource icon. Details in
-    `tools/port_probe.py`.
+    Shipped: `services/vision/harbours.ts` finds the badges,
+    `services/vision/harbourRing.ts` pins them against the coastal ring, and
+    the capture screen reads them off the same photo as the tiles. The review
+    screen shows what was found and lets the player tap any harbour to set what
+    it trades; `services/catanPorts.ts` keeps `rotatePortLayout` for the case
+    where nothing was detected, and adds `shiftPortTypes` for moving labels
+    across fixed positions.
 
-    **Still open:** nothing detects harbours at runtime — the badge locator
-    lives only in `tools/`. The offset that fits is 0.65 hex radii beyond the
-    coastal edge midpoint if anyone wires it up. Ports feed `portAccess` only,
-    so a wrong ring misreports trade access and nothing else.
+    **The constraint is the whole trick.** Cream blobs give 11-22 candidates a
+    photo and no tuning removed them. Nine harbours on a thirty-edge coast
+    spaced 3 or 4 apart forces six 3s and three 4s, so only 280 legal rings
+    exist; score all of them and a dock timber cannot join one. Measured
+    90/90 harbours over ten captures (`tools/harbour_probe.py`), 469ms on a
+    12MP photo.
 
-    **Verified:** 19 new tests in `catanPorts.test.ts`, including that every
-    harbour stays on a coastal edge at all six rotations — an off-by-one in the
-    edge mapping would put one against an inland face.
+    **Measured limit, and it shaped the design:** the constraint cannot recover
+    a harbour with ZERO evidence when its neighbours are 7 edges apart, because
+    7 splits both as 3+4 and 4+3 — and six of the nine sit in 7-spans. Hence
+    dense graded scoring over all thirty edges rather than a list of confident
+    hits, and hence `selectRing` returning `unsure` so the screen can ring the
+    undecided ones in amber instead of bluffing.
+
+    **Still a negative result:** reading a harbour's TYPE off colour, three
+    attempts, in `tools/port_probe.py`. The probe does reach 92.2% using the
+    composition constraint (against 80.0% without), but that classifier is not
+    ported to the device yet — types are proposed and corrected by hand. That
+    is the open half of this item. Ports feed `portAccess` only, so a wrong
+    type misreports trade access and nothing else.
+
+    **Verified:** `catanPorts.test.ts` (19, including that every harbour stays
+    coastal at all six rotations), `harbourRing.test.ts` (15, including the 6/9
+    ambiguity as a pinned number), `harbours.test.ts` (10, against a synthetic
+    board carrying a tablecloth and a dock timber), `portsFromDetected.test.ts`
+    (12, including that shift still works after the player corrects one — an
+    earlier design killed that control silently).
 
 17. **Settlement Setup could strand you on "Player 5 of 4".** Fixed, and this
     one was on the critical path of every game.

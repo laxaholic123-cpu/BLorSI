@@ -463,11 +463,61 @@ The three-way tie at 60/180/300 is expected: the position set has 3-fold
 symmetry, so positions alone cannot pick between them. Types break the tie, and
 a player can see the types.
 
-Hence the fix is a ROTATION control rather than a nine-row editor
-(`services/catanPorts.ts`, offered in the board-review screen): one tap turns
-the whole ring, which is what the measurement says is actually wrong. The badge
-sits 0.65 hex radii beyond its coastal edge midpoint, if anyone wires detection
-up later.
+The badge sits 0.65 hex radii beyond its coastal edge midpoint.
+
+**HARBOUR POSITIONS ARE NOW READ, AND THE RING CONSTRAINT IS WHY.**
+
+The rotation control is gone. It could never express a frame whose harbours had
+been reshuffled rather than merely turned, and that is a board people actually
+own. `services/vision/harbours.ts` reads positions off the photo;
+`services/vision/harbourRing.ts` is the structure that makes them exact.
+
+Finding cream blobs gives 11-22 candidates per photo — dock timbers, glare, the
+pale edge of the frame. No tuning of the blob detector removed them. The
+structure did: nine harbours on a thirty-edge coast spaced 3 or 4 apart means
+nine gaps summing to 30 with each in {3,4}, which forces exactly six 3s and
+three 4s. Only **280 legal rings exist**. Enumerate all of them, score each
+against the detections, keep the best. A false positive on a timber cannot join
+a ring, because no legal ring has a harbour there AND at the eight real ones.
+Measured in `tools/harbour_probe.py`: **90/90 harbours across ten captures**,
+10/10 boards exactly right. Types reached 92.2% with the composition constraint
+against 80.0% without — the same move that fixed the number tokens.
+
+Three things about this are not derivable from the code and cost real time:
+
+**The evidence must be DENSE and GRADED, not a list of confident hits.** Score
+every coastal edge on a falloff from the nearest blob. The reason is measured:
+each harbour's neighbours sit 6 or 7 edges away, a 6-span splits only as 3+3
+(forced) but a 7-span splits as 3+4 or 4+3 (two legal rings, exactly tied), and
+**six of the nine harbours on the reference board sit in 7-spans**. So a harbour
+scoring exactly zero is unrecoverable two times out of three. A glare-washed
+badge scoring 0.05 still beats the empty water beside it, and that is the whole
+margin. A sparse detector throws this away and lands back in the tie.
+
+**The predicted badge positions are NOT evenly spaced.** Twelve of the thirty
+neighbour gaps are 0.216 canonical units, the other eighteen are 1.516. The
+short ones are the convex corners of the coast, where two hexes' edges point
+almost the same way. So one real badge always lights up TWO edges — its own at
+1.0 and its corner partner at ~0.75 — and the observed selection margin on a
+clean board is ~0.23 rather than 1.0. That looks like a bug and is not. The
+pair is one ring index apart and legal rings step by 3 or 4, so no ring holds
+both; the constraint discards the partner.
+
+**The enclosure test is what separates a badge from the tablecloth.** Brightness
+alone finds the cloth, which is also pale and outweighs every badge combined.
+A badge is surrounded by SEA and the cloth is not — nothing about the blob
+itself distinguishes them, only what is around it. The island is masked out by
+projected hex discs first, or a pale desert reads as a harbour.
+
+`selectRing` returns `unsure`: the slots the top-scoring rings disagree about,
+normally empty. The review screen rings those in amber rather than pretending
+the read was clean. 469ms on a 4032x3024 photo, so it is a one-shot read, not a
+live loop.
+
+Types are still NOT read on device — only positions are. The review screen says
+so, proposes the standard cycle, and lets the player tap any harbour to correct
+it (`setPortType` swaps rather than assigns, so the bag stays legal). Porting
+the 92.2% type classifier from the probe is the remaining work.
 
 **Reading a harbour's TYPE off colour does not work.** Three attempts, all in
 `tools/port_probe.py` so none is retried: saturated pixels in a window measure

@@ -235,6 +235,10 @@ export interface CatanHexGridProps {
   lowConfidenceIndices?: number[];
   /** Harbours to draw on the sea side of their coastal edge. */
   ports?: CatanPortDef[];
+  /** Tap a harbour — used on the review screen to correct what it trades. */
+  onPortPress?: (index: number) => void;
+  /** Harbours to ring in amber: detected position, but nobody is sure of it. */
+  unsurePorts?: number[];
   /**
    * Show tappable settlement corners. Only meaningful when the board is known,
    * which is why it is opt-in rather than always on.
@@ -291,6 +295,8 @@ export function CatanHexGrid({
   selectionColor = '#FFFFFF',
   lowConfidenceIndices = [],
   ports,
+  onPortPress,
+  unsurePorts,
   showIntersections = false,
   onIntersectionPress,
   intersectionMarks,
@@ -337,7 +343,12 @@ export function CatanHexGrid({
   const wantsHexTouches = Boolean(onHexPress || onHexLongPress);
   const wantsCornerTouches = Boolean(showIntersections && onIntersectionPress);
   const wantsRoadTouches = Boolean(showRoads && onRoadPress);
-  const wantsOverlay = wantsHexTouches || wantsCornerTouches || wantsRoadTouches;
+  const wantsPortTouches = Boolean(onPortPress && ports && ports.length > 0);
+  // Every target kind has to be listed here. A screen that wants ONLY harbour
+  // taps gets no overlay at all if this misses one, and the targets then simply
+  // never render — the silent-predicate failure this project keeps meeting.
+  const wantsOverlay =
+    wantsHexTouches || wantsCornerTouches || wantsRoadTouches || wantsPortTouches;
 
   /** Touch box per hex, in viewBox units. Rows sit 60 apart, so 56 cannot overlap. */
   const TOUCH = 56;
@@ -362,6 +373,12 @@ export function CatanHexGrid({
    * ceiling before neighbours overlap; 32 keeps a margin and is ~35px.
    */
   const ROAD_TOUCH = 32;
+  /**
+   * Harbours sit alone out in the sea, so this can be generous without eating
+   * anyone else's taps — unlike the corner/road pair, where 25.1% of road taps
+   * were measured landing on a corner target before the sizes were separated.
+   */
+  const PORT_TOUCH = 34;
 
   const svg = (
     <Svg
@@ -589,8 +606,11 @@ export function CatanHexGrid({
               cy={py}
               r={12}
               fill={ps.fill}
-              stroke="#0B1220"
-              strokeWidth={1.5}
+              /* Amber ring = the detector could not decide this one. Same
+                 language the low-confidence hexes already use, so it needs no
+                 explaining. */
+              stroke={unsurePorts?.includes(i) ? '#F59E0B' : '#0B1220'}
+              strokeWidth={unsurePorts?.includes(i) ? 3 : 1.5}
               pointerEvents="none"
             />
             <SvgText
@@ -655,6 +675,28 @@ export function CatanHexGrid({
                 accessibilityLabel="Build a road here"
               />
             ))}
+
+        {/* Harbours. Same rule as everything else in this component: the SVG
+            circle is a picture, the tap target is a <Pressable>. Last, so it
+            wins over a hex target it overlaps — a harbour sits off the coast
+            where nothing else competes for the tap anyway. */}
+        {wantsPortTouches &&
+          ports?.map((port, i) => {
+            const pos = HEX_POS[port.hexIndex];
+            if (!pos) return null;
+            const { cx, cy } = hexCenter(pos[0], pos[1]);
+            const rad = (edgeAngleDeg(port.edge) * Math.PI) / 180;
+            const dist = APOTHEM + 16;
+            return (
+              <Pressable
+                key={`pt-${i}`}
+                onPress={() => onPortPress?.(i)}
+                style={box(cx + dist * Math.cos(rad), cy + dist * Math.sin(rad), PORT_TOUCH)}
+                accessibilityRole="button"
+                accessibilityLabel="Change what this harbour trades"
+              />
+            );
+          })}
 
         {wantsCornerTouches &&
           [...INTERSECTION_POINTS.entries()]

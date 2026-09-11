@@ -35,7 +35,9 @@
 import {
   HEX_AXIAL,
   PORT_TYPE_COUNTS,
+  STANDARD_PORT_LAYOUT,
   axialToIndex,
+  getCoastalEdgesClockwise,
   validatePortLayout,
 } from '@/services/catanBoard';
 import type { CatanPortDef, HexEdge, PortType } from '@/types/models';
@@ -115,6 +117,81 @@ export function setPortType(
     if (i === partner) return { ...p, type: target.type };
     return { ...p };
   });
+}
+
+/**
+ * Turn detected harbour POSITIONS into a port layout.
+ *
+ * Positions come from the photo and are trustworthy — `harbours.ts` reads them
+ * against the ring constraint, measured at 90/90 across ten captures. Types do
+ * not: nothing here looked at the icons. They are filled from the standard
+ * cycle in ring order, which is right for an unshuffled frame and a starting
+ * point otherwise, and every one of them stays editable.
+ *
+ * The distinction matters for what the screen says. Claiming the resources were
+ * read would be a lie, and the last version of this screen made the opposite
+ * mistake — it claimed nothing was read and made the player turn a ring by hand.
+ *
+ * `phase` shifts which type lands on which detected position, for the common
+ * case where the frame is standard but starts at a different corner.
+ */
+export function portsFromDetectedSlots(
+  slots: readonly { hexIndex: number; edge: HexEdge }[],
+  phase = 0,
+): CatanPortDef[] {
+  const ring = getCoastalEdgesClockwise();
+  const ringIndex = (hexIndex: number, edge: HexEdge) =>
+    ring.findIndex(r => r.hexIndex === hexIndex && r.edge === edge);
+
+  // Both sides in ring order, so the standard cycle maps onto the detected
+  // positions the way it sits on a real frame.
+  const ordered = [...slots].sort(
+    (a, b) => ringIndex(a.hexIndex, a.edge) - ringIndex(b.hexIndex, b.edge),
+  );
+  const types = [...STANDARD_PORT_LAYOUT]
+    .sort((a, b) => ringIndex(a.hexIndex, a.edge) - ringIndex(b.hexIndex, b.edge))
+    .map(p => p.type);
+
+  return ordered.map((slot, i) => ({
+    hexIndex: slot.hexIndex,
+    edge: slot.edge,
+    type: types[(i + phase % types.length + types.length) % types.length]!,
+  }));
+}
+
+/**
+ * Move every harbour TYPE one position round the ring, leaving the positions
+ * where they are.
+ *
+ * Distinct from `rotatePortLayout`, which turns the whole frame — positions and
+ * all — and is the right operation only when nothing was read from the photo.
+ * Once positions are detected they are not up for debate, and the thing that
+ * may still be out of step is which label sits on which harbour.
+ *
+ * Because this permutes the existing types rather than regenerating them, the
+ * bag stays legal for free, including after the player has corrected one by
+ * hand.
+ */
+export function shiftPortTypes(
+  ports: readonly CatanPortDef[],
+  steps = 1,
+): CatanPortDef[] {
+  const ring = getCoastalEdgesClockwise();
+  const ringIndex = (p: CatanPortDef) =>
+    ring.findIndex(r => r.hexIndex === p.hexIndex && r.edge === p.edge);
+
+  const order = [...ports].sort((a, b) => ringIndex(a) - ringIndex(b));
+  const n = order.length;
+  if (n === 0) return [];
+  const types = order.map(p => p.type);
+  const shifted = order.map(
+    (_p, i) => types[(((i - steps) % n) + n) % n]!,
+  );
+  const byKey = new Map(order.map((p, i) => [`${p.hexIndex}:${p.edge}`, shifted[i]!]));
+
+  // Returned in the caller's original order, so a list rendered by index does
+  // not reshuffle under the player every time they tap shift.
+  return ports.map(p => ({ ...p, type: byKey.get(`${p.hexIndex}:${p.edge}`) ?? p.type }));
 }
 
 export interface PortRingProblem {

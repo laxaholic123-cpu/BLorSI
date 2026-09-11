@@ -64,3 +64,6 @@ __pycache__/
 # Raw crop dump for the TypeScript port check — regenerate with tools/dump_crops.py
 tools/crops.bin
 tools/crops.json
+
+# Contact sheets and other probe renderings — regenerate by rerunning the probe
+tools/out/
