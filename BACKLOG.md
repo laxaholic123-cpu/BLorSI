@@ -543,19 +543,29 @@ should answer first.
     hits, and hence `selectRing` returning `unsure` so the screen can ring the
     undecided ones in amber instead of bluffing.
 
-    **Still a negative result:** reading a harbour's TYPE off colour, three
-    attempts, in `tools/port_probe.py`. The probe does reach 92.2% using the
-    composition constraint (against 80.0% without), but that classifier is not
-    ported to the device yet — types are proposed and corrected by hand. That
-    is the open half of this item. Ports feed `portAccess` only, so a wrong
-    type misreports trade access and nothing else.
+    **TYPES ARE READ TOO**, after three attempts that failed and are worth
+    keeping: saturated-pixels measured the sea, bright-non-cream discarded ore
+    and lumber for being dark, and every attempt measured a square containing
+    boat. What works is rectifying in badge space, working inside the card, and
+    taking the icon as the largest non-cream blob whatever colour — because ore
+    is grey and wool is white, and those were exactly the two that kept
+    swapping. `services/vision/harbourTypes.ts`, 92.2% with the composition
+    constraint against 80.0% without, seven of ten captures exact.
+
+    Verified against the PHOTOS by `tools/harbour_type_check.mjs`, not against
+    tests that agree with the port: all 13 features match Python to 1.11e-16 on
+    the same 90 badges, with the same misses. Ports feed `portAccess` only, so a
+    wrong type misreports trade access and nothing else — and the constraint
+    guarantees the board is at least legal.
 
     **Verified:** `catanPorts.test.ts` (19, including that every harbour stays
     coastal at all six rotations), `harbourRing.test.ts` (15, including the 6/9
     ambiguity as a pinned number), `harbours.test.ts` (10, against a synthetic
     board carrying a tablecloth and a dock timber), `portsFromDetected.test.ts`
     (12, including that shift still works after the player corrects one — an
-    earlier design killed that control silently).
+    earlier design killed that control silently), `harbourTypes.test.ts` (12,
+    including that the answer is a legal bag for ANY input and that the
+    assignment is exhaustive rather than greedy).
 
 17. **Settlement Setup could strand you on "Player 5 of 4".** Fixed, and this
     one was on the critical path of every game.

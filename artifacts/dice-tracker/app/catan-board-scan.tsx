@@ -88,6 +88,7 @@ import type {
   CatanHexDef,
   CatanPortDef,
   HexEdge,
+  PortType,
   ResourceType,
 } from '@/types/models';
 import { PORT_COUNT } from '@/services/catanBoard';
@@ -173,12 +174,14 @@ export default function CatanBoardScanScreen() {
 
   // ── Edit-mode: editPlayerId is set when launched from an active game ────────
   // ── scanned: a board already read on-device by the capture screen ──────────
-  const { editPlayerId, scanned, harbours, harboursUnsure } = useLocalSearchParams<{
-    editPlayerId?: string;
-    scanned?: string;
-    harbours?: string;
-    harboursUnsure?: string;
-  }>();
+  const { editPlayerId, scanned, harbours, harboursUnsure, harbourTypes } =
+    useLocalSearchParams<{
+      editPlayerId?: string;
+      scanned?: string;
+      harbours?: string;
+      harboursUnsure?: string;
+      harbourTypes?: string;
+    }>();
   const isEditMode = Boolean(editPlayerId);
 
   /**
@@ -233,6 +236,17 @@ export default function CatanBoardScanScreen() {
   }, [harboursUnsure]);
   const unsureCount = unsureKeys.size;
 
+  /** What the reader thinks each detected harbour trades, in `slots` order. */
+  const detectedTypes = React.useMemo<PortType[] | null>(() => {
+    if (!harbourTypes) return null;
+    try {
+      const parsed = JSON.parse(harbourTypes) as PortType[];
+      return Array.isArray(parsed) && parsed.length === PORT_COUNT ? parsed : null;
+    } catch {
+      return null;
+    }
+  }, [harbourTypes]);
+
 
   // ── Phase ──────────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<ScanPhase>(handedOver ? 'review' : 'entry');
@@ -279,10 +293,16 @@ export default function CatanBoardScanScreen() {
       Not detected: nothing was read, and the old behaviour is the only honest
       option — the standard ring, turned by hand until it matches the table.
     */
-    return detectedSlots
-      ? portsFromDetectedSlots(detectedSlots)
-      : rotatePortLayout(makeDefaultPorts(), portRotation);
-  }, [detectedSlots, portOverride, portRotation]);
+    if (!detectedSlots) return rotatePortLayout(makeDefaultPorts(), portRotation);
+    const base = portsFromDetectedSlots(detectedSlots);
+    if (!detectedTypes) return base;
+    // Detected types are indexed against `detectedSlots`, so match by position
+    // rather than by order — portsFromDetectedSlots sorts into ring order.
+    const byKey = new Map(
+      detectedSlots.map((s, i) => [`${s.hexIndex}:${s.edge}`, detectedTypes[i]!]),
+    );
+    return base.map(p => ({ ...p, type: byKey.get(`${p.hexIndex}:${p.edge}`) ?? p.type }));
+  }, [detectedSlots, detectedTypes, portOverride, portRotation]);
 
   /** Shift labels round detected harbours, or turn the whole assumed ring. */
   const turnRing = (dir: 1 | -1) => {
@@ -953,14 +973,24 @@ export default function CatanBoardScanScreen() {
           />
           <View style={{ flex: 1, gap: 8 }}>
             <Text style={[s.hintText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+              {/*
+                Say what was MEASURED, not what would sound best. Positions ran
+                90/90 across ten captures; resources ran 92.2% per harbour, and
+                seven boards in ten came out exactly right. A player who is told
+                the right number checks the right amount.
+              */}
               {detectedSlots
                 ? unsureCount > 0
-                  ? `Found ${PORT_COUNT - unsureCount} of ${PORT_COUNT} harbours on your board. ` +
+                  ? `Read ${PORT_COUNT - unsureCount} of ${PORT_COUNT} harbours from your photo. ` +
                     `${unsureCount === 1 ? 'One was' : `${unsureCount} were`} too faint to place — ` +
-                    'check them on the map. Tap any harbour to set what it trades.'
-                  : 'All nine harbours found on your board ✓ Which resource each ' +
-                    'trades is a guess — tap one to correct it, or shift the labels ' +
-                    'round if the whole ring is off by a step.'
+                    'ringed in amber on the map. Tap any harbour to fix it.'
+                  : detectedTypes
+                    ? 'All nine harbours read from your photo ✓ Positions are solid; ' +
+                      'the resources are right on about seven boards in ten, so give ' +
+                      'them a look and tap any harbour to fix one.'
+                    : 'All nine harbour positions read from your photo ✓ The resources ' +
+                      'are a guess — tap one to correct it, or shift the labels round ' +
+                      'if the whole ring is off by a step.'
                 : 'Harbours were not read from this board. Turn the ring until it ' +
                   'matches your table — the nine are always in the same order, so ' +
                   'one of the six positions will line up.'}

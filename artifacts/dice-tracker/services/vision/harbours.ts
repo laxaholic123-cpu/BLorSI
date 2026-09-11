@@ -35,6 +35,8 @@ import {
   type RingChoice,
   type RingSlot,
 } from '@/services/vision/harbourRing';
+import { assignTypes, cardFeatures, rectifyBadge } from '@/services/vision/harbourTypes';
+import type { PortType } from '@/types/models';
 
 /** Centre-to-edge distance of a unit hex. */
 const APOTHEM = Math.cos(Math.PI / 6);
@@ -245,6 +247,17 @@ export interface HarbourReading extends RingChoice {
   badges: BadgeBlob[];
   /** How many coastal edges got any evidence at all. */
   matched: number;
+  /** What each chosen harbour trades, parallel to `slots`. */
+  types: PortType[];
+  /**
+   * How much better the chosen labelling is than the next one.
+   *
+   * Separate from the position margin because the two can disagree: a photo can
+   * pin the ring exactly and still be unsure whether a grey icon is ore or
+   * wool. Reported so the UI can ask about types without casting doubt on
+   * positions it actually read.
+   */
+  typeMargin: number;
 }
 
 /**
@@ -273,7 +286,44 @@ export function readHarbours(
 
   const badges = findBadges(small, toImage, toCanonical);
   const scores = harbourEvidence(badges);
-  return { ...selectRing(scores), badges, matched: scores.size };
+  const ring = selectRing(scores);
+
+  /*
+    Types, from the FULL-RESOLUTION buffer.
+
+    Positions survive the downscale — a blob centroid is stable — but the icon
+    on a harbour card does not. At the working resolution a sheaf of grain is a
+    handful of pixels, and the features that separate it from a brick are gone.
+    So the badge patches are sampled from the original photo.
+  */
+  const fullToImage = solveHomography(CORNER_HEX_CENTERS, guideCorners);
+  const features = ring.slots.map(slot => {
+    if (!fullToImage) return null;
+    // Centre on the DETECTED card when there is one. The predicted spot is
+    // right on average and off by up to a third of a radius on any one photo,
+    // which is enough to clip the card or pull the neighbouring dock in — and a
+    // contaminated patch is what every earlier attempt measured.
+    const q = badgeCanonical(slot.hexIndex, slot.edge);
+    let centre = q;
+    let best = MATCH_RADIUS;
+    for (const b of badges) {
+      const d = Math.hypot(b.point.x - q.x, b.point.y - q.y);
+      if (d < best) {
+        best = d;
+        centre = b.point;
+      }
+    }
+    return cardFeatures(rectifyBadge(buffer, fullToImage, centre, slot.edge));
+  });
+
+  const assigned = assignTypes(features);
+  return {
+    ...ring,
+    badges,
+    matched: scores.size,
+    types: assigned.types,
+    typeMargin: assigned.margin,
+  };
 }
 
 export type { RingSlot };

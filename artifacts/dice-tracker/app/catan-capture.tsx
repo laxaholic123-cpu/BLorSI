@@ -76,7 +76,7 @@ import { recognizeBoardText, recognizeTokenFaces } from '@/services/vision/ocrSo
 import { mapOcrToHexes } from '@/services/vision/ocrTokens';
 import type { HexEvidence } from '@/services/boardConstraints';
 import type { Point } from '@/services/vision/homography';
-import type { CatanHexDef, HexEdge } from '@/types/models';
+import type { CatanHexDef, HexEdge, PortType } from '@/types/models';
 
 /**
  * Working width for the read.
@@ -209,6 +209,8 @@ export default function CatanCaptureScreen() {
   const [harbourUnsure, setHarbourUnsure] = useState<
     { hexIndex: number; edge: HexEdge }[]
   >([]);
+  /** What each detected harbour trades, parallel to `harbourSlots`. */
+  const [harbourTypes, setHarbourTypes] = useState<PortType[] | null>(null);
 
   /**
    * Reload on FOCUS, not on mount.
@@ -429,10 +431,12 @@ export default function CatanCaptureScreen() {
         const hb = readHarbours(buffer, imagePoints);
         setHarbourSlots(hb ? hb.slots.map(s => ({ hexIndex: s.hexIndex, edge: s.edge })) : null);
         setHarbourUnsure(hb ? hb.unsure.map(s => ({ hexIndex: s.hexIndex, edge: s.edge })) : []);
+        setHarbourTypes(hb ? hb.types : null);
       } catch {
         // Never let harbours cost a tile read. They are the smaller prize.
         setHarbourSlots(null);
         setHarbourUnsure([]);
+        setHarbourTypes(null);
       }
 
       // A second aimed shot is deliberate evidence, so merging is safe here in a
@@ -639,6 +643,7 @@ ${JSON.stringify(payload)}`,
           ? {
               harbours: JSON.stringify(harbourSlots),
               harboursUnsure: JSON.stringify(harbourUnsure),
+              ...(harbourTypes ? { harbourTypes: JSON.stringify(harbourTypes) } : {}),
             }
           : {}),
       },
@@ -650,6 +655,7 @@ ${JSON.stringify(payload)}`,
     setBoard([]);
     setHarbourSlots(null);
     setHarbourUnsure([]);
+    setHarbourTypes(null);
     setShots(0);
     setPhase('aiming');
   };

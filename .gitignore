@@ -67,3 +67,8 @@ tools/crops.json
 
 # Contact sheets and other probe renderings — regenerate by rerunning the probe
 tools/out/
+
+# Rectified harbour badges for the type-classifier port check — regenerate with
+# `python tools/harbour_probe.py dump`
+tools/harbour_patches.bin
+tools/harbour_patches.json

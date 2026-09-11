@@ -514,10 +514,42 @@ normally empty. The review screen rings those in amber rather than pretending
 the read was clean. 469ms on a 4032x3024 photo, so it is a one-shot read, not a
 live loop.
 
-Types are still NOT read on device — only positions are. The review screen says
-so, proposes the standard cycle, and lets the player tap any harbour to correct
-it (`setPortType` swaps rather than assigns, so the bag stays legal). Porting
-the 92.2% type classifier from the probe is the remaining work.
+**TYPES ARE READ TOO, and three earlier attempts failing is the useful part.**
+`services/vision/harbourTypes.ts`. Reading type off colour did not work three
+times: saturated pixels in a window measured the SEA (the most saturated thing
+in frame, so every badge read cyan); icon-as-bright-non-cream discarded ore and
+the lumber log for being dark; and every attempt measured a square that always
+contained boat and dock.
+
+What works: rectify the badge in BADGE space (the edge normal defines the
+frame, so the card lands in the same place in every crop), work inside the
+CARD rather than a square, take the icon as the LARGEST NON-CREAM BLOB whatever
+colour it is, and describe the card with colour bins rather than one segmented
+icon. The largest-blob rule matters because ore is grey and wool is white —
+a saturation predicate sees neither, and those were exactly the two that kept
+swapping. Fourth recorded instance of a predicate excluding the thing it was
+looking for. The cream card is also its own light meter: dividing by it cancels
+the illumination, the same trick the terrain reader uses on token faces.
+
+Then the composition constraint: four 3:1 and one 2:1 per resource, solved
+exhaustively over the 9!/4! = 15120 labellings. **92.2% with it against 80.0%
+without, on identical scores.** Seven of ten captures come out exactly right.
+The constraint also means a bad photo degrades into a plausible board rather
+than an impossible one — nine badges that all look like ore still produce a
+legal bag.
+
+**The port is verified against the photos, not against tests.**
+`tools/harbour_type_check.mjs` runs the shipped module over the 90 rectified
+badges and compares all 13 features to what Python computed on identical
+pixels: largest difference 1.11e-16, and the same 83/90 with the same three
+imperfect captures and the same misses. Regenerate its input with
+`python tools/harbour_probe.py dump`. The probe's command dispatch used to sit
+mid-file, so `accuracy` and `classify` silently did nothing — it is at the
+bottom now.
+
+Full read is 990ms on a 4032x3024 photo (469ms of that is positions). Types are
+sampled from the FULL-RESOLUTION buffer, not the 900px working one: a blob
+centroid survives downscaling but a sheaf of grain does not.
 
 **Reading a harbour's TYPE off colour does not work.** Three attempts, all in
 `tools/port_probe.py` so none is retried: saturated pixels in a window measure

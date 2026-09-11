@@ -244,12 +244,6 @@ def locate():
     print(f'\n{len(strong)} edges appear in most captures (want 9)')
 
 
-if __name__ == '__main__':
-    cmd = sys.argv[1] if len(sys.argv) > 1 else 'locate'
-    if cmd == 'locate':
-        locate()
-
-
 # ─── The ring constraint ─────────────────────────────────────────────────────
 #
 # Nine harbours sit on a thirty-edge coast, spaced 3 or 4 apart. That is not a
@@ -676,3 +670,92 @@ def accuracy():
           f'({100*right/max(total,1):.1f}%)')
     print(f'WITHOUT it (nearest profile)    : {unconstrained_right}/{total} '
           f'({100*unconstrained_right/max(total,1):.1f}%)')
+
+
+def dump():
+    """Write every rectified badge to disk, for the TypeScript port to check.
+
+    Same contract as `tools/dump_crops.py` for the digit reader: the port is
+    verified against the PHOTOS, not against a unit test that agrees with
+    whatever the port happens to do. A features table computed here travels
+    alongside, so a mismatch says which feature drifted rather than only that
+    the answer changed.
+    """
+    import json
+    import pathlib
+    shots = [('DEVICE', *DEVICE_RUN), ('BOARD_B', *BOARD_B), ('HARD', *HARD_CASE)]
+    shots += [(k, p, c) for k, (p, c) in SHOTS.items()]
+    S = 96
+    blob = bytearray()
+    meta = []
+    for name, path, corners in shots:
+        scores, pts = evidence(path, corners)
+        ring, _ = select_ring(scores)
+        im, H = load(path, corners)
+        cen = centres_for(ring, pts)
+        for key in ring:
+            patch = rectify(im, H, key, size=S, centre=cen.get(key))
+            blob += np.ascontiguousarray(patch, dtype=np.uint8).tobytes()
+            f = card_features(patch)
+            meta.append({
+                'capture': name,
+                'hex': int(key[0]),
+                'edge': int(key[1]),
+                'truth': TRUTH_TYPES.get(key, '?'),
+                'features': None if f is None else {k: float(f[k]) for k in FEATURES},
+            })
+    pathlib.Path('tools/harbour_patches.bin').write_bytes(bytes(blob))
+    pathlib.Path('tools/harbour_patches.json').write_text(json.dumps({
+        'size': S, 'features': list(FEATURES), 'patches': meta,
+    }, indent=1))
+    print(f'wrote {len(meta)} patches of {S}x{S} '
+          f'({len(blob)/1e6:.1f}MB) + features for {sum(1 for m in meta if m["features"])}')
+
+
+def emit_profiles():
+    """Emit the bundled type profiles as TypeScript.
+
+    Trained on ALL captures, unlike `accuracy()`, which holds one out to
+    estimate how this generalises. Both are right for their job: the held-out
+    number is the honest claim, and the shipped profile should use everything
+    known.
+    """
+    shots = [('DEVICE', *DEVICE_RUN), ('BOARD_B', *BOARD_B), ('HARD', *HARD_CASE)]
+    shots += [(k, p, c) for k, (p, c) in SHOTS.items()]
+    rows = []
+    for name, path, corners in shots:
+        scores, pts = evidence(path, corners)
+        ring, _ = select_ring(scores)
+        im, H = load(path, corners)
+        cen = centres_for(ring, pts)
+        for key in ring:
+            f = card_features(rectify(im, H, key, centre=cen.get(key)))
+            if f is not None:
+                rows.append((name, key, TRUTH_TYPES.get(key, '?'), f))
+
+    prof = profile(rows)
+    scale = feature_scale(rows)
+    print(f'// Harvested by `python tools/harbour_probe.py profiles` from '
+          f'{len(rows)} badges across {len(shots)} captures.')
+    print('export const TYPE_PROFILES: Record<string, number[]> = {')
+    for t_ in ['generic', 'brick', 'lumber', 'grain', 'ore', 'wool']:
+        if t_ not in prof:
+            continue
+        vals = ', '.join(f'{v:.6f}' for v in prof[t_])
+        print(f'  {t_}: [{vals}],')
+    print('};')
+    print('export const FEATURE_SCALE: number[] = [' +
+          ', '.join(f'{v:.6f}' for v in scale) + '];')
+
+
+if __name__ == '__main__':
+    cmd = sys.argv[1] if len(sys.argv) > 1 else 'locate'
+    {
+        'locate': locate,
+        'ring': ring_accuracy,
+        'classify': classify,
+        'accuracy': accuracy,
+        'sheet': sheet,
+        'dump': dump,
+        'profiles': emit_profiles,
+    }[cmd]()
