@@ -273,8 +273,24 @@ export function intersectionIdAt(hexIndex: number, vertex: number): string {
   return CANONICAL_ID_BY_POINT.get(vertexPoint(hexIndex, vertex))!;
 }
 
+/**
+ * Cached because this is called from inside hot loops.
+ *
+ * The board's geometry never changes, but this rebuilds 19 x 6 vertices and
+ * merges them into a map on every call — and `blockedWeightForNumber` calls it
+ * per NUMBER, per ROLL, per PLAYER. Measured before caching
+ * (`tools/perf_probe.mjs`): the per-roll stats recompute went from 3.7ms at 80
+ * rolls to 21.5ms at 240, which is 5.8x the cost for 3x the rolls, and that
+ * whole recompute runs again every time a roll lands.
+ *
+ * The returned array is shared. Nothing mutates it today and nothing should —
+ * treat it as read-only.
+ */
+let intersectionCache: Intersection[] | null = null;
+
 /** Every settlement corner on the board. Count is asserted in tests. */
 export function getAllIntersections(): Intersection[] {
+  if (intersectionCache) return intersectionCache;
   const byId = new Map<string, Intersection>();
 
   for (let hexIndex = 0; hexIndex < HEX_COUNT; hexIndex++) {
@@ -294,7 +310,8 @@ export function getAllIntersections(): Intersection[] {
     }
   }
 
-  return [...byId.values()].sort((x, y) => x.id.localeCompare(y.id));
+  intersectionCache = [...byId.values()].sort((x, y) => x.id.localeCompare(y.id));
+  return intersectionCache;
 }
 
 /** Cached, because exposure entry asks per tap and the board never changes. */

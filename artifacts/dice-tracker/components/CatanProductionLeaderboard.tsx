@@ -117,8 +117,14 @@ export function CatanProductionLeaderboard({
           LIVE PRODUCTION{isSmallSample ? ' · small sample' : ''}
         </Text>
         <View style={s.headerRight}>
+          {/*
+            "EXP · GOT" was jargon for two unlabelled decimals, and it was
+            reported as having no easy-to-understand meaning. The results
+            screen now says "par" for the same idea, so the live view uses the
+            same word: one vocabulary across the app beats two correct ones.
+          */}
           <Text style={[s.headerHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-            EXP · GOT
+            GOT vs PAR
           </Text>
           <TouchableOpacity onPress={onToggleHeatMap} style={s.heatMapToggle} hitSlop={8}>
             <Ionicons
@@ -183,7 +189,7 @@ export function CatanProductionLeaderboard({
                 {hasRolls ? (
                   <>
                     <Text style={[s.prodNumbers, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-                      {stat.totalExpectedProduction.toFixed(1)} · {stat.totalActualProduction.toFixed(1)}
+                      {stat.totalActualProduction.toFixed(0)} · par {stat.totalExpectedProduction.toFixed(0)}
                     </Text>
                     <View style={[s.pctBadge, { backgroundColor: luckBg(pct) }]}>
                       <Text style={[s.pctText, { color: luckColor(pct), fontFamily: 'Inter_700Bold' }]}>

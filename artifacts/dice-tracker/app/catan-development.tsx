@@ -47,6 +47,15 @@ import { generateId } from '@/types/models';
 import type { CatanPlayerExposureEvent } from '@/types/models';
 
 const CATAN_NUMBERS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12];
+
+/**
+ * How many roads one action may lay.
+ *
+ * Two, because the Road Building development card gives exactly two and
+ * players use it. Not unlimited: the cap is what tells you the rule without
+ * reading anything.
+ */
+const MAX_ROADS_AT_ONCE = 2;
 const PIPS: Record<number, number> = { 2:1,3:2,4:3,5:4,6:5,8:5,9:4,10:3,11:2,12:1 };
 
 type ActionType = 'add_settlement' | 'build_road' | 'upgrade_city' | 'remove_building' | 'start_robber' | 'end_robber' | 'correct_exposure' | null;
@@ -79,7 +88,15 @@ export default function CatanDevelopmentScreen() {
    * to know what the island looks like.
    */
   const [board, setBoard] = useState<ActiveBoard | null>(null);
-  const [selectedRoad, setSelectedRoad] = useState<string | null>(null);
+  /**
+   * Roads chosen in this one action — usually one, two for Road Building.
+   *
+   * A list rather than a single id because the dev card lays TWO at once, and
+   * the second one is frequently only legal BECAUSE of the first: it connects
+   * to the road you just picked. Recording them one at a time would refuse the
+   * second half of a perfectly legal move.
+   */
+  const [selectedRoads, setSelectedRoads] = useState<string[]>([]);
   /**
    * Corner chosen for a new settlement, when the board is known.
    *
@@ -108,11 +125,13 @@ export default function CatanDevelopmentScreen() {
   // A road chosen for one player is meaningless for another, and a stale
   // selection would be saved against whoever is picked next.
   useEffect(() => {
-    setSelectedRoad(null);
+    setSelectedRoads([]);
     setSelectedCorner(null);
   }, [selectedPlayerId, selectedAction]);
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [selectedNumbers, setSelectedNumbers] = useState<number[]>([]);
+  /** Whether the full action list is expanded under a chosen action. */
+  const [showActionList, setShowActionList] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   const haptic = (style = Haptics.ImpactFeedbackStyle.Light) => {
@@ -241,6 +260,8 @@ export default function CatanDevelopmentScreen() {
 
     try {
       let newEvent: CatanPlayerExposureEvent | null = null;
+      /** For actions that write more than one event — Road Building lays two. */
+      let extraEvents: CatanPlayerExposureEvent[] = [];
       const baseEvent = {
         id: generateId(),
         sessionId: activeSession.id,
@@ -299,19 +320,24 @@ export default function CatanDevelopmentScreen() {
           };
         }
       } else if (selectedAction === 'build_road') {
-        if (!selectedRoad) {
+        if (selectedRoads.length === 0) {
           Alert.alert('Select a road', 'Tap one of the highlighted edges.');
           return;
         }
-        newEvent = {
+        // One event per road. They are separate pieces on the board and the
+        // Longest Road walk reads them individually; bundling two into one
+        // event would make a two-road turn indistinguishable from a one-road
+        // turn everywhere downstream.
+        extraEvents = selectedRoads.map(edgeId => ({
           ...baseEvent,
-          eventType: 'roadBuilt',
-          hexIdentifiers: [selectedRoad],
+          id: generateId(),
+          eventType: 'roadBuilt' as const,
+          hexIdentifiers: [edgeId],
           // A road produces nothing. Both of these must stay empty, or roads
           // would inflate expected production for everyone who builds one.
           affectedNumbers: [],
           productionWeight: 0,
-        };
+        }));
       } else if (selectedAction === 'upgrade_city') {
         if (!selectedLocationId) {
           Alert.alert('Select building', 'Choose which settlement to upgrade.');
@@ -381,8 +407,9 @@ export default function CatanDevelopmentScreen() {
         };
       }
 
-      if (newEvent) {
-        await persistExposureEvents(activeSession.id, [...exposureEvents, newEvent]);
+      const written = [...(newEvent ? [newEvent] : []), ...extraEvents];
+      if (written.length > 0) {
+        await persistExposureEvents(activeSession.id, [...exposureEvents, ...written]);
       }
 
       resetForm();
@@ -541,26 +568,37 @@ export default function CatanDevelopmentScreen() {
       getBuildingStatesAtTurn(selectedPlayerId, Number.MAX_SAFE_INTEGER, exposureEvents)
         .map(b => b.locationId),
     );
+    /*
+      The pending picks count as BUILT for the purpose of offering the next
+      one. Road Building's second road usually attaches to the first, so
+      judging it against the board as it was would hide the obvious move.
+    */
+    const minePlus = new Set([...mine, ...selectedRoads]);
+    const takenPlus = new Set([...taken, ...selectedRoads]);
     const offerable = allEdges()
       .map(e => e.id)
-      .filter(id => buildProblem(id, mine, myCorners, taken) === null);
+      .filter(id => buildProblem(id, minePlus, myCorners, takenPlus) === null);
 
     const marks: Record<string, string> = {};
     for (const [edgeId, ownerId] of allRoads(
       exposureEvents, activeSession.players.map(p => p.id))) {
       marks[edgeId] = activeSession.players.find(p => p.id === ownerId)?.color ?? '#888';
     }
-    if (selectedRoad) {
-      marks[selectedRoad] =
+    for (const id of selectedRoads) {
+      marks[id] =
         activeSession.players.find(p => p.id === selectedPlayerId)?.color ?? colors.primary;
     }
 
     return (
       <View style={{ gap: 8 }}>
         <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
-          {offerable.length === 0
-            ? 'NO LEGAL ROADS — A ROAD MUST TOUCH YOUR OWN ROAD OR BUILDING'
-            : `TAP A ROAD · ${offerable.length} LEGAL`}
+          {selectedRoads.length >= MAX_ROADS_AT_ONCE
+            ? `${selectedRoads.length} ROADS SELECTED · TAP ONE AGAIN TO REMOVE IT`
+            : offerable.length === 0
+              ? 'NO LEGAL ROADS — A ROAD MUST TOUCH YOUR OWN ROAD OR BUILDING'
+              : selectedRoads.length > 0
+                ? `${selectedRoads.length} SELECTED · TAP ANOTHER FOR ROAD BUILDING`
+                : `TAP A ROAD · ${offerable.length} LEGAL`}
         </Text>
         {/*
           Buildings are drawn here too. Choosing a road with the settlements
@@ -573,7 +611,7 @@ export default function CatanDevelopmentScreen() {
           hexes={board.hexes}
           ports={board.ports}
           showRoads
-          legalRoads={offerable}
+          legalRoads={[...offerable, ...selectedRoads]}
           roadMarks={marks}
           offerColor={activeSession.players.find(p => p.id === selectedPlayerId)?.color}
           showIntersections
@@ -582,7 +620,14 @@ export default function CatanDevelopmentScreen() {
           cityIntersections={cityCorners}
           onRoadPress={id => {
             void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            setSelectedRoad(id);
+            setSelectedRoads(prev => {
+              if (prev.includes(id)) return prev.filter(x => x !== id);
+              // Decided inside the updater, not from a memo — two taps in one
+              // render cycle would otherwise both see room and both append.
+              // Same read-then-write race as the double-placed settlement.
+              if (prev.length >= MAX_ROADS_AT_ONCE) return prev;
+              return [...prev, id];
+            });
           }}
         />
       </View>
@@ -808,43 +853,90 @@ export default function CatanDevelopmentScreen() {
       </View>
 
       <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 32 }]} showsVerticalScrollIndicator={false}>
-        <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>SELECT ACTION</Text>
+        {/*
+          THE FORM FIRST when an action is already chosen.
 
-        {ACTIONS.map(action => {
-          const selected = selectedAction === action.type;
-          return (
-            <TouchableOpacity
-              key={action.type}
-              style={[styles.actionCard, {
-                backgroundColor: selected ? colors.primary + '18' : colors.card,
-                borderColor: selected ? colors.primary : colors.border,
-              }]}
-              onPress={() => { haptic(); setSelectedAction(selected ? null : action.type); setSelectedPlayerId(null); setSelectedLocationId(null); setSelectedNumbers([]); }}
-              activeOpacity={0.8}
-            >
-              <Ionicons
-                name={action.icon as any}
-                size={22}
-                color={selected ? colors.primary : action.destructive ? colors.destructive : colors.foreground}
-              />
-              <View style={styles.actionCardContent}>
-                <Text style={[styles.actionCardTitle, { color: selected ? colors.primary : colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
-                  {action.label}
-                </Text>
-                <Text style={[styles.actionCardDesc, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-                  {action.desc}
-                </Text>
-              </View>
-              <Ionicons
-                name={selected ? 'chevron-up' : 'chevron-down'}
-                size={16}
-                color={colors.mutedForeground}
-              />
-            </TouchableOpacity>
-          );
-        })}
+          This screen used to render all seven action cards and then the form,
+          so tapping "Road" on the game screen — which already names the action
+          AND the player — landed you on a menu, and the map you came for was
+          below seven cards of scrolling. Reported as "we should have buttons
+          that just take you directly to the ability to do the building you
+          want, not to another menu", and separately as wanting the map at the
+          top rather than the bottom.
 
-        {renderActionForm()}
+          The list is still here, under a header that collapses it, because
+          changing your mind has to stay possible. It is just no longer the
+          first thing between you and the board.
+        */}
+        {selectedAction ? (
+          <>
+            <View style={styles.chosenRow}>
+              <Ionicons
+                name={(ACTIONS.find(a => a.type === selectedAction)?.icon ?? 'ellipse') as any}
+                size={20}
+                color={colors.primary}
+              />
+              <Text style={[styles.chosenTitle, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+                {ACTIONS.find(a => a.type === selectedAction)?.label ?? 'Action'}
+              </Text>
+              <TouchableOpacity
+                onPress={() => { haptic(); setShowActionList(v => !v); }}
+                hitSlop={8}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.changeLink, { color: colors.primary, fontFamily: 'Inter_500Medium' }]}>
+                  {showActionList ? 'Hide' : 'Change'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {renderActionForm()}
+          </>
+        ) : null}
+
+        {(!selectedAction || showActionList) && (
+          <>
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+              {selectedAction ? 'OR DO SOMETHING ELSE' : 'SELECT ACTION'}
+            </Text>
+
+            {ACTIONS.map(action => {
+              const selected = selectedAction === action.type;
+              return (
+                <TouchableOpacity
+                  key={action.type}
+                  style={[styles.actionCard, {
+                    backgroundColor: selected ? colors.primary + '18' : colors.card,
+                    borderColor: selected ? colors.primary : colors.border,
+                  }]}
+                  onPress={() => {
+                    haptic();
+                    setSelectedAction(selected ? null : action.type);
+                    setSelectedPlayerId(playerParam ?? null);
+                    setSelectedLocationId(null);
+                    setSelectedNumbers([]);
+                    setShowActionList(false);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons
+                    name={action.icon as any}
+                    size={22}
+                    color={selected ? colors.primary : action.destructive ? colors.destructive : colors.foreground}
+                  />
+                  <View style={styles.actionCardContent}>
+                    <Text style={[styles.actionCardTitle, { color: selected ? colors.primary : colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
+                      {action.label}
+                    </Text>
+                    <Text style={[styles.actionCardDesc, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+                      {action.desc}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </>
+        )}
       </ScrollView>
     </View>
   );
@@ -858,6 +950,9 @@ const styles = StyleSheet.create({
   closeBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
 
   scroll: { padding: 16, gap: 10 },
+  chosenRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 2 },
+  chosenTitle: { fontSize: 17, flex: 1 },
+  changeLink: { fontSize: 13 },
   sectionLabel: { fontSize: 11, letterSpacing: 1.2, marginBottom: 4 },
 
   actionCard: { flexDirection: 'row', alignItems: 'flex-start', padding: 14, borderRadius: 12, borderWidth: 1, gap: 12 },

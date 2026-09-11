@@ -802,6 +802,19 @@ export default function ActiveCatanScreen() {
           }]}>ROBBER</Text>
         </TouchableOpacity>
 
+        {/*
+          The dots under each number are its PIPS — how many of the 36 dice
+          combinations make it, the same dots printed on the wooden tokens.
+          They were unlabelled, and were reported as numbers with "no
+          explanation or easy to understand meaning". One line costs nothing
+          and removes the guesswork.
+        */}
+        <Text style={[styles.padLegend, {
+          color: colors.mutedForeground, fontFamily: 'Inter_400Regular',
+        }]}>
+          Dots = ways to roll it, out of 36
+        </Text>
+
         {/* Non-7 number grid */}
         <View style={styles.numGrid}>
           {CATAN_NUMBERS.map(num => {
@@ -1237,6 +1250,7 @@ const styles = StyleSheet.create({
   numBtn: { width: '18%', aspectRatio: 1, borderRadius: 12, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', gap: 2, minHeight: 52 },
   numBtnValue: { fontSize: 20 },
   numBtnPips: { fontSize: 9, letterSpacing: 1 },
+  padLegend: { fontSize: 10, textAlign: 'center', marginBottom: 4 },
 
   controls: { flexDirection: 'row', borderTopWidth: 1, paddingTop: 8, paddingBottom: 4 },
   controlBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 10, gap: 3 },
