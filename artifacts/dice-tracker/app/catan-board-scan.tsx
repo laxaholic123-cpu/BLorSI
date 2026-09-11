@@ -375,25 +375,29 @@ export default function CatanBoardScanScreen() {
   const lowConfIndices = hexes.map((h, i) => (h.confidence === 'low' ? i : -1)).filter(i => i >= 0);
 
   /**
-   * Say WHICH part of a flagged hex is uncertain.
+   * Two very different repairs wore the same alarming words.
    *
-   * "7 hexes need your attention" was reported as confusing in real use, and
-   * fairly: the reader had adjusted seven TERRAINS, the numbers on them were
-   * fine, so checking the numbers found nothing wrong and the warning looked
-   * like noise. Meanwhile the numbers that WERE wrong sat unflagged. Splitting
-   * the count points the player at the thing that is actually unsure.
+   * Measured with `tools/confidence_audit.mjs` over the seven reference
+   * captures: 126/126 tokens ended up CORRECT, and five hexes were still
+   * flagged "to check". All five were the same case — the reader declined, and
+   * the solver filled the value from the tokens left in the box. None was a
+   * confident reading being overruled, and none of the fills was wrong.
+   *
+   * So the flag is not miscalibrated, the wording is. "The scan didn't match
+   * the pieces in the box" is simply false for a decline: nothing mismatched,
+   * the reader just could not see that token. Telling a player to check five
+   * things that are all right is how they learn to skip the warning — and the
+   * one case that genuinely deserves a hard look is the other one.
+   *
+   * These stay VISIBLE either way. Folding "the reader had no opinion" into
+   * "the solver agreed" is a bug this repo has already shipped once.
    */
-  const attentionSummary = (() => {
-    const numbers = lowConfIndices.filter(i => {
-      const h = hexes[i];
-      return h && h.resource !== 'desert' && h.number !== null;
-    }).length;
-    const parts: string[] = [];
-    if (numbers > 0) parts.push(`${numbers} number${numbers === 1 ? '' : 's'} to check`);
-    const others = lowConfIndices.length - numbers;
-    if (others > 0) parts.push(`${others} resource${others === 1 ? '' : 's'} adjusted`);
-    return parts.length > 0 ? parts.join(', ') : `${lowConfIndices.length} to check`;
-  })();
+  const filledIn = boardCorrections.filter(c => c.from === null);
+  const overruled = boardCorrections.filter(c => c.from !== null);
+
+  const lowConfNotExplained = lowConfIndices.filter(
+    i => !boardCorrections.some(c => c.hexIndex === i),
+  );
 
   const haptic = useCallback((style = Haptics.ImpactFeedbackStyle.Light) => {
     if (settings.hapticsEnabled) void Haptics.impactAsync(style);
@@ -939,32 +943,61 @@ export default function CatanBoardScanScreen() {
             </Text>
           </View>
         )}
-        {lowConfIndices.length > 0 && (
+        {/* The reader could not see these. Reassuring, but still shown: a fill
+            by elimination is only as good as the readings it eliminated from. */}
+        {filledIn.length > 0 && (
           <View style={[s.hintBanner, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-            <Ionicons name="alert-circle-outline" size={16} color="#F59E0B" />
-            <Text style={[s.hintText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-              {attentionSummary} — long-press any amber hex to correct it.
-            </Text>
-          </View>
-        )}
-        {boardCorrections.length > 0 && (
-          <View style={[s.hintBanner, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-            <Ionicons name="construct-outline" size={16} color={colors.mutedForeground} />
+            <Ionicons name="help-circle-outline" size={16} color={colors.mutedForeground} />
             <View style={{ flex: 1 }}>
               <Text style={[s.hintText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-                The scan didn&apos;t match the pieces in the box, so{' '}
-                {boardCorrections.length} reading{boardCorrections.length === 1 ? ' was' : 's were'} adjusted
-                to make the board possible. Check these:
+                {filledIn.length === 1 ? 'One tile was' : `${filledIn.length} tiles were`} too
+                unclear to read, so {filledIn.length === 1 ? 'it was' : 'they were'} worked out
+                from the pieces left in the box. Usually right — worth a glance.
               </Text>
-              {boardCorrections.slice(0, 6).map((change, i) => (
+              {filledIn.slice(0, 6).map((change, i) => (
                 <Text
-                  key={`${change.hexIndex}-${change.field}-${i}`}
+                  key={`fill-${i}`}
                   style={[s.hintText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}
                 >
-                  • {describeChange(change)}
+                  {'  • '}{describeChange(change)}
                 </Text>
               ))}
             </View>
+          </View>
+        )}
+
+        {/* The one that has actually earned an alarm: the reader was confident
+            and the box says it cannot be so. */}
+        {overruled.length > 0 && (
+          <View style={[s.hintBanner, { backgroundColor: colors.muted, borderColor: '#F59E0B' }]}>
+            <Ionicons name="alert-circle-outline" size={16} color="#F59E0B" />
+            <View style={{ flex: 1 }}>
+              <Text style={[s.hintText, { color: colors.foreground, fontFamily: 'Inter_400Regular' }]}>
+                {overruled.length === 1 ? 'One reading' : `${overruled.length} readings`} could not
+                be true given the pieces in the box, so{' '}
+                {overruled.length === 1 ? 'it was' : 'they were'} changed. These are the ones to check:
+              </Text>
+              {overruled.slice(0, 6).map((change, i) => (
+                <Text
+                  key={`over-${i}`}
+                  style={[s.hintText, { color: colors.foreground, fontFamily: 'Inter_400Regular' }]}
+                >
+                  {'  • '}{describeChange(change)}
+                </Text>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Amber but unexplained by any repair — rare, and worth its own line
+            rather than being silently dropped when the banners were split. */}
+        {lowConfNotExplained.length > 0 && (
+          <View style={[s.hintBanner, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+            <Ionicons name="alert-circle-outline" size={16} color="#F59E0B" />
+            <Text style={[s.hintText, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+              {lowConfNotExplained.length} hex{lowConfNotExplained.length === 1 ? '' : 'es'} read
+              with low confidence — long-press any amber hex to correct it.
+            </Text>
           </View>
         )}
 

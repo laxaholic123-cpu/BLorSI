@@ -257,3 +257,75 @@ describe('reconcileBoard', () => {
     }
   });
 });
+
+describe('why a repair happened, not just that it did', () => {
+  /*
+    The review screen words two repairs completely differently, and it tells
+    them apart by `change.from`:
+
+      from === null   the reader DECLINED and the solver filled the gap from
+                      the pieces left in the box. Usually right.
+      from !== null   the reader was CONFIDENT and the box says it cannot be
+                      so. This is the one that has earned an alarm.
+
+    Measured over the seven reference captures (`tools/confidence_audit.mjs`):
+    126/126 tokens correct, five hexes flagged, all five of them declines, none
+    of them wrong. The old screen called all of that "to check" and said the
+    scan "didn't match the pieces in the box" — false for a decline, and the
+    reason a player learns to ignore the warning.
+
+    So these tests pin the distinction the wording now rests on. If `from` ever
+    stopped being null for a decline, both banners would still render and both
+    would quietly say the wrong thing.
+  */
+
+  it('reports a DECLINED token as from: null', () => {
+    const board = legalBoard();
+    const victim = board.findIndex(h => h.resource !== 'desert');
+    board[victim] = { ...board[victim]!, number: null, confidence: 'low' };
+
+    const { changes } = reconcileBoard(board);
+    const mine = changes.filter(c => c.field === 'number' && c.hexIndex === victim);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.from).toBeNull();
+    expect(mine[0]!.to).not.toBeNull();
+  });
+
+  it('reports an OVERRULED token with the value the reader gave', () => {
+    // Duplicate a token so the composition is impossible and the solver must
+    // move one of them. The change has to carry what the reader actually said.
+    const board = legalBoard();
+    const twos = board.filter(h => h.number === 2);
+    expect(twos.length).toBeGreaterThan(0);
+    const victim = board.findIndex(h => h.resource !== 'desert' && h.number !== 2);
+    const original = board[victim]!.number;
+    board[victim] = { ...board[victim]!, number: 2, confidence: 'high' };
+
+    const { changes } = reconcileBoard(board);
+    const numberChanges = changes.filter(c => c.field === 'number');
+    expect(numberChanges.length).toBeGreaterThan(0);
+    // Every one of them names a value the reader supplied, never null.
+    for (const c of numberChanges) expect(c.from).not.toBeNull();
+    expect(original).not.toBeNull();
+  });
+
+  it('reports NOTHING when the reader and the box already agree', () => {
+    // The common case, and the one that must stay quiet. A banner that fires
+    // on a perfect read is the whole complaint.
+    const { changes } = reconcileBoard(legalBoard());
+    expect(changes).toEqual([]);
+  });
+
+  it('marks a filled hex low so it still gets a glance', () => {
+    // Reassuring wording must not become invisible wording: folding "the
+    // reader had no opinion" into "the solver agreed" is a bug already
+    // shipped once, and every declined token got stamped confident.
+    const board = legalBoard();
+    const victim = board.findIndex(h => h.resource !== 'desert');
+    board[victim] = { ...board[victim]!, number: null, confidence: 'low' };
+
+    const { hexes } = reconcileBoard(board);
+    expect(hexes[victim]!.confidence).toBe('low');
+    expect(hexes[victim]!.number).not.toBeNull();
+  });
+});

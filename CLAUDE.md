@@ -1294,3 +1294,41 @@ omitted `context/` and `hooks/`, which made `GameContext`'s calls invisible and
 reported half the storage layer as dead code. Check the measurement before
 believing the finding: `services`, `components`, `app`, `context`, `hooks`,
 `utils`, `constants`.
+
+
+## "3 to check" on a board that was 19/19 right
+
+Reported from a device and then measured, not reasoned about.
+`tools/confidence_audit.mjs` runs the shipped digit reader and `reconcileBoard`
+over the seven reference captures, leave-one-photo-out:
+
+    126/126 tokens correct after reconciliation
+    5 hexes flagged "to check"
+    0 of the 5 actually wrong          -> every flag was a wasted tap
+    0 wrong but unflagged              -> nothing dangerous was hidden
+
+The breakdown is the part that decided the fix. **All five flags were the same
+case: the reader DECLINED and the solver filled the value from the tokens left
+in the box. Not one was a confident reading being overruled.**
+
+So the flag was not miscalibrated — the WORDING was. `confidence: 'low'` covers
+two situations that deserve opposite tones, and the screen gave them the same
+alarming one, including "The scan didn't match the pieces in the box", which is
+simply false for a decline: nothing mismatched, the reader just could not see
+that token.
+
+`change.from` separates them, and the review screen now branches on it:
+
+  - `from === null` — could not read it, worked out from the remaining pieces.
+    Calm wording, still shown, still amber on the map. A fill by elimination is
+    only as good as the readings it eliminated from.
+  - `from !== null` — the reader was confident and the box says it cannot be so.
+    This is the one that has earned an alarm, and it was 0 of 5 here.
+
+These stay VISIBLE either way. Folding "the reader had no opinion" into "the
+solver agreed" is a bug this repo has already shipped once, and it stamped every
+declined token confident. The fix is tone, never suppression.
+
+Pinned by four tests in `boardConstraints.test.ts` — if `from` ever stopped
+being null for a decline, both banners would still render and both would quietly
+say the wrong thing.
