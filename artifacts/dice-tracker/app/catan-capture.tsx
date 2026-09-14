@@ -56,6 +56,7 @@ import { loadPixelBuffer } from '@/services/vision/pixelSource';
 import { downscale, screenToImage } from '@/services/vision/pixelBuffer';
 import { boardTransform, clippedTokenHexes, readFrame } from '@/services/vision/readFrame';
 import { readHarbours } from '@/services/vision/harbours';
+import { balanceForBoard } from '@/services/vision/whiteBalance';
 import {
   CONFIDENCE_THRESHOLD,
   emptyEvidence,
@@ -190,6 +191,11 @@ export default function CatanCaptureScreen() {
    * the honest fix (step back half a pace) looks like the reader being bad.
    */
   const [framingNote, setFramingNote] = useState<string | null>(null);
+  /**
+   * True only while the BOARD is being read (after "Read the board"), as
+   * opposed to the photo being decoded. It picks the full-screen reading state.
+   */
+  const [readingBoard, setReadingBoard] = useState(false);
   /**
    * Harbour positions read from the same photo as the tiles.
    *
@@ -387,20 +393,45 @@ export default function CatanCaptureScreen() {
     [lastShotUri],
   );
 
-  const runRead = useCallback(() => {
+  const runRead = useCallback(async () => {
     const buffer = bufferRef.current;
     const pts = cornersRef.current;
     if (!buffer || pts.length !== 4) return;
 
     setPhase('reading');
+    setReadingBoard(true);
     setError(null);
+    /*
+      LET THE SCREEN PAINT BEFORE THE WORK STARTS.
+
+      Everything below — tiles, numbers, harbours — is synchronous pixel work on
+      the JS thread, two to three seconds of it. This function used to set the
+      "reading" phase and then start that work in the same tick, so React never
+      got a chance to render the reading state: the button did nothing visible
+      until the review appeared. Reported from a device as "no notification
+      that a board has been submitted".
+
+      One animation frame plus a short timeout guarantees a commit and a paint.
+      The native spinner keeps turning on the UI thread while the JS thread is
+      busy, so the player sees something alive the whole time.
+    */
+    await new Promise<void>(resolve => requestAnimationFrame(() => setTimeout(resolve, 32)));
     try {
       const imagePoints = pts.map(p => ({
         x: p.x * buffer.width,
         y: p.y * buffer.height,
       })) as [Point, Point, Point, Point];
 
-      const reading = readFrame(buffer, imagePoints);
+      /*
+        Take the colour of the light out first, using the number tokens as the
+        white reference (services/vision/whiteBalance.ts). Reported from a
+        device as three wrong reads under golden light; measured on the
+        reference captures, a warm cast took numbers from 126/126 to 37/126 and
+        a strong one got every frame rejected, and balancing brought both back
+        to 126/126 and 124/126 without costing anything in even light.
+      */
+      const balanced = balanceForBoard(buffer, imagePoints);
+      const reading = readFrame(balanced, imagePoints);
       if (reading.evidence.length === 0) {
         // Back to adjust, not to aiming: the photo is fine, the corners are the
         // thing to change, and making them reshoot would discard the evidence.
@@ -428,8 +459,20 @@ export default function CatanCaptureScreen() {
         bad homography would be confidently wrong rather than absent.
       */
       try {
-        const hb = readHarbours(buffer, imagePoints);
-        setHarbourSlots(hb ? hb.slots.map(s => ({ hexIndex: s.hexIndex, edge: s.edge })) : null);
+        // Positions from the balanced photo, TYPES from the original: balancing
+        // made positions robust under every cast but cost type accuracy in even
+        // light (83/90 -> 54/90), because the type profiles were learned from
+        // unbalanced cards.
+        const hb = readHarbours(balanced, imagePoints, buffer);
+        /*
+          Positions that could not be CONFIRMED are not handed over as read.
+          The review screen used to say "all nine harbours read" off a guess —
+          reported as "it acted like all of the ports were correct, but they
+          were not". Without a confident frame match the screen falls back to
+          the turnable ring and says plainly that harbours were not read.
+        */
+        const confirmed = hb !== null && hb.unsure.length === 0;
+        setHarbourSlots(confirmed ? hb.slots.map(s => ({ hexIndex: s.hexIndex, edge: s.edge })) : null);
         setHarbourUnsure(hb ? hb.unsure.map(s => ({ hexIndex: s.hexIndex, edge: s.edge })) : []);
         setHarbourTypes(hb ? hb.types : null);
       } catch {
@@ -458,6 +501,8 @@ export default function CatanCaptureScreen() {
     } catch {
       setError('Could not read that shot. Try adjusting the corners.');
       setPhase('adjust');
+    } finally {
+      setReadingBoard(false);
     }
   }, [evidence, applyOcr]);
 
@@ -478,7 +523,8 @@ export default function CatanCaptureScreen() {
         y: p.y * buffer.height,
       })) as [Point, Point, Point, Point];
 
-      const reading = readFrame(buffer, imagePoints);
+      // Same pipeline as the real read, or the A/B measures a different reader.
+      const reading = readFrame(balanceForBoard(buffer, imagePoints), imagePoints);
       const corners = pts.map(p => ({ x: p.x, y: p.y }));
 
       if (reading.evidence.length === 0) {
@@ -729,6 +775,23 @@ ${JSON.stringify(payload)}`,
     }
   };
 
+  // ── Reading ────────────────────────────────────────────────────────────────
+  // A whole screen, not a pill on the camera view. The press has to be
+  // acknowledged unmistakably, because the work behind it takes seconds.
+  if (phase === 'reading' && readingBoard) {
+    return (
+      <View style={[s.container, s.centred, { backgroundColor: colors.background, padding: 24 }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={[s.title, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+          Reading your board…
+        </Text>
+        <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+          Tiles, numbers and harbours. This takes a few seconds — keep the app open.
+        </Text>
+      </View>
+    );
+  }
+
   // ── Adjust the corners ─────────────────────────────────────────────────────
   if (phase === 'adjust' && lastShotUri && corners) {
     return (
@@ -855,7 +918,7 @@ ${JSON.stringify(payload)}`,
             </Text>
           )}
 
-          <TouchableOpacity style={[s.primaryBtn, { backgroundColor: colors.primary }]} onPress={runRead}>
+          <TouchableOpacity style={[s.primaryBtn, { backgroundColor: colors.primary }]} onPress={() => void runRead()}>
             <Text style={[s.primaryBtnText, { color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold' }]}>
               Read the board
             </Text>

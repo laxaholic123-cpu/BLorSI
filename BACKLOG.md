@@ -734,3 +734,32 @@ should answer first.
 
     NOT verified on a device or on web — typecheck and tests only. The layout of
     the new rows is unproven.
+
+26. **Device round three: golden light, painted harbours, turns, dev cards.**
+    Seven reports, all addressed; none verified on a device yet.
+
+    - **No sign the read had started.** `runRead` started synchronous pixel work
+      in the same tick it set the phase, so the spinner never painted. It yields
+      a frame first and shows a full "Reading your board" screen.
+    - **Three tiles wrong under golden light.** Colour cast was never corrected.
+      `whiteBalance.ts` corrects each part of the photo from the nearest number
+      tokens. Numbers under a one-sided cast went from 64/126 to 126/126.
+    - **Harbours acted like they were all correct.** Positions only reach the
+      review screen when the frame match is clear. Types are never claimed: no
+      per-harbour signal separated wrong from right, so the screen asks for a
+      check of every harbour.
+    - **Harbour positions wrong.** Selection among the two position sets the
+      painted frame allows, plus balancing, held 10/10 boards under every
+      simulated cast where the ring search fell to 48/90 harbours.
+    - **Building should set the turn.** Saving a settlement, road or city makes
+      the builder the current player. Opening the menu does not.
+    - **Map at the very top of the build menu.** Board pickers render first; the
+      player list and the action header sit below; instructions sit under the map.
+    - **No obvious place to log a development card.** A Dev Card button on the
+      game screen; the card screen was only reachable from results, and its intro
+      no longer says the game is over.
+
+    Still open: harbour types under warm light are poor either way (34 to 67 of
+    90) and balancing declines many cards for reasons not yet understood; the
+    reference board has no real terrain answer key, so tile accuracy is measured
+    against a majority proxy.

@@ -31,7 +31,7 @@ import { downscale, type PixelBuffer } from '@/services/vision/pixelBuffer';
 import {
   COASTAL_RING,
   edgeKey,
-  selectRing,
+  selectFrame,
   type RingChoice,
   type RingSlot,
 } from '@/services/vision/harbourRing';
@@ -269,6 +269,17 @@ export interface HarbourReading extends RingChoice {
 export function readHarbours(
   buffer: PixelBuffer,
   guideCorners: readonly [Point, Point, Point, Point],
+  /**
+   * The photo to read harbour TYPES from, if not `buffer`. Same size.
+   *
+   * Positions and types want different pixels. Positions are read from the
+   * white-balanced photo, where they held 10/10 boards under every cast
+   * measured. Types measured WORSE after balancing in even light — 83/90 fell
+   * to 54/90 (`python tools/light_probe.py types`) — because the bundled
+   * profiles were learned from unbalanced cards. So the capture screen passes
+   * the balanced photo first and the original here.
+   */
+  typeBuffer: PixelBuffer = buffer,
 ): HarbourReading | null {
   const factor = Math.max(
     1,
@@ -286,7 +297,13 @@ export function readHarbours(
 
   const badges = findBadges(small, toImage, toCanonical);
   const scores = harbourEvidence(badges);
-  const ring = selectRing(scores);
+  /*
+    The FRAME's painted positions, not any legal ring on the coast. The ring
+    search reached 90/90 in even light and collapsed to 48/90 under a warm cast,
+    because it had 280 candidates to be fooled among. The frame has two, sharing
+    no position, and held 10/10 boards under every cast measured.
+  */
+  const ring = selectFrame(scores);
 
   /*
     Types, from the FULL-RESOLUTION buffer.
@@ -313,7 +330,7 @@ export function readHarbours(
         centre = b.point;
       }
     }
-    return cardFeatures(rectifyBadge(buffer, fullToImage, centre, slot.edge));
+    return cardFeatures(rectifyBadge(typeBuffer, fullToImage, centre, slot.edge));
   });
 
   const assigned = assignTypes(features);

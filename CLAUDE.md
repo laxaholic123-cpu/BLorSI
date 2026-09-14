@@ -1332,3 +1332,105 @@ declined token confident. The fix is tone, never suppression.
 Pinned by four tests in `boardConstraints.test.ts` — if `from` ever stopped
 being null for a decline, both banners would still render and both would quietly
 say the wrong thing.
+
+## Golden light, painted harbours, and a screen that claimed too much
+
+Reported from a device, round three: under golden light three tiles read wrong,
+harbour positions came back wrong, harbour types came back wrong, and the review
+screen acted as though all nine harbours were right.
+
+**The light correction only ever fixed brightness.** `illuminationGains` fits a
+plane to token-face LIGHTNESS and never touches colour, so a warm cast reached
+every classifier untouched. Measured with `tools/light_read_check.mjs` (the
+shipped reader, seven captures, simulated casts): a mild warm cast took numbers
+from 126/126 to 37/126, a strong cast got all seven frames rejected by the
+quality gate, and a cast on one side took numbers to 64/126.
+
+**The number tokens are the white reference.** Every token is the same printed
+cream, eighteen of them, each under the light of its own tile.
+`services/vision/whiteBalance.ts` measures each face (the bright quarter only, so
+the ink is excluded), blends the gains by inverse distance, and corrects every
+pixel before anything is read. Local on purpose: a sunbeam on one side is taken
+out there and left alone elsewhere, which one global white balance cannot do.
+Token presence is decided on the raw pixels by ink contrast, which a cast barely
+moves, so the desert is skipped rather than read as a very yellow token.
+
+    cast     balance   tiles*    numbers   rejected
+    none     off       128/133   126/126   0
+    none     on        131/133   126/126   0
+    warm     on        128/133   126/126   0     (off: 89 / 37 / 2)
+    strong   on        128/133   124/126   0     (off: 0 / 0 / 7)
+    half     on        115/133   126/126   0     (off: 88 / 64 / 1)
+
+*Tiles are scored against the majority reading of the seven captures in even
+light, NOT a real answer key. The terrain truth in `tools/method_bench.py`
+belongs to a different board: it disagreed with 16 of 19 hexes on every capture
+while the numbers on the same frames were perfect. So the tile column measures
+what light does to the reader, and cannot catch a hex the reader gets wrong in
+every photo. A real terrain key for the reference board does not exist yet.
+
+**Harbour spots are painted on the frame.** The player: the location options
+never change, only the tokens move. The six rotations of `STANDARD_PORT_LAYOUT`
+collapse to exactly TWO position sets sharing no position, and the reference
+board in all ten captures is one of them. `selectFrame` chooses between those
+two instead of among 280 rings. Under simulated casts (`tools/light_probe.py`)
+the ring search fell from 90/90 to 48/90 harbours with a mild cast; the frame
+held, and with balancing it held 10/10 boards with a margin above 5 under every
+cast. Positions under `MIN_FRAME_MARGIN` are not handed over as read at all: the
+review screen falls back to the turnable ring and says harbours were not read.
+
+**Balancing HURTS harbour types, so types read the original photo.** Per badge,
+leave one capture out, trained and tested under the same mode: even light 83/90
+unbalanced against 54/90 balanced (33 cards declined), and under casts both are
+poor (34 to 67 of 90). Why balancing declines so many cards is not understood.
+`readHarbours` takes the balanced photo for positions and the original for types.
+
+**No per-harbour warning is worth showing.** `tools/harbour_flag_audit.mjs` tried
+the obvious signals on the 90 badges. "The constraint moved it" caught 4 of the 7
+wrong types and flagged 11 right ones; the best combination caught 6 of 7 but
+flagged 17 right ones and 6 of the 7 perfect boards. The misreads are confident,
+with regret as high as the correct ones. So the screen asks the player to check
+every harbour type, every time, and never says the types were read correctly.
+
+**Measurement traps hit this round:**
+  - The first types measurement reused `hp.assign`, which needs all nine feature
+    vectors, so one declined card zeroed a whole capture and reported declines as
+    misreads.
+  - esbuild with entry files from two directories writes into subfolders, and a
+    harness then imports a STALE flat bundle left behind by an older build.
+    Always pass `--entry-names=[name]`.
+  - The Bash tool skips a whole command when a heredoc body has an odd number of
+    apostrophes, including any edits in it. A later typecheck error was the only
+    sign that a parameter had never been added.
+
+**Reading feedback.** `runRead` set the reading phase and started two to three
+seconds of synchronous pixel work in the same tick, so React never painted it.
+It now yields one animation frame first and shows a full "Reading your board"
+screen.
+
+**The shipped TypeScript matches the Python.** `tools/harbour_light_check.mjs`
+runs the real `readHarbours` and `balanceForBoard` over the seven frames:
+
+    cast          positions  confirmed  types(original)  types(balanced)  min margin
+    none            7/7        7/7         52/63                -           5.13
+    none +wb        7/7        7/7         55/63            38/63           5.06
+    warm            7/7        1/7         18/63                -           0.03
+    warm +wb        7/7        7/7         25/63            40/63           5.13
+    strong          0/7        0/7          0/63                -           0.00
+    strong +wb      7/7        7/7         25/63            46/63           6.00
+    half            7/7        7/7         30/63                -           2.51
+    half +wb        7/7        7/7         36/63            40/63           5.11
+
+Note the unbalanced strong row: positions WRONG on every board, and the margin
+gate declined to confirm any of them, which is exactly the job it has. Type
+counts are optimistic (the bundled profiles were trained on these captures);
+read them as a comparison between the two photo sources.
+
+**Open decision, measured but not taken: pick the type source by the light.**
+Balanced types lose in even light (38 against 55) and win under every cast (40
+to 46 against 25 to 36). The token-face gains already measure the cast, so a
+threshold on them could choose per photo. Not shipped because the threshold has
+not been measured, and every type is checked by the player regardless.
+
+`balanceForBoard` costs 169ms per 3072x4080 frame on a desktop after moving the
+interpolation weights out of the per-pixel loop; the first version took 782ms.

@@ -892,15 +892,36 @@ export default function ActiveCatanScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
-          onPress={() => router.push('/catan-development?action=upgrade_city' as any)}
+          onPress={() => router.push(
+            `/catan-development?action=upgrade_city${currentPlayer ? `&playerId=${currentPlayer.id}` : ''}` as any)}
           activeOpacity={0.8}
         >
           <Ionicons name="business-outline" size={14} color={colors.primary} />
           <Text style={[styles.buildPillText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>City</Text>
         </TouchableOpacity>
+        {/*
+          Development cards, from the game itself.
+
+          The card log was only reachable from the RESULTS screen, after the
+          game had ended — reported as "there was no obvious place for a
+          development card to be logged". A card is bought or played mid-turn,
+          so this is where it gets recorded, next to the other things a player
+          does on their turn.
+        */}
         <TouchableOpacity
           style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
-          onPress={() => router.push('/catan-development' as any)}
+          onPress={() => router.push('/catan-dev-cards' as any)}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Log a development card"
+        >
+          <Ionicons name="layers-outline" size={14} color={colors.primary} />
+          <Text style={[styles.buildPillText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>Dev Card</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
+          onPress={() => router.push(
+            `/catan-development${currentPlayer ? `?playerId=${currentPlayer.id}` : ''}` as any)}
           activeOpacity={0.8}
         >
           <Ionicons name="ellipsis-horizontal-circle-outline" size={14} color={colors.mutedForeground} />

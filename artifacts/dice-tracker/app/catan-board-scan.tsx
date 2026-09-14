@@ -1044,17 +1044,19 @@ export default function CatanBoardScanScreen() {
                 ? 'Harbours came from the saved layout. Tap any harbour to change ' +
                   'what it trades.'
                 : detectedSlots
-                ? unsureCount > 0
-                  ? `Read ${PORT_COUNT - unsureCount} of ${PORT_COUNT} harbours from your photo. ` +
-                    `${unsureCount === 1 ? 'One was' : `${unsureCount} were`} too faint to place — ` +
-                    'ringed in amber on the map. Tap any harbour to fix it.'
-                  : detectedTypes
-                    ? 'All nine harbours read from your photo ✓ Positions are solid; ' +
-                      'the resources are right on about seven boards in ten, so give ' +
-                      'them a look and tap any harbour to fix one.'
-                    : 'All nine harbour positions read from your photo ✓ The resources ' +
-                      'are a guess — tap one to correct it, or shift the labels round ' +
-                      'if the whole ring is off by a step.'
+                  ? /*
+                      Positions are confirmed by the capture screen before they
+                      get here. TYPES never are: measured, no per-harbour signal
+                      separates a wrong type from a right one (the best rule
+                      caught 6 of 7 misreads but flagged 17 correct harbours and
+                      6 of 7 perfect boards), and the misreads are confident.
+                      So the screen asks for a check every time instead of
+                      pretending, which is what "it acted like all of the ports
+                      were correct" was about.
+                    */
+                    'Harbour spots found ✓ Now check what each one trades — tap any ' +
+                    'harbour to change it. The pictures on the harbours are hard to ' +
+                    'read, especially in warm light, so give every one a look.'
                 : 'Harbours were not read from this board. Turn the ring until it ' +
                   'matches your table — the nine are always in the same order, so ' +
                   'one of the six positions will line up.'}

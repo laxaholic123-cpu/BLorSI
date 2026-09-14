@@ -72,3 +72,8 @@ tools/out/
 # `python tools/harbour_probe.py dump`
 tools/harbour_patches.bin
 tools/harbour_patches.json
+
+# Reference frames at app resolution for tools/light_read_check.mjs — regenerate
+# with `python tools/dump_frames.py`
+tools/frames.bin
+tools/frames.json

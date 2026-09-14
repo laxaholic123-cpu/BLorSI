@@ -73,7 +73,8 @@ const ACTIONS: Array<{ type: ActionType; label: string; desc: string; icon: stri
 export default function CatanDevelopmentScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { activeSession, rollEvents, exposureEvents, persistExposureEvents } = useGame();
+  const { activeSession, rollEvents, exposureEvents, persistExposureEvents, updateSession } =
+    useGame();
   const { settings } = useSettings();
   const webTop = Platform.OS === 'web' ? 67 : 0;
 
@@ -412,6 +413,33 @@ export default function CatanDevelopmentScreen() {
         await persistExposureEvents(activeSession.id, [...exposureEvents, ...written]);
       }
 
+      /*
+        Building makes it that player's turn.
+
+        In the base game you can only build on your own turn, so a build
+        recorded for someone is proof it is their turn — reported from a device
+        as "whenever a player moves to build, it should automatically assume it
+        is their turn". Without this, a player who forgot to tap Next had their
+        next ROLL attributed to the previous player, which quietly corrupts both
+        players' luck.
+
+        Only on SAVE, not on opening the menu: backing out of a build must not
+        move the turn. Only for the three building actions: the robber and
+        corrections name the player who is AFFECTED, not the one acting.
+      */
+      const BUILD_ACTIONS: readonly string[] = ['add_settlement', 'build_road', 'upgrade_city'];
+      if (written.length > 0 && BUILD_ACTIONS.includes(selectedAction)) {
+        const builderIndex = activeSession.players.findIndex(p => p.id === selectedPlayerId);
+        if (builderIndex >= 0 && builderIndex !== activeSession.currentPlayerIndex) {
+          try {
+            await updateSession({ ...activeSession, currentPlayerIndex: builderIndex });
+          } catch {
+            // The build itself is already saved. A failed turn change must not
+            // undo it or trap the screen open; Next still works.
+          }
+        }
+      }
+
       resetForm();
       router.back();
     } catch {
@@ -591,15 +619,6 @@ export default function CatanDevelopmentScreen() {
 
     return (
       <View style={{ gap: 8 }}>
-        <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
-          {selectedRoads.length >= MAX_ROADS_AT_ONCE
-            ? `${selectedRoads.length} ROADS SELECTED · TAP ONE AGAIN TO REMOVE IT`
-            : offerable.length === 0
-              ? 'NO LEGAL ROADS — A ROAD MUST TOUCH YOUR OWN ROAD OR BUILDING'
-              : selectedRoads.length > 0
-                ? `${selectedRoads.length} SELECTED · TAP ANOTHER FOR ROAD BUILDING`
-                : `TAP A ROAD · ${offerable.length} LEGAL`}
-        </Text>
         {/*
           Buildings are drawn here too. Choosing a road with the settlements
           invisible means judging "does this connect to anything of mine"
@@ -630,6 +649,15 @@ export default function CatanDevelopmentScreen() {
             });
           }}
         />
+        <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+          {selectedRoads.length >= MAX_ROADS_AT_ONCE
+            ? `${selectedRoads.length} ROADS SELECTED · TAP ONE AGAIN TO REMOVE IT`
+            : offerable.length === 0
+              ? 'NO LEGAL ROADS — A ROAD MUST TOUCH YOUR OWN ROAD OR BUILDING'
+              : selectedRoads.length > 0
+                ? `${selectedRoads.length} SELECTED · TAP ANOTHER FOR ROAD BUILDING`
+                : `TAP A ROAD · ${offerable.length} LEGAL`}
+        </Text>
       </View>
     );
   };
@@ -653,13 +681,6 @@ export default function CatanDevelopmentScreen() {
 
     return (
       <View style={{ gap: 8 }}>
-        <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
-          {selectedCorner
-            ? `CORNER SELECTED · PRODUCES ${cornerNumbers.length ? cornerNumbers.join(', ') : 'NOTHING'}`
-            : offeredCorners.length === 0
-              ? 'NOWHERE LEGAL YET'
-              : `TAP A CORNER · ${offeredCorners.length} LEGAL`}
-        </Text>
 
         {/*
           "0 LEGAL" on its own reads exactly like a broken app, and it was
@@ -712,6 +733,13 @@ export default function CatanDevelopmentScreen() {
             setSelectedCorner(prev => (prev === id ? null : id));
           }}
         />
+        <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+          {selectedCorner
+            ? `CORNER SELECTED · PRODUCES ${cornerNumbers.length ? cornerNumbers.join(', ') : 'NOTHING'}`
+            : offeredCorners.length === 0
+              ? 'NOWHERE LEGAL YET'
+              : `TAP A CORNER · ${offeredCorners.length} LEGAL`}
+        </Text>
         {selectedCorner ? (
           <Text style={[styles.buildingBtnSub, { color: colors.mutedForeground, textAlign: 'center' }]}>
             Numbers are read from the board, not typed. Tap the corner again to clear it.
@@ -752,15 +780,6 @@ export default function CatanDevelopmentScreen() {
 
     return (
       <View style={{ gap: 8 }}>
-        <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
-          {mineCorners.length === 0
-            ? (selectedAction === 'upgrade_city'
-                ? 'NO SETTLEMENTS LEFT TO UPGRADE'
-                : 'NOTHING ON THE BOARD TO REMOVE')
-            : selectedAction === 'upgrade_city'
-              ? `TAP ONE OF YOUR SETTLEMENTS · ${mineCorners.length}`
-              : `TAP THE BUILDING TO REMOVE · ${mineCorners.length}`}
-        </Text>
         <CatanHexGrid
           hexes={board.hexes}
           ports={board.ports}
@@ -776,6 +795,15 @@ export default function CatanDevelopmentScreen() {
             setSelectedLocationId(prev => (prev === id ? null : id));
           }}
         />
+        <Text style={[styles.sectionLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+          {mineCorners.length === 0
+            ? (selectedAction === 'upgrade_city'
+                ? 'NO SETTLEMENTS LEFT TO UPGRADE'
+                : 'NOTHING ON THE BOARD TO REMOVE')
+            : selectedAction === 'upgrade_city'
+              ? `TAP ONE OF YOUR SETTLEMENTS · ${mineCorners.length}`
+              : `TAP THE BUILDING TO REMOVE · ${mineCorners.length}`}
+        </Text>
         {selectedLocationId && (
           <Text style={[styles.buildingBtnSub, { color: colors.mutedForeground, textAlign: 'center' }]}>
             Tap it again to clear the selection.
@@ -802,6 +830,24 @@ export default function CatanDevelopmentScreen() {
 
     return (
       <View style={[styles.actionForm, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        {/*
+          THE MAP IS THE FIRST THING ON THE PAGE.
+
+          Reported twice from a device: first "the map should be at the top, not
+          the bottom", then, once it was merely near the top, "at the very top
+          of the page when they go to a build menu and are instructed to place
+          their piece". The build pills on the game screen already name the
+          player, so the player list is confirmation, not a step — it goes
+          below the board, where it is still one tap away for a correction.
+
+          Upgrading and removing are board actions too: picking "Settlement 2"
+          off a list means counting your own pieces, when the answer is a tap.
+          The list is kept below, for a game with no board.
+        */}
+        {selectedPlayerId && selectedAction === 'build_road' && renderRoadPicker()}
+        {selectedPlayerId && selectedAction === 'add_settlement' && renderCornerPicker()}
+        {selectedPlayerId && ['upgrade_city', 'remove_building'].includes(selectedAction)
+          && renderOwnBuildingBoard()}
         {showPlayerPicker && renderPlayerSelector()}
         {selectedPlayerId && showBuildingPicker && renderBuildingPicker(
           selectedAction === 'upgrade_city' ? 'SELECT SETTLEMENT TO UPGRADE' :
@@ -809,14 +855,6 @@ export default function CatanDevelopmentScreen() {
           'SELECT BUILDING TO CORRECT',
         )}
         {selectedPlayerId && showRobberEndPicker && renderRobberBlockPicker()}
-        {selectedPlayerId && selectedAction === 'build_road' && renderRoadPicker()}
-        {selectedPlayerId && selectedAction === 'add_settlement' && renderCornerPicker()}
-        {/* Upgrading and removing are BOARD actions too. Picking "Settlement 2"
-            off a list means counting your own pieces to work out which one that
-            is, when the board is right there and the answer is a tap. The list
-            above still lists them, for a game with no board. */}
-        {selectedPlayerId && ['upgrade_city', 'remove_building'].includes(selectedAction)
-          && renderOwnBuildingBoard()}
         {selectedPlayerId && showNumberPicker && renderNumberPicker(
           selectedAction === 'start_robber' ? 'NUMBER(S) BEING BLOCKED' :
           selectedAction === 'correct_exposure' ? 'CORRECTED NUMBER(S)' :
@@ -870,6 +908,8 @@ export default function CatanDevelopmentScreen() {
         */}
         {selectedAction ? (
           <>
+{renderActionForm()}
+
             <View style={styles.chosenRow}>
               <Ionicons
                 name={(ACTIONS.find(a => a.type === selectedAction)?.icon ?? 'ellipse') as any}
@@ -889,8 +929,6 @@ export default function CatanDevelopmentScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
-
-            {renderActionForm()}
           </>
         ) : null}
 

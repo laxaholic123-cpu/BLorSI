@@ -181,9 +181,15 @@ export default function CatanDevCardsScreen() {
 
       <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + webBottom + 24 }]}>
         <Text style={[styles.intro, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-          Now that the game is over, count each player&apos;s cards — played knights are
-          face up, and victory points are revealed. Nothing was recorded during play, so
-          nobody&apos;s hand was ever on screen.
+          {/*
+            Reachable DURING play now, from the game screen, because there was
+            "no obvious place for a development card to be logged". The old
+            wording assumed the game was over and promised no hand had ever been
+            on screen, which is no longer true, so it warns instead.
+          */}
+          Log cards as they come out of the deck: a knight when it is played, a card
+          when it is bought, victory points when they are revealed. Anyone looking at
+          this phone can see these counts, so add hidden cards once they are shown.
         </Text>
         <Text style={[styles.deckLine, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
           {totalDrawn} of {DEV_DECK_SIZE} cards drawn
