@@ -122,6 +122,8 @@ export function playersOnHex(hexIndex: number, snapshot: BoardSnapshot): string[
 }
 
 export interface RobberMove {
+  /** Player whose turn it was, so the move can be attributed later. */
+  movedByPlayerId?: string;
   sessionId: string;
   hexIndex: number;
   /** The number printed on that hex, or null for the desert. */
@@ -173,6 +175,7 @@ export function robberMoveEvents(move: RobberMove): CatanPlayerExposureEvent[] {
         playerId,
         eventType: 'robberBlockStarted',
         turnNumber,
+        ...(move.movedByPlayerId ? { movedByPlayerId: move.movedByPlayerId } : {}),
         timestamp: new Date().toISOString(),
         affectedNumbers: [hexNumber],
         hexIdentifiers: [ROBBER_BLOCK_PREFIX + generateId()],

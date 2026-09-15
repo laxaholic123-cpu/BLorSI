@@ -67,6 +67,7 @@ import { CatanHexGrid } from '@/components/CatanHexGrid';
 import { makeEmptyLayout } from '@/services/boardLayouts';
 import { portsFromDetectedSlots } from '@/services/catanPorts';
 import { balanceForBoard } from '@/services/vision/whiteBalance';
+import { DEFAULT_REFINE, refineCorners, type Corners } from '@/services/vision/cornerRefine';
 import {
   CONFIDENCE_THRESHOLD,
   emptyEvidence,
@@ -118,6 +119,18 @@ const TARGET_WIDTH = 2400;
  * normal board.
  */
 const NUMBER_CHUNK = 6;
+
+/**
+ * Below this coastline score, automatic placement is not trusted and the
+ * handles stay where the guide put them.
+ *
+ * Measured on seven captures (tools/corner_refine_check.mjs and
+ * corner_light_check.mjs): refinements that landed well scored about 0.42 to
+ * 0.48, still 0.42 under a strong warm cast, while gross failures from a large
+ * guide error averaged 0.26. The score does NOT separate a near miss from a hit
+ * — which is why the player still sees and confirms the corners.
+ */
+const MIN_COAST_SCORE = 0.3;
 
 /** Guide occupies this fraction of the shorter screen edge. */
 const GUIDE_FILL = 0.88;
@@ -217,6 +230,8 @@ export default function CatanCaptureScreen() {
    * opposed to the photo being decoded. It picks the full-screen reading state.
    */
   const [readingBoard, setReadingBoard] = useState(false);
+  /** Whether the corner handles were placed automatically for this shot. */
+  const [cornersAuto, setCornersAuto] = useState(false);
   /**
    * Harbour positions read from the same photo as the tiles.
    *
@@ -326,8 +341,39 @@ export default function CatanCaptureScreen() {
         );
         return { x: clamp01(p.x / buffer.width), y: clamp01(p.y / buffer.height) };
       });
-      setCorners(seeded);
+      /*
+        PUT THE HANDLES ON THE BOARD, not on the guide.
+
+        Refines the guide's corners against the photo by the tile-to-sea step
+        along the coastline (services/vision/cornerRefine.ts). Measured from a
+        medium guide error on seven captures: corners 0.32 -> 0.08 hex radii
+        off, numbers read 98.7% against 100% from hand-marked corners. It still
+        misses by a little now and then, and its score cannot tell a near miss
+        from a hit, so the player confirms the corners as before; they just
+        start in the right place. `guideCorners` keeps the unrefined seed for
+        the A/B diagnostic.
+      */
+      let placed = seeded;
+      let auto = false;
+      try {
+        const seedPx = seeded.map(c => ({
+          x: c.x * buffer.width,
+          y: c.y * buffer.height,
+        })) as unknown as Corners;
+        const refined = refineCorners(buffer, seedPx, DEFAULT_REFINE);
+        if (refined.score.coast >= MIN_COAST_SCORE) {
+          placed = refined.corners.map(c => ({
+            x: clamp01(c.x / buffer.width),
+            y: clamp01(c.y / buffer.height),
+          }));
+          auto = true;
+        }
+      } catch {
+        // Placement is a convenience; the guide corners are always a valid start.
+      }
+      setCorners(placed);
       setGuideCorners(seeded);
+      setCornersAuto(auto);
       setComparison(null);
       setPhase('adjust');
     } catch {
@@ -932,9 +978,9 @@ ${JSON.stringify(payload)}`,
 
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24 }}>
           <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'left' }]}>
-            Tap the middle of a corner tile and the nearest dot jumps there, or
-            drag a dot to fine-tune. Getting these right matters more than
-            anything else — every tile is measured from them.
+            {cornersAuto
+              ? 'The dots were placed on the corner tiles automatically. Check each one sits in the middle of its tile — tap a tile to move the nearest dot there, or drag to fine-tune.'
+              : 'Tap the middle of a corner tile and the nearest dot jumps there, or drag a dot to fine-tune. Getting these right matters more than anything else — every tile is measured from them.'}
           </Text>
 
           <View

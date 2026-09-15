@@ -781,3 +781,20 @@ should answer first.
     live camera frames, which expo-camera does not provide; measure rapid
     low-quality snapshots before reaching for react-native-vision-camera and a
     new dev-client build.
+
+28. **End-of-game questions on the accolade cards.** Done; not verified on a
+    device. Six questions a table argues about (who robbed me, did I draft well,
+    did the dice change my placing, which building paid off, whose dice fed me,
+    did my harbour match my production), answered per player from the log and
+    shown inside each accolade card, the accolade own question first. Robber
+    moves now record who moved them. Details and data caveats in CLAUDE.md.
+
+29. **Corners placed automatically.** Done; not verified on a device. The handles
+    start on the corner tiles instead of the guide, and the player confirms them.
+    Coastline refinement with a measured 5% coast stretch: medium guide error
+    0.32 to 0.08 hex radii, numbers 98.7% against 100% from hand-marked, and it
+    holds under golden light.
+
+    Still open: hiding the corner step. Needs real guide-versus-confirmed pairs
+    from devices and a confidence signal that separates near misses, which the
+    current score does not. Measured on one board only.

@@ -52,6 +52,7 @@ import {
   resourceExposure,
 } from '@/services/exposureReport';
 import { loadActiveBoard, type ActiveBoard } from '@/services/storage';
+import { answerGameQuestions, orderForAccolade } from '@/services/gameQuestions';
 
 export default function ResultsScreen() {
   const colors = useColors();
@@ -137,6 +138,27 @@ export default function ResultsScreen() {
       return assignAccolades(catanStats.playerStats, profiles);
     },
     [activeSession, catanStats, rollEvents, exposureEvents, devCardEvents],
+  );
+
+  /**
+   * The questions a table argues about when a game ends, answered per player.
+   *
+   * Shown inside each accolade card when it is opened, with the question that
+   * accolade raises first — "Robber Magnet" answers who kept doing it. Every
+   * player has exactly one card, so every player gets every answer.
+   */
+  const questionAnswers = useMemo(
+    () =>
+      activeSession && catanStats
+        ? answerGameQuestions({
+            players: activeSession.players,
+            stats: catanStats.playerStats,
+            rollEvents,
+            exposureEvents,
+            hexes: finalBoard?.hexes ?? null,
+          })
+        : new Map(),
+    [activeSession, catanStats, rollEvents, exposureEvents, finalBoard],
   );
 
   const devCardStats = useMemo(
@@ -1143,6 +1165,18 @@ export default function ResultsScreen() {
                             number in it. */}
                         {openAccolade === a.playerId ? (
                           <View style={styles.accoladeBreakdown}>
+                            {orderForAccolade(a.kind, questionAnswers.get(a.playerId) ?? []).map(q => (
+                              <View key={q.key} style={styles.questionBlock}>
+                                <Text style={[styles.questionText, {
+                                  color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>
+                                  {q.question}
+                                </Text>
+                                <Text style={[styles.answerText, {
+                                  color: colors.foreground, fontFamily: 'Inter_400Regular' }]}>
+                                  {q.answer}
+                                </Text>
+                              </View>
+                            ))}
                             {a.breakdown.map(row => (
                               <View key={row.displayName + row.rank} style={styles.exposureRow}>
                                 <Text style={[styles.exposureNum, {
@@ -1170,7 +1204,7 @@ export default function ResultsScreen() {
                         ) : (
                           <Text style={[styles.verdictNote, {
                             color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-                            Tap to see the whole table
+                            Tap for the whole table and questions about your game
                           </Text>
                         )}
                       </TouchableOpacity>
@@ -1344,6 +1378,9 @@ const styles = StyleSheet.create({
   verdictHeadline: { fontSize: 18 },
   verdictBody: { fontSize: 14, lineHeight: 22 },
   accoladeBreakdown: { marginTop: 6, gap: 1 },
+  questionBlock: { gap: 2, paddingBottom: 8 },
+  questionText: { fontSize: 12 },
+  answerText: { fontSize: 14, lineHeight: 20 },
   exposureRes: { fontSize: 12, width: 58, textTransform: 'capitalize' },
   exposureRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2 },
   exposureNum: { fontSize: 15, width: 26 },

@@ -97,6 +97,16 @@ export interface CatanPlayerExposureEvent extends BoardExposureEvent {
    * honoured, which is the honest reading of what that event recorded.
    */
   robberHexIndex?: number;
+  /**
+   * Who MOVED the robber, on `robberBlockStarted` events.
+   *
+   * The blocked player is `playerId`; the mover was never stored, so "who kept
+   * putting the robber on me" could only be inferred from the 7 rolled just
+   * before, and a knight could not be attributed at all. Optional: absent on
+   * every move recorded before it existed, which are inferred or left
+   * unattributed rather than guessed.
+   */
+  movedByPlayerId?: string;
 }
 
 /**

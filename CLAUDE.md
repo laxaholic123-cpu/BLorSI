@@ -1485,3 +1485,94 @@ no corners, its samples land on the wrong tiles, and merging it drags good
 evidence down: the same failure the live loop died of. The guidance now says to
 keep the whole board in the guide and shift a little, which moves the glare and
 shadow while keeping the geometry.
+
+## End-of-game questions, answered on the accolade cards
+
+The accolades rank everyone on an axis, which is a fact but not the argument a
+table has when a game ends. The argument is who, whether, and what if.
+`services/gameQuestions.ts` answers six of those questions from what is already
+recorded. Each answer shows inside the player accolade card when opened, with
+the question that accolade raises first ("Robber Magnet" leads with who kept
+doing it). Every player has exactly one card, so every player gets every answer.
+
+    Who kept putting the robber on me?        robber_losses
+    Did I pick well in the opening?           placement_strength, number_diversity, expected_engine
+    Did the dice change where I finished?     luck_percentile, production_delta, actual_output
+    Which of my buildings did the most work?  cities, buildings, expansions, first_city
+    Whose dice fed me?                        gave_to_others, kept_for_self
+    Did my harbour match what I produced?     harbours
+
+Things about the data that are not obvious and shaped the answers:
+
+**`turnNumber` is a ROUND, not a roll.** It is `floor(rolls / players) + 1`, so
+every roll in a round shares it, and it cannot say who threw the 7 that moved
+the robber. Robber moves now record `movedByPlayerId` (the current player, on a
+7 or a knight). Older moves are attributed only when the roll just before the
+move, by timestamp, was a 7, because a 7 is resolved by its thrower. A knight
+can be played before its owner rolls, so the previous roll says nothing about
+it, and those moves are reported as unattributed rather than blamed on a
+bystander.
+
+**The opening legality check counts later picks too.** `legalSettlements`
+excludes corners held by every OTHER slot, including picks made afterwards. To
+ask whether a pick was the best spot left at the time, later slots are hidden
+first; without that, a neighbour placed later wrongly rules out a corner that was
+free. Ranked by dice odds only (pips); resources and harbours are a judgment the
+answer leaves to the player.
+
+**The app knows production, not points.** Victory points are not tracked, so
+"would I have won with average dice" is answered as a production placing and
+says so in every answer.
+
+**Harbour answers cover opening harbours only** (`portAccess` comes from the
+initial buildings) and need a saved board to know what resources were produced.
+Without one they say so rather than guess.
+
+## Automatic corners: a fourth attempt, and why it worked where three failed
+
+The corner handles are now placed on the board automatically after the shot,
+before the player sees them. The player still confirms them. Hiding the step is
+NOT justified yet, and the reason is measured below.
+
+Read the three failures first (`tools/detect_probe.py`, `hex_detect_probe.py`,
+`register.py`). What changed: the capture guide now makes the player frame the
+whole board (the close-up problem is gone), and its corners are the initial
+estimate `register.py` said it lacked. So `services/vision/cornerRefine.ts`
+REFINES the guide corners with a multi-start, coarse-to-fine compass search
+rather than detecting the board.
+
+**Scoring by token ink made corners WORSE than the guide** (0.13 to 0.19 hex
+radii off). Tokens are dropped on tiles by hand, off-centre, while the corners
+mark hex CENTRES, and lightness spread in a disc peaks when it straddles a token
+edge.
+
+**Scoring the coastline worked, once its bias was measured.** The tile-to-sea
+blueness step along all thirty coastal edges converged to 0.18 off from every
+starting distance, which is bias rather than a search problem. Refining FROM the
+hand-marked corners showed it: the lattice stretched 5.0% (4.2 to 6.2), almost
+purely outward. Real tiles lie with small gaps and the frame holds them loosely,
+so the coast sits further out than unit hexes predict. `coastScale` 1.05 models
+it. Fitted leave-one-out (each frame refined with the stretch from the other
+six), from the guide errors below:
+
+    guide error   corners before -> after   within 0.1   tiles     numbers
+    small          0.12 -> 0.072             19/21        96.7%     98.9%
+    medium         0.32 -> 0.075             17/21        97.5%     98.7%
+    large          0.48 -> 0.245             10/21        fails     fails
+    hand-marked    -                         -            98.5%     100%
+
+Under simulated golden light (`tools/corner_light_check.mjs`) it held: 0.26 to
+0.11-0.13 under every cast. Refinement runs on the RAW photo on purpose: white
+balance needs the token faces, and the faces need the corners.
+
+**Why the step is not hidden.** The final score separates only GROSS failures
+(about 0.26 against 0.48 for good fits). It cannot tell a 0.07 miss from a 0.15
+one, and near misses still cost about 1% of numbers. `MIN_COAST_SCORE` 0.3 only
+decides whether to trust the placement at all. Before hiding the step, collect
+real guide-versus-confirmed corner pairs from devices (the capture screen already
+keeps both for its A/B diagnostic) and find a confidence signal that separates
+near misses.
+
+**All of this is one physical board.** The 5% stretch may differ for another set
+or edition; if automatic corners are consistently off on a new board, re-measure
+the stretch before touching the search.

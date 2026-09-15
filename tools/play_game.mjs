@@ -171,6 +171,11 @@ for (let turn = 1; turn <= TURNS; turn++) {
           eventType: 'robberBlockStarted',
           turnNumber: turn,
           robberBlocked: true,
+          // As the app records it now: when the move happened, and who made it.
+          // Copying the settlement's timestamp put every move at the start of
+          // the game, before any roll, where nothing could attribute it.
+          timestamp: rolls[rolls.length - 1].timestamp,
+          movedByPlayerId: player.id,
         });
       }
     }
@@ -340,4 +345,24 @@ for (const a of assignAccolades(stats.playerStats, profiles)) {
   console.log(`  ${a.displayName.padEnd(6)} ${a.title.padEnd(24)} `
     + `${a.rank}/${a.outOf} ${a.kind}  [${a.strength.toFixed(2)}]`);
   console.log(`  ${''.padEnd(6)} ${a.detail}`);
+}
+
+// ── The questions a table argues about at the end ────────────────────────────
+import { answerGameQuestions, orderForAccolade }
+  from '../artifacts/dice-tracker/dist-game/gameQuestions.js';
+
+const answers = answerGameQuestions({
+  players: PLAYERS,
+  stats: stats.playerStats,
+  rollEvents: rolls,
+  exposureEvents: exposure,
+  hexes,
+});
+console.log('\nQUESTIONS, PER PLAYER (in the order their accolade card shows them)');
+for (const a of assignAccolades(stats.playerStats, profiles)) {
+  console.log(`\n  ${a.displayName} - ${a.title} (${a.kind})`);
+  for (const q of orderForAccolade(a.kind, answers.get(a.playerId) ?? [])) {
+    console.log(`    ${q.question}`);
+    console.log(`      ${q.answer}`);
+  }
 }

@@ -493,6 +493,8 @@ export default function ActiveCatanScreen() {
       turnNumber,
       snapshot: boardSnapshot,
       events: exposureEvents,
+      // The player whose turn it is moves the robber, on a 7 or a knight.
+      movedByPlayerId: currentPlayer?.id,
     });
     if (events.length > 0) {
       await persistExposureEvents(activeSession.id, [...exposureEvents, ...events]);
