@@ -763,3 +763,21 @@ should answer first.
     90) and balancing declines many cards for reasons not yet understood; the
     reference board has no real terrain answer key, so tile accuracy is measured
     against a majority proxy.
+
+27. **Reading shows the board filling in, and shots build on each other.** Done;
+    not verified on a device.
+
+    - The reading screen draws the board as it is read: tiles first (6ms), then
+      numbers a chunk at a time, then harbours. Chunked reads are identical to a
+      full read on 7 of 7 real frames.
+    - The review screen shows the map with amber tiles, whether another shot
+      would help and how to take it, and whether the harbours are confirmed.
+    - Harbours merge across shots instead of the last shot winning; two weak
+      shots can confirm a frame together.
+    - Second-shot guidance keeps the whole board in the guide. The old wording
+      invited a close-up, which would merge misplaced evidence.
+
+    Still open: live coaching while aiming, and an automatic shutter. Both need
+    live camera frames, which expo-camera does not provide; measure rapid
+    low-quality snapshots before reaching for react-native-vision-camera and a
+    new dev-client build.

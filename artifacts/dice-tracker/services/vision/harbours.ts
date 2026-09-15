@@ -258,6 +258,15 @@ export interface HarbourReading extends RingChoice {
    * positions it actually read.
    */
   typeMargin: number;
+  /**
+   * This shot's detection strength on every coastal edge, and the card features
+   * behind each chosen slot (parallel to `slots`, null where a card could not be
+   * described). Exposed so harbours can build up across shots like tiles do —
+   * see `harbourEvidence.ts`. Without them a second shot could only replace the
+   * first, never add to it.
+   */
+  edgeScores: Map<string, number>;
+  features: (number[] | null)[];
 }
 
 /**
@@ -340,6 +349,8 @@ export function readHarbours(
     matched: scores.size,
     types: assigned.types,
     typeMargin: assigned.margin,
+    edgeScores: scores,
+    features,
   };
 }
 

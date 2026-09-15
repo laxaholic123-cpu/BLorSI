@@ -201,10 +201,21 @@ export function guidanceForEvidence(evidence: readonly HexEvidence[]): CaptureGu
     }
   }
 
+  /*
+    KEEP THE WHOLE BOARD IN THE GUIDE — never "point the camera at" a region.
+
+    The old wording invited a close-up of the unclear corner. But every shot's
+    geometry comes from the four corner tiles lining up with the guide, so a
+    close-up has no corners to line up, its samples land on the wrong tiles, and
+    merging that shot pulls the good evidence down. That is the same failure the
+    continuous-scanning loop died of. What a second shot actually needs is for
+    the LIGHT to fall differently — glare and shadow move when the phone moves a
+    little — while the board stays in the guide.
+  */
   const plural = weakHexes.length === 1 ? 'tile is' : 'tiles are';
   const message = bestRegion
-    ? `${weakHexes.length} ${plural} still unclear — point the camera at ${bestRegion} and shoot again.`
-    : `${weakHexes.length} ${plural} still unclear — try another angle.`;
+    ? `${weakHexes.length} ${plural} still unclear in ${bestRegion}. Keep the whole board in the guide, shift a little, and shoot again.`
+    : `${weakHexes.length} ${plural} still unclear. Keep the whole board in the guide, shift a little, and shoot again.`;
 
   return { weakHexes, overallConfidence, isComplete: false, suggestedRegion: bestRegion, message };
 }

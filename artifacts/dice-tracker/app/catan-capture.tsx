@@ -56,6 +56,16 @@ import { loadPixelBuffer } from '@/services/vision/pixelSource';
 import { downscale, screenToImage } from '@/services/vision/pixelBuffer';
 import { boardTransform, clippedTokenHexes, readFrame } from '@/services/vision/readFrame';
 import { readHarbours } from '@/services/vision/harbours';
+import {
+  emptyHarbourEvidence,
+  evidenceFromReading,
+  mergeHarbourEvidence,
+  resolveHarbours,
+  type HarbourEvidence,
+} from '@/services/vision/harbourEvidence';
+import { CatanHexGrid } from '@/components/CatanHexGrid';
+import { makeEmptyLayout } from '@/services/boardLayouts';
+import { portsFromDetectedSlots } from '@/services/catanPorts';
 import { balanceForBoard } from '@/services/vision/whiteBalance';
 import {
   CONFIDENCE_THRESHOLD,
@@ -77,7 +87,7 @@ import { recognizeBoardText, recognizeTokenFaces } from '@/services/vision/ocrSo
 import { mapOcrToHexes } from '@/services/vision/ocrTokens';
 import type { HexEvidence } from '@/services/boardConstraints';
 import type { Point } from '@/services/vision/homography';
-import type { CatanHexDef, HexEdge, PortType } from '@/types/models';
+import type { CatanHexDef, CatanPortDef, HexEdge, PortType } from '@/types/models';
 
 /**
  * Working width for the read.
@@ -97,6 +107,17 @@ import type { CatanHexDef, HexEdge, PortType } from '@/types/models';
  * anything enormous.
  */
 const TARGET_WIDTH = 2400;
+
+/**
+ * Tokens decoded between screen updates while a read is in progress.
+ *
+ * Reading numbers in chunks gives EXACTLY the evidence one full read gives —
+ * checked on the seven reference frames, 7/7 identical, at no extra cost
+ * (tools/chunked_read_check.mjs) — so the only thing this number decides is how
+ * often the board on screen fills in. Six means three visible steps for a
+ * normal board.
+ */
+const NUMBER_CHUNK = 6;
 
 /** Guide occupies this fraction of the shorter screen edge. */
 const GUIDE_FILL = 0.88;
@@ -217,6 +238,25 @@ export default function CatanCaptureScreen() {
   >([]);
   /** What each detected harbour trades, parallel to `harbourSlots`. */
   const [harbourTypes, setHarbourTypes] = useState<PortType[] | null>(null);
+  /**
+   * Harbour evidence folded in from EVERY shot so far (harbourEvidence.ts).
+   *
+   * Tiles and numbers always merged across deliberate shots; harbours did not.
+   * Each shot re-read them from scratch and the last shot won, so a second
+   * photo taken to fix two tiles could quietly make the harbours worse. Now a
+   * second shot can confirm harbours that neither shot could confirm alone.
+   */
+  const [harbourEvidenceSoFar, setHarbourEvidenceSoFar] =
+    useState<HarbourEvidence>(emptyHarbourEvidence);
+  /**
+   * What the reading screen shows while a read is in progress: the board as it
+   * fills in, and which stage the reader is on.
+   */
+  const [progress, setProgress] = useState<{
+    stage: string;
+    board: CatanHexDef[];
+    ports: CatanPortDef[] | null;
+  } | null>(null);
 
   /**
    * Reload on FOCUS, not on mount.
@@ -398,24 +438,24 @@ export default function CatanCaptureScreen() {
     const pts = cornersRef.current;
     if (!buffer || pts.length !== 4) return;
 
+    /*
+      LET THE SCREEN PAINT BETWEEN STAGES.
+
+      Everything between these yields is synchronous pixel work on the JS
+      thread. A yield of one animation frame plus a moment is what lets React
+      commit and the phone draw, so each stage actually appears. Before the
+      first yield was added, the button did nothing visible until the review
+      appeared — reported as "no notification that a board has been
+      submitted".
+    */
+    const paint = () =>
+      new Promise<void>(resolve => requestAnimationFrame(() => setTimeout(resolve, 16)));
+
     setPhase('reading');
     setReadingBoard(true);
     setError(null);
-    /*
-      LET THE SCREEN PAINT BEFORE THE WORK STARTS.
-
-      Everything below — tiles, numbers, harbours — is synchronous pixel work on
-      the JS thread, two to three seconds of it. This function used to set the
-      "reading" phase and then start that work in the same tick, so React never
-      got a chance to render the reading state: the button did nothing visible
-      until the review appeared. Reported from a device as "no notification
-      that a board has been submitted".
-
-      One animation frame plus a short timeout guarantees a commit and a paint.
-      The native spinner keeps turning on the UI thread while the JS thread is
-      busy, so the player sees something alive the whole time.
-    */
-    await new Promise<void>(resolve => requestAnimationFrame(() => setTimeout(resolve, 32)));
+    setProgress({ stage: 'Correcting the light…', board: makeEmptyLayout(), ports: null });
+    await paint();
     try {
       const imagePoints = pts.map(p => ({
         x: p.x * buffer.width,
@@ -431,13 +471,55 @@ export default function CatanCaptureScreen() {
         to 126/126 and 124/126 without costing anything in even light.
       */
       const balanced = balanceForBoard(buffer, imagePoints);
-      const reading = readFrame(balanced, imagePoints);
-      if (reading.evidence.length === 0) {
+
+      /*
+        THE BOARD FILLS IN AS IT IS READ, instead of a spinner.
+
+        Measured stage times on a desktop: tile colour 6ms, numbers 124ms,
+        harbours 124ms, balancing 174ms. Colour is effectively free, so the
+        tiles go up first, then the numbers a chunk at a time, then harbours.
+        Chunked number reads are identical to a full read (7/7 on real frames),
+        so showing progress costs nothing in accuracy.
+      */
+      const colour = readFrame(balanced, imagePoints, { decodeTokensFor: [] });
+      if (colour.evidence.length === 0) {
         // Back to adjust, not to aiming: the photo is fine, the corners are the
         // thing to change, and making them reshoot would discard the evidence.
-        setError(reading.assessment.reason);
+        setError(colour.assessment.reason);
         setPhase('adjust');
         return;
+      }
+      const shot = colour.evidence.map(e => ({ ...e }));
+
+      // Numbers are shown only where they have actually been READ — in this
+      // shot or an earlier one. The solver would otherwise put a plausible
+      // number on every hex before the reader had looked at it, and the board
+      // would flicker as the real ones arrived.
+      const decoded = new Set(
+        evidence.filter(e => Object.keys(e.tokenCost).length > 0).map(e => e.index),
+      );
+      const show = (stage: string) => {
+        const hexes = reconcileBoardFromEvidence(mergeEvidence(evidence, shot)).hexes;
+        setProgress(prev => ({
+          stage,
+          ports: prev?.ports ?? null,
+          board: hexes.map(h => (decoded.has(h.index) ? h : { ...h, number: null })),
+        }));
+      };
+
+      show('Tiles read — reading numbers…');
+      await paint();
+
+      const wanted = shot.map((_e, i) => i).filter(i => shot[i]!.hasToken !== false);
+      for (let k = 0; k < wanted.length; k += NUMBER_CHUNK) {
+        const chunk = wanted.slice(k, k + NUMBER_CHUNK);
+        const part = readFrame(balanced, imagePoints, { decodeTokensFor: chunk }).evidence;
+        for (const i of chunk) {
+          shot[i] = { ...shot[i]!, tokenCost: part[i]?.tokenCost ?? {} };
+          decoded.add(i);
+        }
+        show(`Reading numbers… ${Math.min(k + chunk.length, wanted.length)} of ${wanted.length}`);
+        await paint();
       }
 
       const transform = boardTransform(imagePoints);
@@ -453,38 +535,55 @@ export default function CatanCaptureScreen() {
       );
 
       /*
-        Harbours, from the same pixels. Deliberately after the tile read has
-        been accepted: if the corners were wrong enough to fail the tiles, the
-        projection is wrong for the badges too, and a harbour ring read off a
-        bad homography would be confidently wrong rather than absent.
+        Harbours, folded into what earlier shots saw.
+
+        Positions from the balanced photo, TYPES from the original: balancing
+        made positions robust under every cast but cost type accuracy in even
+        light (83/90 -> 54/90), because the type profiles were learned from
+        unbalanced cards.
+
+        Positions that could not be CONFIRMED are still not handed over as read.
+        The review screen used to say "all nine harbours read" off a guess —
+        reported as "it acted like all of the ports were correct, but they were
+        not". Merging means a second shot can now supply that confirmation.
       */
+      let foldedHarbours = harbourEvidenceSoFar;
       try {
-        // Positions from the balanced photo, TYPES from the original: balancing
-        // made positions robust under every cast but cost type accuracy in even
-        // light (83/90 -> 54/90), because the type profiles were learned from
-        // unbalanced cards.
+        setProgress(prev => (prev ? { ...prev, stage: 'Finding harbours…' } : prev));
+        await paint();
         const hb = readHarbours(balanced, imagePoints, buffer);
-        /*
-          Positions that could not be CONFIRMED are not handed over as read.
-          The review screen used to say "all nine harbours read" off a guess —
-          reported as "it acted like all of the ports were correct, but they
-          were not". Without a confident frame match the screen falls back to
-          the turnable ring and says plainly that harbours were not read.
-        */
-        const confirmed = hb !== null && hb.unsure.length === 0;
-        setHarbourSlots(confirmed ? hb.slots.map(s => ({ hexIndex: s.hexIndex, edge: s.edge })) : null);
-        setHarbourUnsure(hb ? hb.unsure.map(s => ({ hexIndex: s.hexIndex, edge: s.edge })) : []);
-        setHarbourTypes(hb ? hb.types : null);
+        if (hb) foldedHarbours = mergeHarbourEvidence(harbourEvidenceSoFar, evidenceFromReading(hb));
+        const resolved = resolveHarbours(foldedHarbours);
+        const confirmed = resolved !== null && resolved.unsure.length === 0;
+        const slots = confirmed
+          ? resolved.slots.map(sl => ({ hexIndex: sl.hexIndex, edge: sl.edge }))
+          : null;
+        setHarbourSlots(slots);
+        setHarbourUnsure(
+          resolved ? resolved.unsure.map(sl => ({ hexIndex: sl.hexIndex, edge: sl.edge })) : [],
+        );
+        setHarbourTypes(resolved ? resolved.types : null);
+        if (slots && resolved) {
+          const typeByKey = new Map(
+            resolved.slots.map((sl, i) => [`${sl.hexIndex}:${sl.edge}`, resolved.types[i]!]),
+          );
+          const ports = portsFromDetectedSlots(slots).map(pt => ({
+            ...pt,
+            type: typeByKey.get(`${pt.hexIndex}:${pt.edge}`) ?? pt.type,
+          }));
+          setProgress(prev => (prev ? { ...prev, ports } : prev));
+        }
       } catch {
-        // Never let harbours cost a tile read. They are the smaller prize.
-        setHarbourSlots(null);
-        setHarbourUnsure([]);
-        setHarbourTypes(null);
+        // Never let harbours cost a tile read. A shot whose harbour read threw
+        // adds nothing, and whatever earlier shots established stands.
       }
+      setHarbourEvidenceSoFar(foldedHarbours);
 
       // A second aimed shot is deliberate evidence, so merging is safe here in a
-      // way it was not for a drifting loop.
-      const merged = mergeEvidence(evidence, reading.evidence);
+      // way it was not for a drifting loop. Measured: merging a shot whose
+      // corners were 3% off onto a good one left the board unchanged
+      // (tools/read_stages_check.mjs), because the bad shot's evidence is weak.
+      const merged = mergeEvidence(evidence, shot);
       setEvidence(merged);
       const counted = reconcileBoardFromEvidence(merged).hexes;
       setBoard(counted);
@@ -503,8 +602,9 @@ export default function CatanCaptureScreen() {
       setPhase('adjust');
     } finally {
       setReadingBoard(false);
+      setProgress(null);
     }
-  }, [evidence, applyOcr]);
+  }, [evidence, harbourEvidenceSoFar, applyOcr]);
 
   /**
    * Read the held frame with one corner set, without merging into the session.
@@ -702,6 +802,7 @@ ${JSON.stringify(payload)}`,
     setHarbourSlots(null);
     setHarbourUnsure([]);
     setHarbourTypes(null);
+    setHarbourEvidenceSoFar(emptyHarbourEvidence());
     setShots(0);
     setPhase('aiming');
   };
@@ -780,13 +881,36 @@ ${JSON.stringify(payload)}`,
   // acknowledged unmistakably, because the work behind it takes seconds.
   if (phase === 'reading' && readingBoard) {
     return (
-      <View style={[s.container, s.centred, { backgroundColor: colors.background, padding: 24 }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={[s.title, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
-          Reading your board…
-        </Text>
-        <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-          Tiles, numbers and harbours. This takes a few seconds — keep the app open.
+      <View
+        style={[
+          s.container,
+          {
+            backgroundColor: colors.background,
+            paddingTop: insets.top + (Platform.OS === 'web' ? 60 : 8),
+            paddingHorizontal: 16,
+          },
+        ]}
+      >
+        <View style={s.readingHead}>
+          <ActivityIndicator color={colors.primary} />
+          <View style={{ flex: 1 }}>
+            <Text style={[s.readingTitle, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
+              Reading your board…
+            </Text>
+            <Text style={[s.readingStage, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
+              {progress?.stage ?? 'Starting…'}
+            </Text>
+          </View>
+        </View>
+        {/* The board as it is read: tiles first, numbers a few at a time,
+            harbours last. Nothing is shown before the reader has looked. */}
+        <CatanHexGrid
+          hexes={progress?.board ?? makeEmptyLayout()}
+          ports={progress?.ports ?? undefined}
+          style={{ marginTop: 12 }}
+        />
+        <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginTop: 12 }]}>
+          Keep the app open — this takes a few seconds.
         </Text>
       </View>
     );
@@ -1026,6 +1150,14 @@ ${JSON.stringify(payload)}`,
     const unsure = board.filter(h => h.confidence === 'low').length;
     /** Hexes where the evidence itself was thin, so another angle may settle it. */
     const thinEvidence = confidences.filter(c => c < CONFIDENCE_THRESHOLD).length;
+    /** Confirmed harbours with the types read so far, for the map. */
+    const reviewPorts: CatanPortDef[] | undefined = harbourSlots
+      ? portsFromDetectedSlots(harbourSlots).map(pt => {
+          const i = harbourSlots.findIndex(sl => sl.hexIndex === pt.hexIndex && sl.edge === pt.edge);
+          const type = i >= 0 ? harbourTypes?.[i] : undefined;
+          return type ? { ...pt, type } : pt;
+        })
+      : undefined;
     return (
       <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top + (Platform.OS === 'web' ? 60 : 8) }]}>
         <View style={[s.header, { borderBottomColor: colors.border }]}>
@@ -1042,7 +1174,32 @@ ${JSON.stringify(payload)}`,
           <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'left' }]}>
             {unsure === 0
               ? `Read all 19 tiles from ${shots} shot${shots === 1 ? '' : 's'}. Check it over — you can correct anything on the next screen.`
-              : `${unsure} tile${unsure === 1 ? '' : 's'} need${unsure === 1 ? 's' : ''} checking on the next screen.${thinEvidence > unsure ? ` Another shot from a different angle would firm up ${thinEvidence} of them.` : ' Another shot from a different angle may help.'}`}
+              : `${unsure} tile${unsure === 1 ? '' : 's'} need${unsure === 1 ? 's' : ''} checking on the next screen — amber on the map.`}
+          </Text>
+
+          {/* The board itself, not only a list. Amber tiles are the ones the
+              next screen will ask about. */}
+          <CatanHexGrid
+            hexes={board}
+            ports={reviewPorts}
+            lowConfidenceIndices={board.filter(h => h.confidence === 'low').map(h => h.index)}
+            style={{ marginTop: 12 }}
+          />
+
+          {/* Whether another shot would help, and how to take it. Worded to
+              keep the whole board in the guide: the geometry comes from the
+              corner tiles, so a close-up of the unclear corner would merge in
+              misplaced evidence. */}
+          {thinEvidence > 0 && (
+            <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'left', marginTop: 10 }]}>
+              {guidance.message}
+            </Text>
+          )}
+
+          <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'left', marginTop: 6 }]}>
+            {harbourSlots
+              ? `Harbours found${harbourEvidenceSoFar.shots > 1 ? ` across ${harbourEvidenceSoFar.shots} shots` : ''} — you will check what each one trades on the next screen.`
+              : `Harbours not confirmed yet${harbourEvidenceSoFar.shots > 1 ? ` after ${harbourEvidenceSoFar.shots} shots` : ''} — another shot may settle them, or set them on the next screen.`}
           </Text>
 
           <View style={[s.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -1181,14 +1338,14 @@ ${JSON.stringify(payload)}`,
         </TouchableOpacity>
         {shots > 0 && (
           <View style={s.pill}>
-            <Text style={[s.pillText, { fontFamily: 'Inter_600SemiBold' }]}>{readyCount}/19</Text>
+            <Text style={[s.pillText, { fontFamily: 'Inter_600SemiBold' }]}>{readyCount}/19{harbourSlots ? ' · harbours ✓' : ''}</Text>
           </View>
         )}
       </View>
 
       <View style={[s.bottomBar, { paddingBottom: insets.bottom + 24 }]}>
         <View style={s.statusPill}>
-          <Text style={[s.statusText, { fontFamily: 'Inter_500Medium' }]} numberOfLines={2}>
+          <Text style={[s.statusText, { fontFamily: 'Inter_500Medium' }]} numberOfLines={3}>
             {error
               ? error
               : phase === 'reading'
@@ -1227,6 +1384,9 @@ ${JSON.stringify(payload)}`,
 
 const s = StyleSheet.create({
   container: { flex: 1 },
+  readingHead: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
+  readingTitle: { fontSize: 18 },
+  readingStage: { fontSize: 13, marginTop: 2 },
   centred: { alignItems: 'center', justifyContent: 'center', gap: 12 },
   title: { fontSize: 18, marginTop: 8 },
   body: { fontSize: 14, lineHeight: 20, textAlign: 'center' },

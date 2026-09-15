@@ -1434,3 +1434,54 @@ not been measured, and every type is checked by the player regardless.
 
 `balanceForBoard` costs 169ms per 3072x4080 frame on a desktop after moving the
 interpolation weights out of the per-pixel loop; the first version took 782ms.
+
+## The board fills in while it is read, and shots build on each other
+
+Asked for after round three: guidance while lining up, and results confirmed as
+they come rather than behind a spinner. Continuous reading was NOT brought back
+(see the top of `app/catan-capture.tsx` for why it was removed: drifting hands
+made frames disagree, and summed evidence then went backwards). What was built
+uses the machinery that already worked.
+
+**Measured before building** (`tools/read_stages_check.mjs`, desktop, 3072x4080):
+
+    stage          median ms
+    balance            174
+    tile colour          6      <- effectively free
+    numbers            124
+    harbours           124
+
+    condition                     tiles    numbers  unclear tiles
+    one shot, even light         131/133   126/126      3.4
+    two photos, even light       133/133   126/126      2.0
+    one shot, light on left      115/133   126/126      5.9
+    two shots, light moved       128/133   126/126      4.4
+    one shot, corners off 3%      21/133    14/126     19.0
+    good shot + 3% off shot      131/133   126/126      3.4
+
+So tiles can go up immediately, and a second deliberate shot helps without a
+badly aligned one doing damage: its evidence is weak, so it cannot outvote the
+good shot. The per-shot corner step is what keeps it that way.
+
+**Chunked number reads are exactly a full read.** `readFrame` with
+`decodeTokensFor` in chunks of six, stitched together, produced identical
+evidence on 7 of 7 real frames at no extra cost (`tools/chunked_read_check.mjs`).
+That is what makes it safe for the reading screen to show numbers arriving a few
+at a time. Numbers are only drawn once READ: the solver would otherwise put a
+plausible number on every hex first and the board would flicker.
+
+**Harbours now merge across shots** (`services/vision/harbourEvidence.ts`). They
+used to be re-read from scratch each shot, last shot wins, so a second photo
+taken to fix two tiles could quietly make the harbours worse. Edge scores are
+SUMMED (so two weak shots can confirm a frame neither could alone); card
+features are AVERAGED per edge over the shots that measured them (so one
+washed-out card is outvoted rather than added, and a declined card adds
+nothing).
+
+**Never tell the player to point the camera at a region.** The old guidance said
+"point the camera at the top-left and shoot again". Every shot takes its
+geometry from the four corner tiles lining up with the guide, so a close-up has
+no corners, its samples land on the wrong tiles, and merging it drags good
+evidence down: the same failure the live loop died of. The guidance now says to
+keep the whole board in the guide and shift a little, which moves the glare and
+shadow while keeping the geometry.
