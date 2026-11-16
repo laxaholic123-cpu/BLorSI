@@ -606,7 +606,7 @@ export function profileRolls(
         timeline.get(player.id)!.push(0);
         continue;
       }
-      const { buildings, weightsByValue } = production(player.id, roll.turnNumber);
+      const { buildings, weightsByValue } = production(player.id, roll.turnNumber, roll.timestamp);
       if (buildings.length === 0) continue;
       const paid = weightsByValue[roll.value] ?? 0;
       timeline.get(player.id)!.push(paid);

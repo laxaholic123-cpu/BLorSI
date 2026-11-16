@@ -58,6 +58,20 @@ function playSession(rng) {
   const used = new Set();
   let seq = 0;
   const nextId = () => `e${seq++}`;
+  /*
+    A clock that moves, and a private order stamp.
+
+    The shipped stats decide whether a build or robber move had happened by a
+    given roll from TIMESTAMPS within the round. The simulated game used to
+    stamp everything with the real clock, so a whole game landed in a few
+    milliseconds and order was lost. `tick()` advances a second per action, and
+    `_n` records the true order of creation, which the app never sees — the
+    independent recount uses `_n`, so it checks the timestamp rule against what
+    actually happened rather than against itself.
+  */
+  let clock = Date.UTC(2026, 0, 1, 19, 0, 0);
+  let order = 0;
+  const tick = () => { clock += 1000; return new Date(clock).toISOString(); };
 
   // Opening: two settlements each, on distinct corners.
   for (let round = 0; round < 2; round++) {
@@ -70,7 +84,7 @@ function playSession(rng) {
       exposure.push({
         id: nextId(), sessionId: 's', playerId: p.id,
         eventType: 'initialSettlement', turnNumber: 0,
-        timestamp: new Date().toISOString(),
+        timestamp: tick(), _n: order++,
         affectedNumbers: numbersAt(corner), hexIdentifiers: [corner],
         productionWeight: 1, robberBlocked: false,
       });
@@ -85,7 +99,7 @@ function playSession(rng) {
       rolls.push({
         id: `r${rolls.length}`, sessionId: 's', playerId: p.id, value: v,
         turnNumber: round, sequenceNumber: rolls.length + 1,
-        timestamp: new Date().toISOString(), source: 'touchscreen',
+        timestamp: tick(), _n: order++, source: 'touchscreen',
       });
 
       // A seven moves the robber to a random tile — through the real service,
@@ -93,11 +107,12 @@ function playSession(rng) {
       if (v === 7) {
         const hexIndex = Math.floor(rng() * 19);
         const snapshot = boardStateAtTurn(exposure, PLAYERS.map(x => x.id), round);
+        const at = tick();
         exposure.push(...robberMoveEvents({
           sessionId: 's', hexIndex,
           hexNumber: hexes[hexIndex]?.number ?? null,
           turnNumber: round, snapshot, events: exposure,
-        }));
+        }).map(e => ({ ...e, timestamp: at, _n: order++ })));
       }
 
       // Occasionally build or upgrade.
@@ -111,7 +126,7 @@ function playSession(rng) {
           exposure.push({
             id: nextId(), sessionId: 's', playerId: p.id,
             eventType: 'settlementBuilt', turnNumber: round,
-            timestamp: new Date().toISOString(),
+            timestamp: tick(), _n: order++,
             affectedNumbers: numbersAt(corner), hexIdentifiers: [corner],
             productionWeight: 1, robberBlocked: false,
           });
@@ -125,7 +140,7 @@ function playSession(rng) {
           exposure.push({
             id: nextId(), sessionId: 's', playerId: p.id,
             eventType: 'cityUpgrade', turnNumber: round,
-            timestamp: new Date().toISOString(),
+            timestamp: tick(), _n: order++,
             affectedNumbers: target.affectedNumbers,
             hexIdentifiers: target.hexIdentifiers,
             productionWeight: 2, robberBlocked: false,
@@ -149,12 +164,14 @@ function independentLedger(playerId, rolls, exposure, corners) {
   let robbed = 0;
 
   for (const roll of rolls) {
-    const T = roll.turnNumber;
+    // Had this event happened by this roll? The opening always has; anything
+    // else by true creation order. Deliberately not the app's timestamp rule.
+    const happened = e => e.turnNumber === 0 || e._n < roll._n;
 
-    // Buildings: latest event per location, at or before this turn.
+    // Buildings: latest event per location, as of this roll.
     const byLocation = new Map();
     for (const e of mine) {
-      if (e.turnNumber > T) continue;
+      if (!happened(e)) continue;
       if (!['initialSettlement', 'settlementBuilt', 'cityUpgrade',
             'buildingRemoved', 'manualCorrection'].includes(e.eventType)) continue;
       const loc = e.hexIdentifiers?.[0];
@@ -165,7 +182,7 @@ function independentLedger(playerId, rolls, exposure, corners) {
     // Robber: started minus ended, by block id, keeping the hex.
     const live = new Map();
     for (const e of mine) {
-      if (e.turnNumber > T) continue;
+      if (!happened(e)) continue;
       const id = e.hexIdentifiers?.[0];
       if (!id) continue;
       if (e.eventType === 'robberBlockStarted') {

@@ -82,7 +82,9 @@ export const correctRoll = (
     ...original,
     id: generateId(),
     value: newValue,
-    timestamp: new Date().toISOString(),
+    // Keeps the ORIGINAL time: stats order builds and robber moves against
+    // roll times within a round, and the roll happened then, not now.
+    timestamp: original.timestamp,
     source: 'corrected',
     correctionOfEventId: originalEventId,
     deletedAt: undefined,

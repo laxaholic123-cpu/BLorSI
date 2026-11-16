@@ -283,7 +283,7 @@ function ledger(input: GameQuestionInput): RollLedger {
   }
   for (const roll of rolls) {
     for (const p of input.players) {
-      const { buildings, blockDetails, weightsByValue } = production(p.id, roll.turnNumber);
+      const { buildings, blockDetails, weightsByValue } = production(p.id, roll.turnNumber, roll.timestamp);
       // The player's total comes from the same table the headline stats use, so
       // "whose dice fed me" always adds up to their production figure.
       const total = weightsByValue[roll.value] ?? 0;

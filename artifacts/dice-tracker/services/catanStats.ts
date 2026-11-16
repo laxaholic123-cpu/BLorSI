@@ -131,13 +131,15 @@ export function getActiveRobberBlockDetails(
   playerId: string,
   turnNumber: number,
   allEvents: CatanPlayerExposureEvent[],
+  /** The roll this is being asked for; see `hasHappened`. */
+  asOf?: string,
 ): { numbers: number[]; hexIndex: number | null }[] {
   const live = new Map<string, { numbers: number[]; hexIndex: number | null }>();
   const relevant = allEvents
     .filter(
       e =>
         e.playerId === playerId &&
-        e.turnNumber <= turnNumber &&
+        hasHappened(e, turnNumber, asOf) &&
         (e.eventType === 'robberBlockStarted' || e.eventType === 'robberBlockEnded'),
     )
     .sort((a, b) => a.turnNumber - b.turnNumber);
@@ -187,6 +189,38 @@ export function netWeightForNumber(
   return Math.max(0, gross - blocked);
 }
 
+// ─── When does an event count? ───────────────────────────────────────────────
+
+/**
+ * Has this event happened yet, as of a given roll?
+ *
+ * `turnNumber` is a ROUND, shared by every roll in it. Resolving state with
+ * `event.turnNumber <= roll.turnNumber` alone therefore applied a settlement
+ * built by the third player to the first two players' rolls of that round,
+ * thrown before it existed, and treated a robber moved mid-round as having sat
+ * on its new tile all round. Up to a round of error per build or robber move.
+ *
+ * Within the SAME round the event must also have been recorded no later than
+ * the roll. Earlier rounds always count. Round 0 (the opening) always counts,
+ * and deliberately ignores timestamps: editing the opening mid-game re-stamps
+ * those events with the current time, and they must still apply from the start.
+ * Without `asOf`, or with a timestamp that cannot be parsed, the old round rule
+ * stands, so older data and "state at the end of round N" queries are unchanged.
+ */
+export function hasHappened(
+  event: { turnNumber: number; timestamp: string },
+  turnNumber: number,
+  asOf?: string,
+): boolean {
+  if (event.turnNumber < turnNumber) return true;
+  if (event.turnNumber > turnNumber) return false;
+  if (asOf === undefined || event.turnNumber === 0) return true;
+  const at = Date.parse(asOf);
+  const when = Date.parse(event.timestamp);
+  if (!Number.isFinite(at) || !Number.isFinite(when)) return true;
+  return when <= at;
+}
+
 // ─── Building state (time-aware) ──────────────────────────────────────────────
 
 /**
@@ -201,6 +235,8 @@ export function getBuildingStatesAtTurn(
   playerId: string,
   turnNumber: number,
   allEvents: CatanPlayerExposureEvent[],
+  /** The roll this is being asked for; see `hasHappened`. */
+  asOf?: string,
 ): BuildingState[] {
   const BUILDING_TYPES: CatanPlayerExposureEvent['eventType'][] = [
     'initialSettlement',
@@ -215,7 +251,7 @@ export function getBuildingStatesAtTurn(
     .filter(
       e =>
         e.playerId === playerId &&
-        e.turnNumber <= turnNumber &&
+        hasHappened(e, turnNumber, asOf) &&
         BUILDING_TYPES.includes(e.eventType),
     )
     .sort((a, b) => a.turnNumber - b.turnNumber);
@@ -259,12 +295,14 @@ export function getActiveRobberBlockedNumbers(
   playerId: string,
   turnNumber: number,
   allEvents: CatanPlayerExposureEvent[],
+  /** The roll this is being asked for; see `hasHappened`. */
+  asOf?: string,
 ): number[] {
   const robberEvents = allEvents
     .filter(
       e =>
         e.playerId === playerId &&
-        e.turnNumber <= turnNumber &&
+        hasHappened(e, turnNumber, asOf) &&
         (e.eventType === 'robberBlockStarted' || e.eventType === 'robberBlockEnded'),
     )
     .sort((a, b) => a.turnNumber - b.turnNumber);
@@ -305,21 +343,51 @@ export interface TurnProduction {
 
 export function makeTurnProduction(
   exposureEvents: readonly CatanPlayerExposureEvent[],
-): (playerId: string, turnNumber: number) => TurnProduction {
-  const byPlayer = new Map<string, CatanPlayerExposureEvent[]>();
+): (playerId: string, turnNumber: number, asOf?: string) => TurnProduction {
+  const byPlayer = new Map<string, {
+    events: CatanPlayerExposureEvent[];
+    /** Sorted times of the events recorded in each round, for the cache key. */
+    timesByTurn: Map<number, number[]>;
+  }>();
   const cache = new Map<string, TurnProduction>();
-  return (playerId, turnNumber) => {
-    const key = `${playerId}:${turnNumber}`;
-    const hit = cache.get(key);
-    if (hit) return hit;
+
+  return (playerId, turnNumber, asOf) => {
     let mine = byPlayer.get(playerId);
     if (!mine) {
-      mine = exposureEvents.filter(e => e.playerId === playerId);
+      const events = exposureEvents.filter(e => e.playerId === playerId);
+      const timesByTurn = new Map<number, number[]>();
+      for (const e of events) {
+        if (e.turnNumber === 0) continue;
+        const when = Date.parse(e.timestamp);
+        if (!Number.isFinite(when)) continue;
+        const list = timesByTurn.get(e.turnNumber) ?? [];
+        list.push(when);
+        timesByTurn.set(e.turnNumber, list);
+      }
+      for (const list of timesByTurn.values()) list.sort((x, y) => x - y);
+      mine = { events, timesByTurn };
       byPlayer.set(playerId, mine);
     }
-    const buildings = getBuildingStatesAtTurn(playerId, turnNumber, mine);
-    const blockedNumbers = getActiveRobberBlockedNumbers(playerId, turnNumber, mine);
-    const blockDetails = getActiveRobberBlockDetails(playerId, turnNumber, mine);
+
+    // State only changes when an event lands, so rolls between the same two
+    // events of a round share one answer. The key is how many of this round's
+    // events had happened by the roll.
+    let seen = -1;
+    const at = asOf === undefined ? NaN : Date.parse(asOf);
+    if (Number.isFinite(at)) {
+      seen = 0;
+      for (const when of mine.timesByTurn.get(turnNumber) ?? []) {
+        if (when <= at) seen++;
+        else break;
+      }
+    }
+    const key = `${playerId}:${turnNumber}:${seen}`;
+    const hit = cache.get(key);
+    if (hit) return hit;
+
+    const buildings = getBuildingStatesAtTurn(playerId, turnNumber, mine.events, asOf);
+    const blockedNumbers = getActiveRobberBlockedNumbers(playerId, turnNumber, mine.events, asOf);
+    const blockDetails = getActiveRobberBlockDetails(playerId, turnNumber, mine.events, asOf);
     const weightsByValue: number[] = new Array(13).fill(0);
     for (const num of CATAN_NUMBERS) {
       weightsByValue[num] = netWeightForNumber(buildings, num, blockedNumbers, blockDetails);
@@ -350,54 +418,18 @@ export function computePlayerProductionStats(
   // simulator then replays these same turns with fair dice.
   const perRollWeights: number[][] = [];
 
-  /**
-   * Per-TURN state, computed once and shared by every roll in that turn.
-   *
-   * This loop used to call three whole-event-list scans per ROLL — building
-   * state, blocked numbers, block details — when all three only change when the
-   * turn does. With four players that is the same answer computed four times,
-   * and each scan walks every event in the game, so the cost grew with the
-   * square of the log.
-   *
-   * Measured (`tools/perf_probe.mjs`) before the change: 3.7ms at 80 rolls and
-   * 21.5ms at 240 — 5.8x the work for 3x the rolls — and the whole thing reran
-   * every time a roll landed. Reported from a device as "it slows down a bit as
-   * the number of rolls gets higher, feels weird".
-   *
-   * Worth recording that the obvious suspect was WRONG: `getAllIntersections`
-   * rebuilt 54 corners on every call from inside the number loop, which looked
-   * damning and turned out to be worth ~0.1ms of 21.5. It is cached now anyway,
-   * but caching it alone changed nothing. The scans were the cost.
-   */
-  const turnCache = new Map<number, {
-    buildings: BuildingState[];
-    weightsByValue: number[];
-  }>();
+  /*
+    State as of each ROLL, through the shared lookup. It caches per stretch of a
+    round between two events, which keeps the cost flat: this loop once rescanned
+    every event per roll, measured at 21.5ms for 240 rolls and growing with the
+    square of the log (`tools/perf_probe.mjs`), reported from a device as the app
+    slowing down as the game went on.
+  */
+  const production = makeTurnProduction(playerEvents);
 
   for (const roll of activeRolls) {
-    const T = roll.turnNumber;
     const V = roll.value;
-
-    let cached = turnCache.get(T);
-    if (!cached) {
-      const buildings = getBuildingStatesAtTurn(player.id, T, playerEvents);
-      const blockedNumbers = getActiveRobberBlockedNumbers(player.id, T, playerEvents);
-      // Blocks in full, so a block that names its hex charges exactly the
-      // buildings on that hex instead of the largest-single-share estimate.
-      const blockDetails = getActiveRobberBlockDetails(player.id, T, playerEvents);
-
-      // Net weight for every possible value on this turn (index 0/1 unused).
-      const weightsByValue: number[] = new Array(13).fill(0);
-      for (const num of CATAN_NUMBERS) {
-        weightsByValue[num] = netWeightForNumber(buildings, num, blockedNumbers, blockDetails);
-      }
-      cached = { buildings, weightsByValue };
-      turnCache.set(T, cached);
-    }
-    const { buildings } = cached;
-    // Copied per roll: the simulator downstream keeps these arrays, and handing
-    // it the same reference for every roll in a turn would alias them.
-    const weightsByValue = cached.weightsByValue;
+    const { buildings, weightsByValue } = production(player.id, roll.turnNumber, roll.timestamp);
     perRollWeights.push(weightsByValue);
 
     // ── Actual production ──────────────────────────────────────────────────
