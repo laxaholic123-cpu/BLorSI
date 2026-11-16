@@ -21,9 +21,11 @@ import { DiceGrid } from '@/components/DiceGrid';
 import {
   getNextPlayerIndex,
   getPrevPlayerIndex,
+  correctRoll,
   recordRoll,
   undoLastRoll,
 } from '@/services/rollInput';
+import { RollHistoryModal } from '@/components/RollHistoryModal';
 import { playDoneSound, playRollSound, playUndoSound } from '@/services/sound';
 import { confirmEndGame } from '@/services/endGame';
 
@@ -37,6 +39,7 @@ export default function ActiveGameScreen() {
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState('');
   const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [showRolls, setShowRolls] = useState(false);
 
   const webTop = Platform.OS === 'web' ? 67 : 0;
   const webBottom = Platform.OS === 'web' ? 34 : 0;
@@ -112,6 +115,17 @@ export default function ActiveGameScreen() {
       } catch {
         await loadActiveGame().catch(() => undefined);
       }
+    }
+  };
+
+  /** Change what an earlier roll was. Persist first; roll back memory if it fails. */
+  const handleCorrectRoll = async (eventId: string, newValue: number) => {
+    if (!activeSession) return;
+    const newEvents = correctRoll(eventId, newValue, rollEvents);
+    try {
+      await persistRollEvents(activeSession.id, newEvents);
+    } catch {
+      setRollEvents(rollEvents);
     }
   };
 
@@ -440,6 +454,11 @@ export default function ActiveGameScreen() {
           </Text>
         </TouchableOpacity>
 
+        <TouchableOpacity style={[styles.controlBtn, { opacity: canUndo ? 1 : 0.35 }]} onPress={() => setShowRolls(true)} disabled={!canUndo} accessibilityRole="button" accessibilityLabel="See and fix past rolls" accessibilityState={{ disabled: !canUndo }}>
+          <Ionicons name="list-outline" size={22} color={colors.foreground} />
+          <Text style={[styles.controlBtnText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>Rolls</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity
           style={styles.controlBtn}
           onPress={() => router.push('/stats' as any)}
@@ -453,6 +472,16 @@ export default function ActiveGameScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+
+      <RollHistoryModal
+        visible={showRolls}
+        onClose={() => setShowRolls(false)}
+        rollEvents={rollEvents}
+        players={activeSession?.players ?? []}
+        minValue={activeSession?.minimumRoll ?? 2}
+        maxValue={activeSession?.maximumRoll ?? 12}
+        onCorrect={(id, v) => { void handleCorrectRoll(id, v); }}
+      />
 
       {/* ── End game confirmation modal ───────────────────────── */}
       <Modal

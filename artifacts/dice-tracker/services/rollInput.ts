@@ -67,8 +67,13 @@ export const undoLastRoll = (
 };
 
 /**
- * Create a roll correction: soft-delete the original event and append a new
- * event with correctionOfEventId pointing to the original.
+ * Create a roll correction: soft-delete the original event and put a new event
+ * with correctionOfEventId pointing to it IN THE SAME PLACE in the list.
+ *
+ * In place, not appended. Several things read "the last event in the array" as
+ * the latest roll — undo, the live callout, the roll flash. Appended, a fix to
+ * a roll from three turns ago became the latest roll, and the next Undo would
+ * have removed the correction instead of the roll actually thrown last.
  */
 export const correctRoll = (
   originalEventId: string,
@@ -88,14 +93,15 @@ export const correctRoll = (
     source: 'corrected',
     correctionOfEventId: originalEventId,
     deletedAt: undefined,
+    // The two dice no longer add up to the new value.
+    individualDiceValues: undefined,
   };
 
-  return [
-    ...currentEvents.map(e =>
-      e.id === originalEventId ? { ...e, deletedAt: new Date().toISOString() } : e,
-    ),
-    correction,
-  ];
+  return currentEvents.flatMap(e =>
+    e.id === originalEventId
+      ? [{ ...e, deletedAt: new Date().toISOString() }, correction]
+      : [e],
+  );
 };
 
 // ─── Player navigation ────────────────────────────────────────────────────────

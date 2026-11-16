@@ -1621,3 +1621,45 @@ only in the corner A/B diagnostic.
 after any scripted edit: it found 17 leftovers, most left behind by patches.
 
 **UPDATE: the per-round approximation above is FIXED (3f3ba36).** `hasHappened` in `catanStats.ts` orders builds and robber moves against roll timestamps within a round; round 0 always applies. `correctRoll` keeps the original timestamp for the same reason. Verified by `tools/capture_audit.mjs` recounting by true creation order: 0 mismatches over 340 ledgers; the old rule had misplaced 2.7% of production.
+
+
+## Roll correction, developer tools, and where the big screens went
+
+**Correcting an older roll.** `RollHistoryModal` (a "Rolls" button on both game
+screens) lists every roll and lets one be changed through `correctRoll`. Two
+things about `correctRoll` that are easy to get wrong:
+
+  - The correction goes IN PLACE of the original in the event array, not on the
+    end. Undo, the live callout and the roll flash all read "the last event in
+    the array" as the latest roll; appended, a fix to an old roll became the
+    latest roll and the next Undo removed the fix.
+  - It keeps the ORIGINAL timestamp, because stats order builds and robber moves
+    against roll times within a round.
+
+Changing a roll to or from a 7 does not move the robber; the sheet says so.
+
+**Developer tools are a setting, off by default** (`AppSettings.developerTools`,
+toggle at the bottom of Settings). It gates the capture diagnostics box, "Save
+this photo", "Set as ground truth" on the board review, and the touch probe.
+These used to be in front of every player. Turn it on before a test session if
+you want to save a failing capture.
+
+**The five big screens were split, and the pattern matters for future edits.**
+Each screen's StyleSheet now lives beside its extracted pieces, and the pieces
+are presentational: they take values and callbacks and own no game state.
+
+    app/catan-board-scan.tsx    1800 -> 1414   components/boardScan/{Panels,styles}
+    app/results.tsx             1506 -> 1194   components/results/{AccoladeCards,bits,styles}
+    app/catan-capture.tsx       1487 -> 1149   hooks/useCaptureDiagnostics, components/capture/
+    app/active-catan.tsx        1340 -> 1186   components/game/{PlayerPickerModal,activeCatanStyles}
+    app/catan-development.tsx   1029 ->  929   components/development/{Pickers,styles}
+
+Nothing under `app/` may hold a non-screen module: expo-router treats every file
+there as a route.
+
+Trap hit while extracting: replacing `s.` with `styles.` by plain text also
+rewrote `colors.` to `colorstyles.` and `mismatches.` to `mismatchestyles.`.
+Match on a word boundary, and run `tsc --noUnusedLocals` straight after.
+
+Fixed on the way: tapping the backdrop on the board review closed every sheet
+except the harbour one.

@@ -132,6 +132,12 @@ export interface AppSettings {
   defaultPlayerCount: number;
   defaultAutoAdvance: boolean;
   statisticsDetailLevel: StatisticsDetailLevel;
+  /**
+   * Shows the board-reader diagnostics (answer key, corner A/B, export, save
+   * photo) and the touch probe. Off by default so players never meet them;
+   * stored settings without the field read as off through DEFAULT_SETTINGS.
+   */
+  developerTools: boolean;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -145,6 +151,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultPlayerCount: 4,
   defaultAutoAdvance: true,
   statisticsDetailLevel: 'standard',
+  developerTools: false,
 };
 
 /**

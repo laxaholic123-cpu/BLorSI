@@ -335,14 +335,27 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Development builds only — __DEV__ is false in any release bundle, so
-            this cannot ship. The probe answers "which SVG primitives receive
-            taps on THIS build", which is the question behind three separate
-            multi-week bugs in this project. */}
-        {__DEV__ && (
-          <>
-            <SectionLabel label="DIAGNOSTICS · DEV BUILDS ONLY" colors={colors} />
-            <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        {/* Tools for working on the app, off unless switched on. They used to
+            sit in front of every player: an answer-key button on the board
+            review, a diagnostics box under the corner step. */}
+        <SectionLabel label="DEVELOPER" colors={colors} />
+        <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <SettingsRow
+            label="Developer tools"
+            icon="construct-outline"
+            colors={colors}
+            right={
+              <Switch
+                value={settings.developerTools}
+                onValueChange={val => { haptic(); void updateSettings({ developerTools: val }); }}
+                trackColor={{ false: colors.border, true: colors.primary }}
+                thumbColor="#ffffff"
+              />
+            }
+          />
+          {settings.developerTools && (
+            <>
+              <Divider colors={colors} />
               <TouchableOpacity
                 style={settingsStyles.row}
                 onPress={() => { haptic(); router.push('/touch-probe' as any); }}
@@ -354,9 +367,9 @@ export default function SettingsScreen() {
                 </Text>
                 <Ionicons name="chevron-forward" size={18} color={colors.mutedForeground} />
               </TouchableOpacity>
-            </View>
-          </>
-        )}
+            </>
+          )}
+        </View>
 
         <Text style={[styles.version, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
           Skill Check · v1.0.0{'\n'}

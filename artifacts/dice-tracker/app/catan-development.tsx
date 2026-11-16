@@ -20,7 +20,6 @@ import {
   Alert,
   Platform,
   ScrollView,
-  StyleSheet,
   Text,
   TouchableOpacity,
   View,
@@ -35,6 +34,8 @@ import { useSettings } from '@/context/SettingsContext';
 import { getBuildingStatesAtTurn } from '@/services/catanStats';
 import { allRoads, buildProblem, roadsOf } from '@/services/catanRoads';
 import { CatanHexGrid } from '@/components/CatanHexGrid';
+import { NumberPicker, PlayerSelector } from '@/components/development/Pickers';
+import { styles } from '@/components/development/styles';
 import { allEdges } from '@/services/catanPlacement';
 import {
   boardStateAtTurn,
@@ -46,8 +47,6 @@ import { loadActiveBoard, type ActiveBoard } from '@/services/storage';
 import { generateId } from '@/types/models';
 import type { CatanPlayerExposureEvent } from '@/types/models';
 
-const CATAN_NUMBERS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12];
-
 /**
  * How many roads one action may lay.
  *
@@ -56,7 +55,6 @@ const CATAN_NUMBERS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12];
  * reading anything.
  */
 const MAX_ROADS_AT_ONCE = 2;
-const PIPS: Record<number, number> = { 2:1,3:2,4:3,5:4,6:5,8:5,9:4,10:3,11:2,12:1 };
 
 type ActionType = 'add_settlement' | 'build_road' | 'upgrade_city' | 'remove_building' | 'start_robber' | 'end_robber' | 'correct_exposure' | null;
 
@@ -432,52 +430,20 @@ export default function CatanDevelopmentScreen() {
   };
 
   const renderPlayerSelector = () => (
-    <View style={styles.subsection}>
-      <Text style={[styles.subLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>SELECT PLAYER</Text>
-      {activeSession.players.map(player => {
-        const selected = selectedPlayerId === player.id;
-        return (
-          <TouchableOpacity
-            key={player.id}
-            style={[styles.playerBtn, {
-              backgroundColor: selected ? player.color + '22' : colors.card,
-              borderColor: selected ? player.color : colors.border,
-            }]}
-            onPress={() => { haptic(); setSelectedPlayerId(selected ? null : player.id); setSelectedLocationId(null); setSelectedNumbers([]); }}
-          >
-            <View style={[styles.playerDot, { backgroundColor: player.color }]} />
-            <Text style={[styles.playerBtnText, { color: colors.foreground, fontFamily: selected ? 'Inter_700Bold' : 'Inter_400Regular' }]}>
-              {player.displayName}
-            </Text>
-            {selected && <Ionicons name="checkmark-circle" size={18} color={player.color} />}
-          </TouchableOpacity>
-        );
-      })}
-    </View>
+    <PlayerSelector
+      players={activeSession.players}
+      selectedId={selectedPlayerId}
+      onSelect={id => {
+        haptic();
+        setSelectedPlayerId(id);
+        setSelectedLocationId(null);
+        setSelectedNumbers([]);
+      }}
+    />
   );
 
   const renderNumberPicker = (label = 'SELECT HEX NUMBERS') => (
-    <View style={styles.subsection}>
-      <Text style={[styles.subLabel, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }]}>{label}</Text>
-      <View style={styles.numGrid}>
-        {CATAN_NUMBERS.map(num => {
-          const selected = selectedNumbers.includes(num);
-          return (
-            <TouchableOpacity
-              key={num}
-              style={[styles.numBtn, {
-                backgroundColor: selected ? colors.primary : colors.card,
-                borderColor: selected ? colors.primary : colors.border,
-              }]}
-              onPress={() => toggleNumber(num)}
-            >
-              <Text style={[styles.numBtnValue, { color: selected ? colors.primaryForeground : colors.foreground, fontFamily: 'Inter_700Bold' }]}>{num}</Text>
-              <Text style={[styles.numBtnPips, { color: selected ? colors.primaryForeground : colors.mutedForeground }]}>{'·'.repeat(PIPS[num] ?? 1)}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-    </View>
+    <NumberPicker label={label} selected={selectedNumbers} onToggle={toggleNumber} />
   );
 
   const renderBuildingPicker = (label: string) => (
@@ -961,51 +927,3 @@ export default function CatanDevelopmentScreen() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  centered: { alignItems: 'center', justifyContent: 'center', gap: 16 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 14, borderBottomWidth: 1 },
-  headerTitle: { fontSize: 18 },
-  closeBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-
-  scroll: { padding: 16, gap: 10 },
-  chosenRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 2 },
-  chosenTitle: { fontSize: 17, flex: 1 },
-  changeLink: { fontSize: 13 },
-  sectionLabel: { fontSize: 11, letterSpacing: 1.2, marginBottom: 4 },
-
-  actionCard: { flexDirection: 'row', alignItems: 'flex-start', padding: 14, borderRadius: 12, borderWidth: 1, gap: 12 },
-  actionCardContent: { flex: 1, gap: 2 },
-  actionCardTitle: { fontSize: 15 },
-  actionCardDesc: { fontSize: 12, lineHeight: 17 },
-
-  actionForm: { borderRadius: 12, borderWidth: 1, padding: 14, gap: 14, marginTop: 4 },
-
-  subsection: { gap: 8 },
-  subLabel: { fontSize: 10, letterSpacing: 1 },
-
-  playerBtn: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: 10, borderWidth: 1, marginBottom: 6 },
-  playerDot: { width: 10, height: 10, borderRadius: 5 },
-  playerBtnText: { flex: 1, fontSize: 15 },
-
-  numGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  numBtn: { width: 52, height: 52, borderRadius: 10, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  numBtnValue: { fontSize: 16 },
-  numBtnPips: { fontSize: 8, letterSpacing: 0.5 },
-
-  buildingBtn: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: 10, borderWidth: 1, marginBottom: 6 },
-  buildingBtnContent: { flex: 1 },
-  buildingBtnTitle: { fontSize: 14 },
-  buildingBtnSub: { fontSize: 12 },
-
-  emptyText: { fontSize: 13, fontStyle: 'italic', paddingVertical: 4 },
-
-  secondaryBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    borderWidth: 1, borderRadius: 10, paddingVertical: 10,
-  },
-  secondaryBtnText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
-  submitBtn: { paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 4 },
-  submitBtnText: { fontSize: 16 },
-});

@@ -37,7 +37,6 @@ import {
   Image,
   PanResponder,
   Platform,
-  Share,
   ScrollView,
   StyleSheet,
   Text,
@@ -46,12 +45,15 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router, useFocusEffect } from 'expo-router';
+import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import Svg, { Polygon, Circle } from 'react-native-svg';
 
 import { useColors } from '@/hooks/useColors';
+import { useSettings } from '@/context/SettingsContext';
+import { useCaptureDiagnostics } from '@/hooks/useCaptureDiagnostics';
+import { CaptureDiagnostics } from '@/components/capture/CaptureDiagnostics';
 import { loadPixelBuffer } from '@/services/vision/pixelSource';
 import { downscale, screenToImage } from '@/services/vision/pixelBuffer';
 import { boardTransform, clippedTokenHexes, readFrame } from '@/services/vision/readFrame';
@@ -77,15 +79,6 @@ import {
 } from '@/services/vision/evidenceMerge';
 import { reconcileBoardFromEvidence } from '@/services/boardConstraints';
 import { HEX_CENTERS, hexOutline } from '@/services/vision/boardGeometry';
-import {
-  buildDiagnosticPayload,
-  scoreReading,
-  summariseForHumans,
-  type ReadingSnapshot,
-} from '@/services/vision/diagnostics';
-import { loadGroundTruth } from '@/services/storage';
-import { recognizeBoardText, recognizeTokenFaces } from '@/services/vision/ocrSource';
-import { mapOcrToHexes } from '@/services/vision/ocrTokens';
 import type { HexEvidence } from '@/services/boardConstraints';
 import type { Point } from '@/services/vision/homography';
 import type { CatanHexDef, CatanPortDef, HexEdge, PortType } from '@/types/models';
@@ -163,6 +156,7 @@ const RESOURCE_LABEL: Record<string, string> = {
 export default function CatanCaptureScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { settings } = useSettings();
   const { width: screenW, height: screenH } = useWindowDimensions();
   const [permission, requestPermission] = useCameraPermissions();
 
@@ -213,8 +207,7 @@ export default function CatanCaptureScreen() {
   // ── Diagnostics (temporary; see services/vision/diagnostics.ts) ────────────
   /** The guide-derived corners, kept unmodified so they can be compared against. */
   const [guideCorners, setGuideCorners] = useState<NormPoint[] | null>(null);
-  const [groundTruth, setGroundTruth] = useState<CatanHexDef[] | null>(null);
-  const [comparison, setComparison] = useState<ReadingSnapshot[] | null>(null);
+  const diagnostics = useCaptureDiagnostics({ bufferRef, cornersRef, lastShotUri, guideCorners, corners });
   /**
    * Set when the board sits so close to the edge of the frame that some token
    * crops run off the photo.
@@ -263,25 +256,6 @@ export default function CatanCaptureScreen() {
     board: CatanHexDef[];
     ports: CatanPortDef[] | null;
   } | null>(null);
-
-  /**
-   * Reload on FOCUS, not on mount.
-   *
-   * Ground truth is set on the correction screen, which this screen reaches via
-   * router.push — so this one stays mounted underneath and coming back does not
-   * remount it. A mount-only effect therefore reads storage exactly once, before
-   * the answer exists, and reports "no ground truth set" forever afterwards
-   * while the value sits correctly in storage.
-   */
-  useFocusEffect(
-    useCallback(() => {
-      let cancelled = false;
-      loadGroundTruth().then(gt => {
-        if (!cancelled) setGroundTruth(gt);
-      });
-      return () => { cancelled = true; };
-    }, []),
-  );
 
   const guidance = guidanceForEvidence(evidence);
   const confidences = evidence.map(evidenceConfidence);
@@ -365,7 +339,7 @@ export default function CatanCaptureScreen() {
       setCorners(placed);
       setGuideCorners(seeded);
       setCornersAuto(auto);
-      setComparison(null);
+      diagnostics.reset();
       setPhase('adjust');
     } catch {
       setError('Could not read that shot. Try again.');
@@ -381,95 +355,6 @@ export default function CatanCaptureScreen() {
    * hand and far worse when they came from the guide, so letting a player mark
    * them is the closest the app can get to the conditions that worked.
    */
-  /**
-   * Overlay OCR numbers onto a read, then let the token bag repair the rest.
-   *
-   * Blob counting reads 9 of 18 at best — measured with the face located, at
-   * full resolution, on a clean overhead shot. The tokens are printed digits
-   * from a closed set of ten, so reading them as digits is the better tool, and
-   * `reconcileBoard` already enforces the deck composition on whatever comes
-   * back: exactly one 2, one 12, two of everything else.
-   *
-   * OCR is best-effort. A build without the native module, an unsupported
-   * device or a failed recognition all leave the counted numbers in place
-   * rather than clearing them.
-   */
-  const applyOcr = useCallback(
-    async (hexes: CatanHexDef[]): Promise<{ hexes: CatanHexDef[]; note?: string }> => {
-      // Wrapped end to end. A throw here rejects the promise and the caller's
-      // diagnostic row simply never appears — which is exactly what happened
-      // when nineteen concurrent bitmap decodes ran out of memory: the OCR line
-      // vanished from the export with nothing at all to say why.
-      try {
-      const buffer = bufferRef.current;
-      const pts = cornersRef.current;
-      if (!lastShotUri || !buffer || pts.length !== 4) return { hexes };
-
-      /**
-       * Per-token crops first, whole board only as a fallback.
-       *
-       * Reading the whole photo does not work: across three captures ML Kit
-       * returned harbour labels and never a number token, because an isolated
-       * digit on a cream circle is not text-shaped and its detector never
-       * proposes the region. Cropping to one token removes that problem, and
-       * removes the geometry with it — a crop from a known hex cannot land on
-       * the wrong tile.
-       */
-      const faces = await recognizeTokenFaces(lastShotUri, buffer.width / buffer.height, pts);
-      let readings: Array<{ hexIndex: number; value: number }> = faces.readings;
-      let sawSummary = faces.available
-        ? `faces: ${faces.timing ?? ''} — ${(faces.raw ?? []).slice(0, 20).join(' ')}`
-        : (faces.reason ?? 'faces unavailable');
-
-      if (readings.length === 0) {
-        // Fall back to the whole-board sweep, which at least finds something
-        // when the crops cannot be taken at all.
-        const outcome = await recognizeBoardText(
-          lastShotUri,
-          buffer.width / buffer.height,
-          pts,
-        );
-        if (!outcome.available) return { hexes, note: outcome.reason };
-        const seen = outcome.rawTexts ?? [];
-        sawSummary +=
-          ` | board: saw ${seen.length}: ${seen.slice(0, 16).join(' ')}` +
-          (outcome.timing ? ` | ${outcome.timing}` : '');
-        readings = mapOcrToHexes(
-          outcome.texts,
-          pts as unknown as [Point, Point, Point, Point],
-        );
-      }
-
-      if (readings.length === 0) {
-        return { hexes, note: `No numbers placed — ${sawSummary}` };
-      }
-
-      /**
-       * OCR NO LONGER WRITES TO THE BOARD. Reported, not applied.
-       *
-       * It used to overwrite every hex it had an opinion about and stamp it
-       * `confidence: 'high'`. That was defensible only while nothing else could
-       * read a token at all. It is not defensible now: OCR was measured at 1 of
-       * 17 on real captures, and the digit matcher that fills the board before
-       * this runs is measured at 100% precision on what it accepts. Letting a
-       * 6%-accurate reader overwrite a 100%-precise one, and call the result
-       * confident, would undo the entire point.
-       *
-       * The call is kept because the diagnostic export uses what it saw, and
-       * because a note costs the player nothing. If the diagnostics harness
-       * goes, this goes with it.
-       */
-        return {
-          hexes,
-          note: `Saw ${readings.length}, applied none (matcher leads) — ${sawSummary}`,
-        };
-      } catch (err) {
-        return { hexes, note: `OCR threw: ${String(err)}` };
-      }
-    },
-    [lastShotUri],
-  );
-
   const runRead = useCallback(async () => {
     const buffer = bufferRef.current;
     const pts = cornersRef.current;
@@ -636,139 +521,6 @@ export default function CatanCaptureScreen() {
       setProgress(null);
     }
   }, [evidence, harbourEvidenceSoFar]);
-
-  /**
-   * Read the held frame with one corner set, without merging into the session.
-   *
-   * Merging is what the real flow does, and it is exactly what a measurement
-   * must not do — prior evidence would carry a good read into a bad one and
-   * flatter the result.
-   */
-  const readSnapshot = useCallback(
-    (label: string, pts: readonly NormPoint[]): ReadingSnapshot | null => {
-      const buffer = bufferRef.current;
-      if (!buffer || pts.length !== 4) return null;
-
-      const imagePoints = pts.map(p => ({
-        x: p.x * buffer.width,
-        y: p.y * buffer.height,
-      })) as [Point, Point, Point, Point];
-
-      // Same pipeline as the real read, or the A/B measures a different reader.
-      const reading = readFrame(balanceForBoard(buffer, imagePoints), imagePoints);
-      const corners = pts.map(p => ({ x: p.x, y: p.y }));
-
-      if (reading.evidence.length === 0) {
-        return {
-          label,
-          corners,
-          hexes: [],
-          usable: false,
-          coverage: reading.assessment.coverage,
-          reason: reading.assessment.reason,
-        };
-      }
-
-      const hexes = reconcileBoardFromEvidence(reading.evidence).hexes;
-      return {
-        label,
-        corners,
-        hexes: hexes.map(h => ({
-          index: h.index,
-          resource: h.resource ?? null,
-          number: h.number ?? null,
-          confidence: h.confidence,
-        })),
-        usable: true,
-        coverage: reading.assessment.coverage,
-        score: groundTruth ? scoreReading(hexes, groundTruth) : undefined,
-      };
-    },
-    [groundTruth],
-  );
-
-  /**
-   * The A/B that matters: same photo, both corner sets.
-   *
-   * Two shots cannot answer this. They differ in the corners AND in the photo,
-   * so a better second result proves nothing about which one helped.
-   */
-  const compareCorners = useCallback(async () => {
-    if (!guideCorners || !corners) return;
-    const a = readSnapshot('guide corners', guideCorners);
-    const b = readSnapshot('marked corners', corners);
-    const rows = [a, b].filter(Boolean) as ReadingSnapshot[];
-    setComparison(rows);
-
-    /**
-     * Measure the digit reader too, not just the two corner sets.
-     *
-     * Without this the export scores only the blob counter — which is the
-     * reader we already know tops out around half on a good photo and much
-     * worse on a poor one. The whole point of adding OCR was to replace it, so
-     * leaving it out of the instrument means a capture cannot answer the only
-     * question that now matters.
-     */
-    if (!b || b.hexes.length === 0) return;
-    const asHexes: CatanHexDef[] = b.hexes.map(h => ({
-      index: h.index,
-      resource: h.resource as CatanHexDef['resource'],
-      number: h.number,
-      confidence: h.confidence as CatanHexDef['confidence'],
-    }));
-    // Also guarded: losing this row is losing the measurement.
-    let hexes = asHexes;
-    let note: string | undefined;
-    try {
-      const out = await applyOcr(asHexes);
-      hexes = out.hexes;
-      note = out.note;
-    } catch (err) {
-      note = `compare threw: ${String(err)}`;
-    }
-    setComparison([
-      ...rows,
-      {
-        label: `digits (OCR) — ${note ?? 'no note'}`,
-        corners: b.corners,
-        hexes: hexes.map(h => ({
-          index: h.index,
-          resource: h.resource ?? null,
-          number: h.number ?? null,
-          confidence: h.confidence,
-        })),
-        usable: true,
-        coverage: b.coverage,
-        score: groundTruth ? scoreReading(hexes, groundTruth) : undefined,
-      },
-    ]);
-  }, [guideCorners, corners, readSnapshot, applyOcr, groundTruth]);
-
-  const exportDiagnostic = useCallback(async () => {
-    const buffer = bufferRef.current;
-    if (!buffer) return;
-    const readings =
-      comparison ??
-      ([readSnapshot('marked corners', cornersRef.current)].filter(Boolean) as ReadingSnapshot[]);
-
-    const payload = buildDiagnosticPayload({
-      bufferWidth: buffer.width,
-      bufferHeight: buffer.height,
-      groundTruth,
-      readings,
-    });
-
-    try {
-      await Share.share({
-        title: 'Board reader diagnostic',
-        message: `${summariseForHumans(payload)}
-
-${JSON.stringify(payload)}`,
-      });
-    } catch {
-      Alert.alert('Could not share', 'The diagnostic was not shared.');
-    }
-  }, [comparison, groundTruth, readSnapshot]);
 
   /** One PanResponder per handle, rebuilt only when the display box resizes. */
   const handleResponders = useMemo(
@@ -1077,77 +829,15 @@ ${JSON.stringify(payload)}`,
             </Text>
           </TouchableOpacity>
 
-          {/* ── Diagnostics. Temporary — see services/vision/diagnostics.ts ── */}
-          <View style={[s.diagBox, { borderColor: colors.border }]}>
-            <Text style={[s.diagTitle, { color: colors.mutedForeground, fontFamily: 'Inter_600SemiBold' }]}>
-              DIAGNOSTICS
-            </Text>
-            <Text style={[s.diagHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-              {groundTruth
-                ? 'Ground truth is set, so reads are scored automatically.'
-                : 'No ground truth set. Correct a board on the next screen and tap "Set as ground truth" to get scores.'}
-            </Text>
-
-            <View style={s.rowBtns}>
-              <TouchableOpacity
-                style={[s.secondaryBtn, { borderColor: colors.border }]}
-                onPress={() => { void compareCorners(); }}
-              >
-                <Text style={[s.secondaryText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
-                  Compare corners
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[s.secondaryBtn, { borderColor: colors.border }]}
-                onPress={exportDiagnostic}
-              >
-                <Text style={[s.secondaryText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
-                  Export
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {comparison?.map(r => (
-              <View key={r.label} style={[s.diagResult, { borderTopColor: colors.border }]}>
-                <Text style={[s.diagLabel, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
-                  {r.label}
-                </Text>
-                {!r.usable ? (
-                  <Text style={[s.diagHint, { color: '#F59E0B', fontFamily: 'Inter_400Regular' }]}>
-                    unusable — {r.reason ?? 'no reason given'}
-                  </Text>
-                ) : r.score ? (
-                  <>
-                    <Text style={[s.diagScore, { color: colors.foreground, fontFamily: 'Inter_700Bold' }]}>
-                      {r.score.correct}/{r.score.total} exact
-                    </Text>
-                    <Text style={[s.diagHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-                      terrain {r.score.resourceCorrect}/{r.score.total} · tokens{' '}
-                      {r.score.numberCorrect}/{r.score.total}
-                    </Text>
-                    {r.score.mismatches.slice(0, 6).map(m => (
-                      <Text
-                        key={m.index}
-                        style={[s.diagHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}
-                      >
-                        tile {m.index + 1}: got {m.gotResource ?? '?'} {m.gotNumber ?? '—'} · want{' '}
-                        {m.wantResource ?? '?'} {m.wantNumber ?? '—'} ({m.wrong})
-                      </Text>
-                    ))}
-                    {r.score.mismatches.length > 6 && (
-                      <Text style={[s.diagHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-                        …and {r.score.mismatches.length - 6} more (full list in Export)
-                      </Text>
-                    )}
-                  </>
-                ) : (
-                  <Text style={[s.diagHint, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }]}>
-                    read {r.hexes.length} tiles · coverage {(r.coverage * 100).toFixed(0)}%
-                  </Text>
-                )}
-              </View>
-            ))}
-          </View>
+          {/* Reader diagnostics, for working on the app. Hidden from players. */}
+          {settings.developerTools && (
+            <CaptureDiagnostics
+              groundTruth={diagnostics.groundTruth}
+              comparison={diagnostics.comparison}
+              onCompare={() => { void diagnostics.compareCorners(); }}
+              onExport={() => { void diagnostics.exportDiagnostic(); }}
+            />
+          )}
 
           <TouchableOpacity style={s.linkBtn} onPress={() => setPhase('aiming')}>
             <Text style={[s.link, { color: colors.mutedForeground, fontFamily: 'Inter_500Medium', textAlign: 'center' }]}>
@@ -1280,7 +970,7 @@ ${JSON.stringify(payload)}`,
           )}
 
 
-          {lastShotUri && (
+          {settings.developerTools && lastShotUri && (
             <TouchableOpacity
               style={[s.saveShotBtn, { borderColor: colors.border, opacity: savingShot ? 0.6 : 1 }]}
               onPress={saveShot}
@@ -1442,12 +1132,6 @@ const s = StyleSheet.create({
   primaryBtnText: { fontSize: 16 },
   rowBtns: { flexDirection: 'row', gap: 10, marginTop: 10 },
   secondaryBtn: { flex: 1, borderWidth: 1.5, borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
-  diagBox: { borderWidth: 1, borderRadius: 12, padding: 12, marginTop: 14 },
-  diagTitle: { fontSize: 11, letterSpacing: 1, marginBottom: 6 },
-  diagHint: { fontSize: 12, lineHeight: 17 },
-  diagResult: { borderTopWidth: 1, marginTop: 10, paddingTop: 10 },
-  diagLabel: { fontSize: 13, marginBottom: 2 },
-  diagScore: { fontSize: 20, marginVertical: 2 },
   handleDot: {
     width: 22, height: 22, borderRadius: 11,
     backgroundColor: '#1ABC9C', borderWidth: 2, borderColor: '#FFFFFF',
