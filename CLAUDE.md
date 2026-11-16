@@ -1619,3 +1619,5 @@ only in the corner A/B diagnostic.
 
 `npx tsc --noEmit --noUnusedLocals` is clean for app code and is worth running
 after any scripted edit: it found 17 leftovers, most left behind by patches.
+
+**UPDATE: the per-round approximation above is FIXED (3f3ba36).** `hasHappened` in `catanStats.ts` orders builds and robber moves against roll timestamps within a round; round 0 always applies. `correctRoll` keeps the original timestamp for the same reason. Verified by `tools/capture_audit.mjs` recounting by true creation order: 0 mismatches over 340 ledgers; the old rule had misplaced 2.7% of production.

@@ -821,3 +821,4 @@ should answer first.
     3. The capture diagnostics (ground truth, A/B corners, OCR compare, export)
        are marked temporary; decide whether to keep them behind `__DEV__`.
     4. `correctRoll` is implemented and never called; only undo-last exists.
+    UPDATE: open item 1 (per-round state) is DONE in 3f3ba36. Items 2 to 4 (split big screens, diagnostics behind a developer switch, correct an older roll) are NOT started. Note for item 4: `correctRoll` appends the correction at the END of the array, which would make it the last event for undo and callouts; insert it beside the original instead before wiring any UI.
