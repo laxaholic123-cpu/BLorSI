@@ -23,7 +23,7 @@
  * Board layouts can be saved by name and reloaded for future games.
  */
 
-import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import React, { useCallback, useState, useMemo } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -54,7 +54,6 @@ import {
   placeRoad,
   placeSettlement,
   placementProgress,
-  settlementProblem,
   toExposureEvents,
   type PlacementSlot,
 } from '@/services/catanPlacement';
@@ -81,7 +80,6 @@ import {
   shiftPortTypes,
 } from '@/services/catanPorts';
 import { getLinkedBuildingEventCount, mergeEditedSettlements } from '@/services/editSettlements';
-import { normalizePieces, type DetectedPiece } from '@/utils/normalizePieces';
 import { describeChange, reconcileBoard, type BoardChange } from '@/services/boardConstraints';
 import type {
   CatanBoardLayout,
@@ -92,7 +90,6 @@ import type {
   ResourceType,
 } from '@/types/models';
 import { PORT_COUNT } from '@/services/catanBoard';
-import type { CatanPlayerExposureEvent } from '@/types/models';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -174,12 +171,11 @@ export default function CatanBoardScanScreen() {
 
   // ── Edit-mode: editPlayerId is set when launched from an active game ────────
   // ── scanned: a board already read on-device by the capture screen ──────────
-  const { editPlayerId, scanned, harbours, harboursUnsure, harbourTypes } =
+  const { editPlayerId, scanned, harbours, harbourTypes } =
     useLocalSearchParams<{
       editPlayerId?: string;
       scanned?: string;
       harbours?: string;
-      harboursUnsure?: string;
       harbourTypes?: string;
     }>();
   const isEditMode = Boolean(editPlayerId);
@@ -218,24 +214,6 @@ export default function CatanBoardScanScreen() {
     }
   }, [harbours]);
 
-  /**
-   * Harbours the detector placed but could not confirm.
-   *
-   * These are real: the coast admits two placements whenever a missed badge
-   * sits in a 7-edge span, which is six of the nine positions. Flagging them is
-   * the difference between a reader that is right and one that only looks it.
-   */
-  const unsureKeys = React.useMemo<Set<string>>(() => {
-    if (!harboursUnsure) return new Set();
-    try {
-      const parsed = JSON.parse(harboursUnsure) as { hexIndex: number; edge: HexEdge }[];
-      return new Set(parsed.map(s => `${s.hexIndex}:${s.edge}`));
-    } catch {
-      return new Set();
-    }
-  }, [harboursUnsure]);
-  const unsureCount = unsureKeys.size;
-
   /** What the reader thinks each detected harbour trades, in `slots` order. */
   const detectedTypes = React.useMemo<PortType[] | null>(() => {
     if (!harbourTypes) return null;
@@ -256,16 +234,10 @@ export default function CatanBoardScanScreen() {
   /**
    * How far the harbour ring is turned, in 60-degree steps.
    *
-   * The reader does NOT read harbours, and the stored ring is anchored to one
-   * photographed board — but the frame stays assembled while the tiles are
-   * reshuffled, so its rotation relative to the app's hex numbering is
-   * arbitrary from game to game. Measured against two captures, the stored
-   * anchoring was wrong for both and a 60-degree turn fitted at 0.23 hex radii
-   * against 1.50 (`tools/port_probe.py`).
-   *
-   * So the ring is presented as something to TURN until it matches the table,
-   * rather than asserted. One control fixes the whole ring, because every
-   * harbour is correct relative to the others.
+   * Used ONLY when the photo did not confirm the harbour positions (or there
+   * was no photo). The frame stays assembled while the tiles are reshuffled, so
+   * its rotation relative to the app's hex numbering is arbitrary from game to
+   * game, and one control turns the whole ring until it matches the table.
    */
   const [portRotation, setPortRotation] = useState(0);
   /**
@@ -1009,9 +981,6 @@ export default function CatanBoardScanScreen() {
             haptic(Haptics.ImpactFeedbackStyle.Medium);
             setPortIdx(i);
           }}
-          unsurePorts={ports
-            .map((p, i) => (unsureKeys.has(`${p.hexIndex}:${p.edge}`) ? i : -1))
-            .filter(i => i >= 0)}
           lowConfidenceIndices={lowConfIndices}
           style={{ marginVertical: 8 }}
         />
@@ -1429,7 +1398,6 @@ export default function CatanBoardScanScreen() {
   };
 
   const renderCorrectionPanel = () => {
-    const h = correctionIdx !== null ? hexes[correctionIdx] : null;
     return (
       <View style={[s.correctionOverlay, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
         <View style={s.correctionHeader}>

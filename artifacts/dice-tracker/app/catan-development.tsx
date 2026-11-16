@@ -32,8 +32,8 @@ import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { useGame } from '@/context/GameContext';
 import { useSettings } from '@/context/SettingsContext';
-import { getBuildingStatesAtTurn, getActiveRobberBlockedNumbers } from '@/services/catanStats';
-import { allRoads, buildProblem, roadEvent, roadsOf } from '@/services/catanRoads';
+import { getBuildingStatesAtTurn } from '@/services/catanStats';
+import { allRoads, buildProblem, roadsOf } from '@/services/catanRoads';
 import { CatanHexGrid } from '@/components/CatanHexGrid';
 import { allEdges } from '@/services/catanPlacement';
 import {
@@ -73,8 +73,7 @@ const ACTIONS: Array<{ type: ActionType; label: string; desc: string; icon: stri
 export default function CatanDevelopmentScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { activeSession, rollEvents, exposureEvents, persistExposureEvents, updateSession } =
-    useGame();
+  const { activeSession, rollEvents, exposureEvents, persistExposureEvents } = useGame();
   const { settings } = useSettings();
   const webTop = Platform.OS === 'web' ? 67 : 0;
 
@@ -414,32 +413,15 @@ export default function CatanDevelopmentScreen() {
       }
 
       /*
-        Building makes it that player's turn.
-
-        In the base game you can only build on your own turn, so a build
-        recorded for someone is proof it is their turn — reported from a device
-        as "whenever a player moves to build, it should automatically assume it
-        is their turn". Without this, a player who forgot to tap Next had their
-        next ROLL attributed to the previous player, which quietly corrupts both
-        players' luck.
-
-        Only on SAVE, not on opening the menu: backing out of a build must not
-        move the turn. Only for the three building actions: the robber and
-        corrections name the player who is AFFECTED, not the one acting.
+        The turn is NOT changed here. An earlier version set the session's
+        current player to the builder, on the theory that building proves it is
+        your turn. It does — but with auto-advance on, the session has already
+        moved to the NEXT player by the time anyone builds, so that handed the
+        turn back to the builder and their next roll would have been counted
+        twice. The game screen now opens this menu for the player who just
+        rolled instead (services/turnPlayer.ts), which is what "assume it is
+        their turn" needed.
       */
-      const BUILD_ACTIONS: readonly string[] = ['add_settlement', 'build_road', 'upgrade_city'];
-      if (written.length > 0 && BUILD_ACTIONS.includes(selectedAction)) {
-        const builderIndex = activeSession.players.findIndex(p => p.id === selectedPlayerId);
-        if (builderIndex >= 0 && builderIndex !== activeSession.currentPlayerIndex) {
-          try {
-            await updateSession({ ...activeSession, currentPlayerIndex: builderIndex });
-          } catch {
-            // The build itself is already saved. A failed turn change must not
-            // undo it or trap the screen open; Next still works.
-          }
-        }
-      }
-
       resetForm();
       router.back();
     } catch {

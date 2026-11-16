@@ -9,7 +9,6 @@ import {
   getGridColumns,
 } from '@/services/rollInput';
 import { NumberButton } from '@/components/NumberButton';
-import { useColors } from '@/hooks/useColors';
 
 interface DiceGridProps {
   diceMode: DiceMode;
@@ -33,7 +32,6 @@ export function DiceGrid({
   lastPressedValue,
   disabled = false,
 }: DiceGridProps) {
-  const colors = useColors();
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
 
   const values = getDiceValues(diceMode);

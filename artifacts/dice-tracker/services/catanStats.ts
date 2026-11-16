@@ -286,6 +286,50 @@ export function getActiveRobberBlockedNumbers(
   return [...new Set(all)];
 }
 
+/**
+ * What a player's buildings pay on each number, per TURN, computed once.
+ *
+ * Building and robber state only change when the turn does, so every roll in a
+ * turn shares one answer. Three callers used to work this out for themselves,
+ * per roll, each rescanning the whole event log — and two of them (the accolade
+ * roll profiles and the end-of-game answers) did it WITHOUT the robber's tile,
+ * so they charged the robber differently from the headline stats and could
+ * disagree with them about the same roll. One lookup, one robber rule.
+ */
+export interface TurnProduction {
+  buildings: BuildingState[];
+  blockDetails: { numbers: number[]; hexIndex: number | null }[];
+  /** Net production weight by dice value (index 0, 1 and 7 are zero). */
+  weightsByValue: number[];
+}
+
+export function makeTurnProduction(
+  exposureEvents: readonly CatanPlayerExposureEvent[],
+): (playerId: string, turnNumber: number) => TurnProduction {
+  const byPlayer = new Map<string, CatanPlayerExposureEvent[]>();
+  const cache = new Map<string, TurnProduction>();
+  return (playerId, turnNumber) => {
+    const key = `${playerId}:${turnNumber}`;
+    const hit = cache.get(key);
+    if (hit) return hit;
+    let mine = byPlayer.get(playerId);
+    if (!mine) {
+      mine = exposureEvents.filter(e => e.playerId === playerId);
+      byPlayer.set(playerId, mine);
+    }
+    const buildings = getBuildingStatesAtTurn(playerId, turnNumber, mine);
+    const blockedNumbers = getActiveRobberBlockedNumbers(playerId, turnNumber, mine);
+    const blockDetails = getActiveRobberBlockDetails(playerId, turnNumber, mine);
+    const weightsByValue: number[] = new Array(13).fill(0);
+    for (const num of CATAN_NUMBERS) {
+      weightsByValue[num] = netWeightForNumber(buildings, num, blockedNumbers, blockDetails);
+    }
+    const out = { buildings, blockDetails, weightsByValue };
+    cache.set(key, out);
+    return out;
+  };
+}
+
 // ─── Per-player production stats ──────────────────────────────────────────────
 
 export function computePlayerProductionStats(

@@ -46,9 +46,9 @@ import {
   computePlayerProductionStats,
   getActiveRobberBlockedNumbers,
   getBuildingStatesAtTurn,
-  CATAN_PROBS,
 } from '@/services/catanStats';
 import { CATAN_SMALL_SAMPLE_THRESHOLD } from '@/types/catanStats';
+import { playerOnTurn } from '@/services/turnPlayer';
 import { CatanProductionLeaderboard } from '@/components/CatanProductionLeaderboard';
 import { CatanRollHeatMap } from '@/components/CatanRollHeatMap';
 import { CatanBoardPanel } from '@/components/CatanBoardPanel';
@@ -95,7 +95,6 @@ export default function ActiveCatanScreen() {
     persistExposureEvents,
     updateSession,
     loadActiveGame,
-    endSession,
   } = useGame();
   const { settings } = useSettings();
 
@@ -134,6 +133,11 @@ export default function ActiveCatanScreen() {
   const activeEvents = useMemo(() => rollEvents.filter(e => !e.deletedAt), [rollEvents]);
   const currentPlayer = activeSession?.players[activeSession.currentPlayerIndex] ?? null;
   const lastEvent = activeEvents.at(-1) ?? null;
+  /**
+   * Who is BUILDING right now, which is not `currentPlayer` once auto-advance
+   * has moved on after a roll. See services/turnPlayer.ts.
+   */
+  const turnPlayer = activeSession ? playerOnTurn(activeSession, rollEvents) : null;
   const totalRolls = activeEvents.length;
   const playerRollCount = currentPlayer
     ? activeEvents.filter(e => e.playerId === currentPlayer.id).length
@@ -493,8 +497,11 @@ export default function ActiveCatanScreen() {
       turnNumber,
       snapshot: boardSnapshot,
       events: exposureEvents,
-      // The player whose turn it is moves the robber, on a 7 or a knight.
-      movedByPlayerId: currentPlayer?.id,
+      // On a 7 the mover is whoever threw it: the roll is already saved, so it
+      // is the last event (NOT currentPlayer, which auto-advance has moved on).
+      // A knight can be played before its owner rolls, so the mover is unknown
+      // and is left unrecorded rather than guessed.
+      movedByPlayerId: robberTrigger === 'seven' ? lastEvent?.playerId : undefined,
     });
     if (events.length > 0) {
       await persistExposureEvents(activeSession.id, [...exposureEvents, ...events]);
@@ -877,7 +884,7 @@ export default function ActiveCatanScreen() {
         <TouchableOpacity
           style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
           onPress={() => router.push(
-            `/catan-development?action=add_settlement${currentPlayer ? `&playerId=${currentPlayer.id}` : ''}` as any)}
+            `/catan-development?action=add_settlement${turnPlayer ? `&playerId=${turnPlayer.id}` : ''}` as any)}
           activeOpacity={0.8}
         >
           <Ionicons name="home-outline" size={14} color={colors.primary} />
@@ -886,7 +893,7 @@ export default function ActiveCatanScreen() {
         <TouchableOpacity
           style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
           onPress={() => router.push(
-            `/catan-development?action=build_road${currentPlayer ? `&playerId=${currentPlayer.id}` : ''}` as any)}
+            `/catan-development?action=build_road${turnPlayer ? `&playerId=${turnPlayer.id}` : ''}` as any)}
           activeOpacity={0.8}
         >
           <Ionicons name="git-branch-outline" size={14} color={colors.primary} />
@@ -895,7 +902,7 @@ export default function ActiveCatanScreen() {
         <TouchableOpacity
           style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
           onPress={() => router.push(
-            `/catan-development?action=upgrade_city${currentPlayer ? `&playerId=${currentPlayer.id}` : ''}` as any)}
+            `/catan-development?action=upgrade_city${turnPlayer ? `&playerId=${turnPlayer.id}` : ''}` as any)}
           activeOpacity={0.8}
         >
           <Ionicons name="business-outline" size={14} color={colors.primary} />
@@ -923,7 +930,7 @@ export default function ActiveCatanScreen() {
         <TouchableOpacity
           style={[styles.buildPill, { backgroundColor: colors.card, borderColor: colors.border }]}
           onPress={() => router.push(
-            `/catan-development${currentPlayer ? `?playerId=${currentPlayer.id}` : ''}` as any)}
+            `/catan-development${turnPlayer ? `?playerId=${turnPlayer.id}` : ''}` as any)}
           activeOpacity={0.8}
         >
           <Ionicons name="ellipsis-horizontal-circle-outline" size={14} color={colors.mutedForeground} />

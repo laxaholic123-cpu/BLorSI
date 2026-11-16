@@ -37,11 +37,7 @@
  */
 
 import { hungarian } from '@/services/boardConstraints';
-import {
-  getActiveRobberBlockedNumbers,
-  getBuildingStatesAtTurn,
-  netWeightForNumber,
-} from '@/services/catanStats';
+import { makeTurnProduction } from '@/services/catanStats';
 import { DEV_DECK_COMPOSITION, DEV_DECK_SIZE } from '@/services/devCards';
 import { LONGEST_ROAD_MINIMUM, longestRoadByPlayer } from '@/services/catanRoads';
 import type {
@@ -602,17 +598,17 @@ export function profileRolls(
   // Who did each throw actually pay? Walk every roll once and credit the
   // thrower for what it produced, split between them and the rest of the table.
   const ordered = [...live].sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+  // Same per-turn table the headline stats use, robber tile included.
+  const production = makeTurnProduction(exposureEvents);
   for (const roll of ordered) {
     for (const player of players) {
       if (roll.value === 7) {
         timeline.get(player.id)!.push(0);
         continue;
       }
-      const buildings = getBuildingStatesAtTurn(player.id, roll.turnNumber, exposureEvents as CatanPlayerExposureEvent[]);
+      const { buildings, weightsByValue } = production(player.id, roll.turnNumber);
       if (buildings.length === 0) continue;
-      const blocked = getActiveRobberBlockedNumbers(player.id, roll.turnNumber, exposureEvents as CatanPlayerExposureEvent[]);
-      const paid = buildings.length === 0
-        ? 0 : netWeightForNumber(buildings, roll.value, blocked);
+      const paid = weightsByValue[roll.value] ?? 0;
       timeline.get(player.id)!.push(paid);
       if (paid <= 0) continue;
       const thrower = out.get(roll.playerId);

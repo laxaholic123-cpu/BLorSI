@@ -215,7 +215,6 @@ export default function CatanCaptureScreen() {
   const [guideCorners, setGuideCorners] = useState<NormPoint[] | null>(null);
   const [groundTruth, setGroundTruth] = useState<CatanHexDef[] | null>(null);
   const [comparison, setComparison] = useState<ReadingSnapshot[] | null>(null);
-  const [ocrNote, setOcrNote] = useState<string | null>(null);
   /**
    * Set when the board sits so close to the edge of the frame that some token
    * crops run off the photo.
@@ -243,14 +242,6 @@ export default function CatanCaptureScreen() {
   const [harbourSlots, setHarbourSlots] = useState<
     { hexIndex: number; edge: HexEdge }[] | null
   >(null);
-  /**
-   * The harbours the ring constraint placed but could not confirm — WHICH ones,
-   * not how many. The review screen rings these on the map, and a count alone
-   * could not tell it where to draw.
-   */
-  const [harbourUnsure, setHarbourUnsure] = useState<
-    { hexIndex: number; edge: HexEdge }[]
-  >([]);
   /** What each detected harbour trades, parallel to `harbourSlots`. */
   const [harbourTypes, setHarbourTypes] = useState<PortType[] | null>(null);
   /**
@@ -605,9 +596,6 @@ export default function CatanCaptureScreen() {
           ? resolved.slots.map(sl => ({ hexIndex: sl.hexIndex, edge: sl.edge }))
           : null;
         setHarbourSlots(slots);
-        setHarbourUnsure(
-          resolved ? resolved.unsure.map(sl => ({ hexIndex: sl.hexIndex, edge: sl.edge })) : [],
-        );
         setHarbourTypes(resolved ? resolved.types : null);
         if (slots && resolved) {
           const typeByKey = new Map(
@@ -636,13 +624,10 @@ export default function CatanCaptureScreen() {
       setShots(n => n + 1);
       setPhase('review');
 
-      // OCR runs after the board is already on screen. It is the better reader,
-      // but it is also the slower one and the one that can be missing entirely,
-      // so the counted board goes up first and is replaced if OCR delivers.
-      void applyOcr(counted).then(({ hexes, note }) => {
-        setBoard(hexes);
-        if (note) setOcrNote(note);
-      });
+      // OCR is NOT run here any more. It was measured at 1 of 17, its output was
+      // never applied to the board, and it still cost every read an ML Kit pass
+      // and nineteen bitmap decodes just to print a debug note. It survives only
+      // in the corner A/B diagnostic (`compareCorners`).
     } catch {
       setError('Could not read that shot. Try adjusting the corners.');
       setPhase('adjust');
@@ -650,7 +635,7 @@ export default function CatanCaptureScreen() {
       setReadingBoard(false);
       setProgress(null);
     }
-  }, [evidence, harbourEvidenceSoFar, applyOcr]);
+  }, [evidence, harbourEvidenceSoFar]);
 
   /**
    * Read the held frame with one corner set, without merging into the session.
@@ -834,7 +819,6 @@ ${JSON.stringify(payload)}`,
         ...(harbourSlots
           ? {
               harbours: JSON.stringify(harbourSlots),
-              harboursUnsure: JSON.stringify(harbourUnsure),
               ...(harbourTypes ? { harbourTypes: JSON.stringify(harbourTypes) } : {}),
             }
           : {}),
@@ -846,7 +830,6 @@ ${JSON.stringify(payload)}`,
     setEvidence(emptyEvidence());
     setBoard([]);
     setHarbourSlots(null);
-    setHarbourUnsure([]);
     setHarbourTypes(null);
     setHarbourEvidenceSoFar(emptyHarbourEvidence());
     setShots(0);
@@ -1296,11 +1279,6 @@ ${JSON.stringify(payload)}`,
             </Text>
           )}
 
-          {ocrNote && (
-            <Text style={[s.body, { color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'left' }]}>
-              Digit reader: {ocrNote}
-            </Text>
-          )}
 
           {lastShotUri && (
             <TouchableOpacity

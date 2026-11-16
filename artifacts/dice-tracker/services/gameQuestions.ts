@@ -25,9 +25,10 @@ import { getAllIntersections } from '@/services/catanBoard';
 import { legalSettlements, slotsFromOpeningEvents } from '@/services/catanPlacement';
 import {
   CATAN_PIPS,
-  getActiveRobberBlockedNumbers,
+  blockedWeightForNumber,
   getBuildingStatesAtTurn,
-  netWeightForNumber,
+  makeTurnProduction,
+  weightOnNumber,
 } from '@/services/catanStats';
 import { resourceExposure } from '@/services/exposureReport';
 import type { CatanPlayerProductionStats } from '@/types/catanStats';
@@ -271,7 +272,7 @@ interface RollLedger {
 function ledger(input: GameQuestionInput): RollLedger {
   const byBuilding = new Map<string, Map<string, number>>();
   const byThrower = new Map<string, Map<string, number>>();
-  const events = input.exposureEvents as CatanPlayerExposureEvent[];
+  const production = makeTurnProduction(input.exposureEvents);
   const rolls = input.rollEvents
     .filter(r => !r.deletedAt && r.value !== 7)
     .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
@@ -282,20 +283,44 @@ function ledger(input: GameQuestionInput): RollLedger {
   }
   for (const roll of rolls) {
     for (const p of input.players) {
-      const buildings = getBuildingStatesAtTurn(p.id, roll.turnNumber, events);
-      if (buildings.length === 0) continue;
-      const blocked = getActiveRobberBlockedNumbers(p.id, roll.turnNumber, events);
-      let total = 0;
-      const perBuilding = byBuilding.get(p.id)!;
-      for (const b of buildings) {
-        const got = netWeightForNumber([b], roll.value, blocked);
-        if (got <= 0) continue;
-        perBuilding.set(b.locationId, (perBuilding.get(b.locationId) ?? 0) + got);
-        total += got;
+      const { buildings, blockDetails, weightsByValue } = production(p.id, roll.turnNumber);
+      // The player's total comes from the same table the headline stats use, so
+      // "whose dice fed me" always adds up to their production figure.
+      const total = weightsByValue[roll.value] ?? 0;
+      if (total <= 0) continue;
+      const fed = byThrower.get(p.id)!;
+      fed.set(roll.playerId, (fed.get(roll.playerId) ?? 0) + total);
+
+      /*
+        Split the total between buildings. A block that names its tile charges
+        exactly the buildings on that tile. An older block that only names the
+        number charges one building, the heaviest, which is the same one-tile
+        bound the stats apply to the player as a whole.
+      */
+      const active = blockDetails.filter(d => d.numbers.includes(roll.value));
+      const legacy = active.some(d => d.hexIndex === null);
+      let legacyVictim: string | null = null;
+      if (legacy) {
+        let heaviest = 0;
+        for (const bl of buildings) {
+          if (!bl.affectedNumbers.includes(roll.value)) continue;
+          if (bl.productionWeight > heaviest) {
+            heaviest = bl.productionWeight;
+            legacyVictim = bl.locationId;
+          }
+        }
       }
-      if (total > 0) {
-        const fed = byThrower.get(p.id)!;
-        fed.set(roll.playerId, (fed.get(roll.playerId) ?? 0) + total);
+      const perBuilding = byBuilding.get(p.id)!;
+      for (const bl of buildings) {
+        const gross = weightOnNumber(bl, roll.value);
+        if (gross <= 0) continue;
+        let lost = bl.locationId === legacyVictim ? bl.productionWeight : 0;
+        for (const d of active) {
+          if (d.hexIndex === null) continue;
+          lost = Math.max(lost, blockedWeightForNumber([bl], roll.value, d.hexIndex));
+        }
+        const got = Math.max(0, gross - lost);
+        if (got > 0) perBuilding.set(bl.locationId, (perBuilding.get(bl.locationId) ?? 0) + got);
       }
     }
   }

@@ -24,7 +24,7 @@ import {
   type Matrix3,
   type Point,
 } from '@/services/vision/homography';
-import { cropGray, readPixel, type PixelBuffer } from '@/services/vision/pixelBuffer';
+import { readPixel, type PixelBuffer } from '@/services/vision/pixelBuffer';
 import { CROP_PADDING, sampleDigit } from '@/services/vision/digitSample';
 import {
   isTrustworthy,

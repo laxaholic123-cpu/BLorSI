@@ -1576,3 +1576,46 @@ near misses.
 **All of this is one physical board.** The 5% stretch may differ for another set
 or edition; if automatic corners are consistently off on a new board, re-measure
 the stretch before touching the search.
+
+
+## Whole-build review (2026-11): what was wrong, and what is approximate
+
+**"Current player" is not "the player on turn".** With auto-advance on, the
+session moves to the next seat the moment a roll is saved, but in Catan you roll
+and THEN build. So for the whole build phase `currentPlayerIndex` names the wrong
+person. Two things built on it were wrong: build menus preselected the next
+player, and a "building makes it your turn" rule set the turn back to the
+builder, who would then have rolled twice. Robber moves on a 7 also recorded the
+NEXT player as the mover. `services/turnPlayer.ts` (`playerOnTurn`) is the fix:
+the last roller, unless nothing has been rolled or the turn was moved by hand.
+Use it for anything that happens AFTER the roll. A knight can be played before
+rolling, so its mover is left unrecorded.
+
+**One robber rule, one lookup.** The accolade roll profiles and the end-of-game
+answers each worked out per-roll production themselves, per roll, rescanning the
+whole event log, and without the robber tile, so they could disagree with the
+headline stats about the same roll. `makeTurnProduction` in `catanStats.ts` is
+the shared per-turn table (buildings, block details, net weight by value). New
+code that needs "what did this roll pay this player" should use it.
+
+**KNOWN APPROXIMATION, not fixed: state changes apply to the whole ROUND.**
+`turnNumber` is a round (`floor(rolls / players) + 1`), and buildings and robber
+blocks are resolved with `event.turnNumber <= roll.turnNumber`. So a settlement
+built by the last player in round 5 counts for every roll in round 5, including
+the ones thrown before it existed, and a robber moved mid-round is treated as
+having sat there all round. The error is at most one round per change and is not
+directional (actual and expected move together), so it adds noise to luck rather
+than bias. An exact version would compare event and roll timestamps within the
+same round, keeping turn 0 as "always"; opening edits re-stamp turn-0 events, so
+timestamps alone are not safe.
+
+**Removed as dead:** the 280-ring harbour search (`selectRing`, `legalRings`;
+superseded by `selectFrame`, last present at efcb629), the "unsure harbours"
+plumbing between capture and review (positions are only handed over when
+confirmed, so it was always empty), and the OCR pass after every read. OCR was
+measured at 1 of 17 and its output was never applied, yet every read still paid
+for an ML Kit pass and nineteen bitmap decodes to print a debug note. It remains
+only in the corner A/B diagnostic.
+
+`npx tsc --noEmit --noUnusedLocals` is clean for app code and is worth running
+after any scripted edit: it found 17 leftovers, most left behind by patches.

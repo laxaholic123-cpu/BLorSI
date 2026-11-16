@@ -23,7 +23,6 @@
  * shape: the predicate excluded the very thing it was looking for.
  */
 
-import { connectedComponents, type BinaryMask } from '@/services/vision/binaryOps';
 import { applyHomography, type Matrix3, type Point } from '@/services/vision/homography';
 import type { PixelBuffer } from '@/services/vision/pixelBuffer';
 import type { PortType } from '@/types/models';

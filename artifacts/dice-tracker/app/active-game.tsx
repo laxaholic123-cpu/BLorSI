@@ -30,7 +30,7 @@ import { confirmEndGame } from '@/services/endGame';
 export default function ActiveGameScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { activeSession, rollEvents, setRollEvents, persistRollEvents, updateSession, loadActiveGame, endSession } = useGame();
+  const { activeSession, rollEvents, setRollEvents, persistRollEvents, updateSession, loadActiveGame } = useGame();
   const { settings } = useSettings();
 
   const { value: lastPressedValue, flash: flashRoll, clear: clearRollFlash } = useRollFlash();

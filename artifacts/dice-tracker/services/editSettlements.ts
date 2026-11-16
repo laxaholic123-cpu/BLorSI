@@ -16,19 +16,6 @@
 import type { CatanPlayerExposureEvent } from '@/types/models';
 
 /**
- * Event types that use hexIdentifiers[0] as a building location ID.
- * Robber events ('robberBlockStarted', 'robberBlockEnded') use 'rblock_XXX'
- * IDs that are independent of settlement location IDs and are excluded.
- */
-const BUILDING_EVENT_TYPES: ReadonlyArray<CatanPlayerExposureEvent['eventType']> = [
-  'initialSettlement',
-  'settlementBuilt',
-  'cityUpgrade',
-  'buildingRemoved',
-  'manualCorrection',
-];
-
-/**
  * Returns the number of in-game building events for `editPlayerId` that
  * reference one of that player's current initial-settlement location IDs.
  *

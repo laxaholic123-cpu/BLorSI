@@ -798,3 +798,26 @@ should answer first.
     Still open: hiding the corner step. Needs real guide-versus-confirmed pairs
     from devices and a confidence signal that separates near misses, which the
     current score does not. Measured on one board only.
+
+
+30. **Whole-build review.** Done; not verified on a device.
+
+    - FIXED: build menus and robber attribution used the auto-advanced seat
+      instead of the player who just rolled; saving a build no longer changes
+      the turn (it would have made the builder roll twice). `turnPlayer.ts`.
+    - FIXED: accolade profiles and end-of-game answers now charge the robber the
+      same way the headline stats do, through one cached per-turn lookup.
+    - FASTER: no OCR pass after every board read.
+    - REMOVED: dead 280-ring harbour search, dead unsure-harbour plumbing, 17
+      unused imports and variables.
+
+    Open, by value:
+    1. State changes apply per ROUND, not per roll (see CLAUDE.md). Exact
+       ordering by timestamp within a round would remove up to a round of noise
+       per build or robber move.
+    2. The five biggest screens are 1,000 to 1,800 lines each. Splitting
+       `catan-board-scan.tsx` (review, placement, layouts) and
+       `catan-capture.tsx` (diagnostics out) would make scripted edits safer.
+    3. The capture diagnostics (ground truth, A/B corners, OCR compare, export)
+       are marked temporary; decide whether to keep them behind `__DEV__`.
+    4. `correctRoll` is implemented and never called; only undo-last exists.
